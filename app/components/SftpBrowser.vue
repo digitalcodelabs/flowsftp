@@ -310,15 +310,10 @@ const startHeartbeat = () => {
     const wokeFromSleep = elapsed > 40_000
 
     if (props.sessionId && !isReconnecting.value) {
-      // FTP sessions keep connection alive with NOOP without showing auto-reconnect banner
-      if (isFtp.value) {
-        isConnectionDropped.value = false
-        await sftpStore.checkSessionHealth(props.sessionId)
-        return
-      }
-
       const isAlive = await sftpStore.checkSessionHealth(props.sessionId)
       if (!isAlive || wokeFromSleep) {
+        // Double check after 1.5s to avoid temporary glitches
+        await new Promise((r) => setTimeout(r, 1500))
         const confirmAlive = await sftpStore.checkSessionHealth(props.sessionId)
         if (!confirmAlive) {
           triggerConnectionDropped()
@@ -331,7 +326,7 @@ const startHeartbeat = () => {
 }
 
 const triggerConnectionDropped = () => {
-  if (isFtp.value || isConnectionDropped.value || isReconnecting.value) return
+  if (isConnectionDropped.value || isReconnecting.value) return
   isConnectionDropped.value = true
   autoReconnectCountdown.value = 5
 
@@ -390,13 +385,22 @@ const performAutoReconnect = async () => {
 
 const handleNetworkOnline = async () => {
   if (props.sessionId) {
-    if (isFtp.value) return
     const isAlive = await sftpStore.checkSessionHealth(props.sessionId)
     if (!isAlive) {
       performAutoReconnect()
     } else {
       isConnectionDropped.value = false
     }
+  }
+}
+
+const handleRemoteRefresh = async () => {
+  if (!props.sessionId) return
+  const isAlive = await sftpStore.checkSessionHealth(props.sessionId)
+  if (!isAlive) {
+    await performAutoReconnect()
+  } else {
+    await sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true })
   }
 }
 
@@ -2041,7 +2045,8 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @focus-first-item="focusFirstItem('remote')"
         @navigate-up="navigateRemoteUp"
         @navigate-to="(path) => props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, path)"
-        @refresh="props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true })"
+        @refresh="handleRemoteRefresh"
+        @reconnect="performAutoReconnect"
         @new-file="openNewFile('remote')"
         @new-folder="openNewFolder('remote')"
         @permissions="(file) => openPermissions(file)"

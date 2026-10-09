@@ -57,11 +57,29 @@ pub enum FtpClientStream {
     Secure(RustlsFtpStream),
 }
 
+fn is_connection_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("10053")
+        || lower.contains("10054")
+        || lower.contains("broken pipe")
+        || lower.contains("connection reset")
+        || lower.contains("connection was aborted")
+        || lower.contains("connection aborted")
+        || lower.contains("connection closed")
+        || lower.contains("connection error")
+        || lower.contains("closed")
+        || lower.contains("not connected")
+        || lower.contains("eof")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+}
+
 pub struct ActiveFtpSession {
     pub session_id: String,
     pub host: String,
     pub port: u16,
     pub username: String,
+    pub password: Option<String>,
     pub is_secure: bool,
     pub current_dir: Arc<RwLock<String>>,
     client: Arc<Mutex<FtpClientStream>>,
@@ -518,7 +536,8 @@ impl ActiveFtpSession {
     ) -> Result<Self, String> {
         let addr = format!("{}:{}", host, port);
         let user = username.clone();
-        let pass = password.unwrap_or_default();
+        let pass = password.clone().unwrap_or_default();
+        let pass_stored = password.clone();
         let h = host.clone();
 
         let (client, initial_pwd) = tokio::task::spawn_blocking(move || -> Result<(FtpClientStream, String), String> {
@@ -585,15 +604,86 @@ impl ActiveFtpSession {
             host,
             port,
             username,
+            password: pass_stored,
             is_secure: secure,
             current_dir: Arc::new(RwLock::new(clean_pwd)),
             client: Arc::new(Mutex::new(client)),
         })
     }
 
+    pub async fn reconnect(&self) -> Result<(), String> {
+        let addr = format!("{}:{}", self.host, self.port);
+        let user = self.username.clone();
+        let pass = self.password.clone().unwrap_or_default();
+        let h = self.host.clone();
+        let secure = self.is_secure;
+        let client_arc = self.client.clone();
+        let current_dir_arc = self.current_dir.clone();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+
+            let new_stream = if secure {
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                let root_store = rustls::RootCertStore::empty();
+                let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+                    .with_root_certificates(root_store)
+                    .with_no_client_auth();
+
+                config
+                    .dangerous()
+                    .set_certificate_verifier(Arc::new(AllowAnyCertVerifier));
+
+                let connector = RustlsConnector::from(Arc::new(config));
+
+                let stream = RustlsFtpStream::connect(&addr)
+                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+                let mut secure_stream = stream
+                    .into_secure(connector, &h)
+                    .map_err(|e| format!("Failed to establish TLS encryption (FTPS): {}", e))?;
+
+                secure_stream.set_passive_nat_workaround(true);
+                secure_stream
+                    .login(&user, &pass)
+                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
+
+                FtpClientStream::Secure(secure_stream)
+            } else {
+                let mut stream = FtpStream::connect(&addr)
+                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+                stream.set_passive_nat_workaround(true);
+                stream
+                    .login(&user, &pass)
+                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
+
+                FtpClientStream::Plain(stream)
+            };
+
+            let cached_dir = {
+                let dir_guard = current_dir_arc.blocking_read();
+                dir_guard.clone()
+            };
+
+            *guard = new_stream;
+
+            if !cached_dir.is_empty() && cached_dir != "/" {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => { let _ = s.cwd(&cached_dir); }
+                    FtpClientStream::Secure(s) => { let _ = s.cwd(&cached_dir); }
+                }
+            }
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("FTP reconnect failed: {}", e))?
+    }
+
     pub async fn ping(&self) -> bool {
         let client_arc = self.client.clone();
-        tokio::task::spawn_blocking(move || {
+        let is_ok = tokio::task::spawn_blocking(move || {
             let mut guard = match client_arc.try_lock() {
                 Ok(g) => g,
                 Err(_) => return true,
@@ -605,10 +695,33 @@ impl ActiveFtpSession {
             }
         })
         .await
-        .unwrap_or(false)
+        .unwrap_or(false);
+
+        if !is_ok {
+            if self.reconnect().await.is_ok() {
+                return true;
+            }
+        }
+
+        is_ok
     }
 
     pub async fn list_dir(&self, target_path: &str) -> Result<(String, Vec<SftpFileEntry>), String> {
+        match self.try_list_dir(target_path).await {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                if is_connection_error(&e) {
+                    log::info!("[ftp] Connection dropped during list_dir, attempting auto-reconnect...");
+                    if self.reconnect().await.is_ok() {
+                        return self.try_list_dir(target_path).await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn try_list_dir(&self, target_path: &str) -> Result<(String, Vec<SftpFileEntry>), String> {
         let client_arc = self.client.clone();
         let current_dir_arc = self.current_dir.clone();
         let path = target_path.trim().to_string();
@@ -853,6 +966,21 @@ impl ActiveFtpSession {
     }
 
     pub async fn read_file_binary(&self, path: &str) -> Result<Vec<u8>, String> {
+        match self.try_read_file_binary(path).await {
+            Ok(bytes) => Ok(bytes),
+            Err(e) => {
+                if is_connection_error(&e) {
+                    log::info!("[ftp] Connection dropped during read_file_binary, reconnecting...");
+                    if self.reconnect().await.is_ok() {
+                        return self.try_read_file_binary(path).await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn try_read_file_binary(&self, path: &str) -> Result<Vec<u8>, String> {
         let client_arc = self.client.clone();
         let p = path.to_string();
 
@@ -926,6 +1054,21 @@ impl ActiveFtpSession {
     }
 
     pub async fn write_file_text(&self, path: &str, content: &str) -> Result<(), String> {
+        match self.try_write_file_text(path, content).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                if is_connection_error(&e) {
+                    log::info!("[ftp] Connection dropped during write_file_text, reconnecting...");
+                    if self.reconnect().await.is_ok() {
+                        return self.try_write_file_text(path, content).await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn try_write_file_text(&self, path: &str, content: &str) -> Result<(), String> {
         let client_arc = self.client.clone();
         let p = path.to_string();
         let bytes = content.as_bytes().to_vec();

@@ -71,6 +71,7 @@ const emit = defineEmits<{
   (e: 'navigate-up'): void
   (e: 'navigate-to', path: string): void
   (e: 'refresh'): void
+  (e: 'reconnect'): void
   (e: 'new-file'): void
   (e: 'new-folder'): void
   (e: 'permissions', file: SftpFileEntry): void
@@ -477,13 +478,22 @@ defineExpose({
         </div>
         <p class="text-xs font-semibold text-red-300 mb-1">Failed to read remote directory</p>
         <p class="text-[11px] text-red-400/80 max-w-sm mb-4 font-mono break-all">{{ sftpStore.remoteError }}</p>
-        <button
-          @click="emit('refresh')"
-          class="px-3 py-1.5 rounded-lg border text-xs font-medium transition"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
-        >
-          🔄 Retry
-        </button>
+        <div class="flex items-center space-x-2">
+          <button
+            @click="emit('reconnect')"
+            class="px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm hover:opacity-90 cursor-pointer text-amber-200 bg-amber-900/50 border-amber-600/60"
+          >
+            <span>🔄</span>
+            <span>Reconnect Now</span>
+          </button>
+          <button
+            @click="emit('refresh')"
+            class="px-3 py-1.5 rounded-lg border text-xs font-medium transition cursor-pointer"
+            :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+          >
+            Retry
+          </button>
+        </div>
       </div>
       <table
         v-else

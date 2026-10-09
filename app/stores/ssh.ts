@@ -61,7 +61,25 @@ export const useSshStore = defineStore('ssh', () => {
   const sessions = ref<SshSessionItem[]>([])
   const activeSessionId = ref<string | null>(null)
   const ACTIVE_SESSION_STORAGE_KEY = 'termsftp_active_session_id'
-  const lastConnectConfigs = ref<Record<string, SshConnectConfig | FtpConnectConfig>>({})
+  const LAST_CONNECT_CONFIGS_KEY = 'termsftp_last_connect_configs'
+
+  const loadSavedConfigs = (): Record<string, SshConnectConfig | FtpConnectConfig> => {
+    try {
+      const saved = sessionStorage.getItem(LAST_CONNECT_CONFIGS_KEY)
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  }
+
+  const lastConnectConfigs = ref<Record<string, SshConnectConfig | FtpConnectConfig>>(loadSavedConfigs())
+
+  function saveConfig(sessionId: string, config: SshConnectConfig | FtpConnectConfig) {
+    lastConnectConfigs.value[sessionId] = config
+    try {
+      sessionStorage.setItem(LAST_CONNECT_CONFIGS_KEY, JSON.stringify(lastConnectConfigs.value))
+    } catch {}
+  }
 
   const activeSession = computed(() =>
     sessions.value.find((s) => s.sessionId === activeSessionId.value)
@@ -127,8 +145,7 @@ export const useSshStore = defineStore('ssh', () => {
       item.sessionId = sessionId
       item.status = 'connected'
       activeSessionId.value = sessionId
-      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId)
-      lastConnectConfigs.value[sessionId] = config
+      saveConfig(sessionId, config)
       return sessionId
     } catch (err: any) {
       sessions.value = sessions.value.filter((s) => s.sessionId !== tempId)
@@ -162,7 +179,7 @@ export const useSshStore = defineStore('ssh', () => {
       item.status = 'connected'
       activeSessionId.value = sessionId
       localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId)
-      lastConnectConfigs.value[sessionId] = config
+      saveConfig(sessionId, config)
       return sessionId
     } catch (err: any) {
       sessions.value = sessions.value.filter((s) => s.sessionId !== tempId)
