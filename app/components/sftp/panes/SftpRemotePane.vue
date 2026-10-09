@@ -15,6 +15,7 @@ import {
 } from 'lucide-vue-next'
 import { useSftpStore, type SftpFileEntry } from '../../../stores/sftp'
 import { useSettingsStore } from '../../../stores/settings'
+import { useSshStore } from '../../../stores/ssh'
 import FileIcon from '../../FileIcon.vue'
 import CatppuccinIcon from '../../CatppuccinIcon.vue'
 import SftpComparisonBadge from '../compare/SftpComparisonBadge.vue'
@@ -97,6 +98,14 @@ const emit = defineEmits<{
 
 const sftpStore = useSftpStore()
 const settingsStore = useSettingsStore()
+const sshStore = useSshStore()
+
+const protocolLabel = computed(() => {
+  const sess = sshStore.sessions.find(s => s.sessionId === props.sessionId)
+  if (sess?.protocol === 'ftps') return 'Remote FTPS'
+  if (sess?.protocol === 'ftp') return 'Remote FTP'
+  return 'Remote SFTP'
+})
 
 const rootEl = ref<HTMLElement | null>(null)
 const filterInputRef = ref<HTMLInputElement | null>(null)
@@ -151,7 +160,7 @@ defineExpose({
           :style="{ backgroundColor: 'var(--color-accent-secondary)' }"
           title="Active navigation pane"
         />
-        <span class="text-xs font-semibold" :style="{ color: 'var(--color-accent-secondary)' }">Remote SFTP</span>
+        <span class="text-xs font-semibold" :style="{ color: 'var(--color-accent-secondary)' }">{{ protocolLabel }}</span>
         <span v-if="sessionId" class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
           ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${sftpStore.remoteFiles.length}` : `${filteredFiles.length}` }} items)
         </span>

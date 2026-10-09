@@ -6,10 +6,12 @@ import defaultTheme from '../themes/default.json'
 import tokyoNightTheme from '../themes/tokyo-night.json'
 import draculaTheme from '../themes/dracula.json'
 import catppuccinTheme from '../themes/catppuccin-mocha.json'
+import catppuccinLatteTheme from '../themes/catppuccin-latte.json'
 import nordTheme from '../themes/nord.json'
 import oneDarkTheme from '../themes/one-dark.json'
 import monokaiTheme from '../themes/monokai-pro.json'
 import githubDarkTheme from '../themes/github-dark.json'
+import githubLightTheme from '../themes/github-light.json'
 
 export interface ThemeUiColors {
   bgApp: string
@@ -57,6 +59,7 @@ export interface AppTheme {
   description?: string
   author?: string
   isCustom?: boolean
+  isLight?: boolean
   ui: ThemeUiColors
   terminal: ThemeTerminalColors
 }
@@ -66,15 +69,45 @@ export const BUILT_IN_THEMES: AppTheme[] = [
   tokyoNightTheme as AppTheme,
   draculaTheme as AppTheme,
   catppuccinTheme as AppTheme,
+  catppuccinLatteTheme as AppTheme,
   nordTheme as AppTheme,
   oneDarkTheme as AppTheme,
   monokaiTheme as AppTheme,
   githubDarkTheme as AppTheme,
+  githubLightTheme as AppTheme,
 ]
+
+export function isLightTheme(theme?: AppTheme | null): boolean {
+  if (!theme) return false
+  if (typeof theme.isLight === 'boolean') {
+    return theme.isLight
+  }
+  const hex = (theme.ui?.bgApp || '').replace('#', '')
+  if (hex.length === 6) {
+    const r = parseInt(hex.slice(0, 2), 16)
+    const g = parseInt(hex.slice(2, 4), 16)
+    const b = parseInt(hex.slice(4, 6), 16)
+    const yiq = (r * 299 + g * 587 + b * 114) / 1000
+    return yiq >= 128
+  }
+  return false
+}
 
 export function applyThemeToDom(theme: AppTheme) {
   if (typeof document === 'undefined') return
   const root = document.documentElement
+  const isLight = isLightTheme(theme)
+
+  if (isLight) {
+    root.classList.remove('dark')
+    root.classList.add('light')
+    root.style.colorScheme = 'light'
+  } else {
+    root.classList.add('dark')
+    root.classList.remove('light')
+    root.style.colorScheme = 'dark'
+  }
+
   root.style.setProperty('--color-bg-app', theme.ui.bgApp)
   root.style.setProperty('--color-bg-header', theme.ui.bgHeader)
   root.style.setProperty('--color-bg-card', theme.ui.bgCard)
@@ -345,15 +378,19 @@ export const useThemeStore = defineStore('theme', () => {
     }
   }
 
+  const isCurrentThemeLight = computed(() => isLightTheme(currentTheme.value))
+
   return {
     allThemes,
     customThemes,
     currentThemeId,
     currentTheme,
+    isCurrentThemeLight,
     setTheme,
     importThemeFromJson,
     deleteCustomTheme,
     exportThemeJson,
     applyThemeToDom,
+    isLightTheme,
   }
 })

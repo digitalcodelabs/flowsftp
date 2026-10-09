@@ -12,7 +12,7 @@ import {
   Terminal,
 } from 'lucide-vue-next'
 import { useSettingsStore } from '../stores/settings'
-import { useThemeStore } from '../stores/theme'
+import { useThemeStore, isLightTheme } from '../stores/theme'
 import FileIcon from './FileIcon.vue'
 
 // CodeMirror 6 and Extensions
@@ -138,13 +138,13 @@ const buildThemeExtensions = (): Extension[] => {
         fontWeight: 'bold',
       },
       '.cm-activeLine': {
-        backgroundColor: ui.bgHover || 'rgba(255, 255, 255, 0.04)',
+        backgroundColor: ui.bgHover || (isLightTheme(theme) ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.04)'),
       },
       '.cm-selectionBackground, ::selection': {
-        backgroundColor: `${term.selectionBackground || 'rgba(99, 102, 241, 0.3)'} !important`,
+        backgroundColor: `${term.selectionBackground || (isLightTheme(theme) ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.3)')} !important`,
       },
       '&.cm-focused .cm-selectionBackground': {
-        backgroundColor: `${term.selectionBackground || 'rgba(99, 102, 241, 0.38)'} !important`,
+        backgroundColor: `${term.selectionBackground || (isLightTheme(theme) ? 'rgba(99, 102, 241, 0.28)' : 'rgba(99, 102, 241, 0.38)')} !important`,
       },
       '.cm-searchMatch': {
         backgroundColor: 'rgba(234, 179, 8, 0.3)',
@@ -178,7 +178,7 @@ const buildThemeExtensions = (): Extension[] => {
         width: '100%',
       },
     },
-    { dark: true }
+    { dark: !isLightTheme(theme) }
   )
 
   const highlightStyle = HighlightStyle.define([

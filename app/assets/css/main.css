@@ -86,7 +86,7 @@ html, body, #__nuxt {
 .btn-accent:hover {
   background: color-mix(in srgb, var(--color-accent) 34%, var(--color-bg-card, #181926)) !important;
   border-color: var(--color-accent) !important;
-  color: #ffffff !important;
+  color: var(--color-text-main, #ffffff) !important;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent) 25%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
 }
 .btn-accent:active {
@@ -105,7 +105,7 @@ html, body, #__nuxt {
 .btn-accent-secondary:hover {
   background: color-mix(in srgb, var(--color-accent-secondary) 34%, var(--color-bg-card, #181926)) !important;
   border-color: var(--color-accent-secondary) !important;
-  color: #ffffff !important;
+  color: var(--color-text-main, #ffffff) !important;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent-secondary) 25%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
 }
 .btn-accent-secondary:active {
@@ -122,9 +122,9 @@ html, body, #__nuxt {
 }
 .btn-theme-card:hover {
   background-color: var(--color-bg-hover) !important;
-  border-color: var(--color-accent, color-mix(in srgb, var(--color-border) 40%, white 60%)) !important;
-  color: #ffffff !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  border-color: var(--color-accent, color-mix(in srgb, var(--color-border) 40%, black 60%)) !important;
+  color: var(--color-text-main) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
 }
 .btn-theme-card:active {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;

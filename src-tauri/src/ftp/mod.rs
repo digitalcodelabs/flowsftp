@@ -3,8 +3,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use suppaftp::native_tls::TlsConnector;
-use suppaftp::{FtpStream, NativeTlsConnector, NativeTlsFtpStream};
+use suppaftp::{FtpStream, RustlsConnector, RustlsFtpStream};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 
@@ -13,9 +12,49 @@ use crate::sftp::{
     TransferProgress,
 };
 
+#[derive(Debug)]
+struct AllowAnyCertVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for AllowAnyCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 pub enum FtpClientStream {
     Plain(FtpStream),
-    Secure(NativeTlsFtpStream),
+    Secure(RustlsFtpStream),
 }
 
 pub struct ActiveFtpSession {
@@ -482,51 +521,58 @@ impl ActiveFtpSession {
         let pass = password.unwrap_or_default();
         let h = host.clone();
 
-        let client = tokio::task::spawn_blocking(move || -> Result<FtpClientStream, String> {
+        let (client, initial_pwd) = tokio::task::spawn_blocking(move || -> Result<(FtpClientStream, String), String> {
             if secure {
-                let connector = TlsConnector::builder()
-                    .danger_accept_invalid_certs(true)
-                    .build()
-                    .map_err(|e| format!("TLS configuration error: {}", e))?;
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                let root_store = rustls::RootCertStore::empty();
+                let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+                    .with_root_certificates(root_store)
+                    .with_no_client_auth();
 
-                let stream = NativeTlsFtpStream::connect(&addr)
+                config
+                    .dangerous()
+                    .set_certificate_verifier(Arc::new(AllowAnyCertVerifier));
+
+                let connector = RustlsConnector::from(Arc::new(config));
+
+                let stream = RustlsFtpStream::connect(&addr)
                     .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
 
                 let mut secure_stream = stream
-                    .into_secure(NativeTlsConnector::from(connector), &h)
-                    .map_err(|e| format!("Failed to establish TLS encryption (FTPS): {}", e))?;
+                    .into_secure(connector, &h)
+                    .map_err(|e| {
+                        format!(
+                            "Failed to establish TLS encryption (FTPS): {}. If this server does not support TLS/FTPS, try connecting with 'FTP (Plain)' protocol.",
+                            e
+                        )
+                    })?;
+
+                secure_stream.set_passive_nat_workaround(true);
 
                 secure_stream
                     .login(&user, &pass)
                     .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
 
-                Ok(FtpClientStream::Secure(secure_stream))
+                let pwd = secure_stream.pwd().unwrap_or_else(|_| "/".to_string());
+
+                Ok((FtpClientStream::Secure(secure_stream), pwd))
             } else {
                 let mut stream = FtpStream::connect(&addr)
                     .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+                stream.set_passive_nat_workaround(true);
 
                 stream
                     .login(&user, &pass)
                     .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
 
-                Ok(FtpClientStream::Plain(stream))
+                let pwd = stream.pwd().unwrap_or_else(|_| "/".to_string());
+
+                Ok((FtpClientStream::Plain(stream), pwd))
             }
         })
         .await
         .map_err(|e| format!("FTP worker thread failed: {}", e))??;
-
-        // Get initial working directory
-        let client_arc = Arc::new(Mutex::new(client));
-        let c_clone = client_arc.clone();
-        let initial_pwd = tokio::task::spawn_blocking(move || -> String {
-            let mut guard = c_clone.blocking_lock();
-            match &mut *guard {
-                FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
-                FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
-            }
-        })
-        .await
-        .unwrap_or_else(|_| "/".to_string());
 
         let clean_pwd = if initial_pwd.is_empty() {
             "/".to_string()
@@ -541,45 +587,75 @@ impl ActiveFtpSession {
             username,
             is_secure: secure,
             current_dir: Arc::new(RwLock::new(clean_pwd)),
-            client: client_arc,
+            client: Arc::new(Mutex::new(client)),
         })
+    }
+
+    pub async fn ping(&self) -> bool {
+        let client_arc = self.client.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = match client_arc.try_lock() {
+                Ok(g) => g,
+                Err(_) => return true,
+            };
+
+            match &mut *guard {
+                FtpClientStream::Plain(s) => s.noop().is_ok(),
+                FtpClientStream::Secure(s) => s.noop().is_ok(),
+            }
+        })
+        .await
+        .unwrap_or(false)
     }
 
     pub async fn list_dir(&self, target_path: &str) -> Result<(String, Vec<SftpFileEntry>), String> {
         let client_arc = self.client.clone();
         let current_dir_arc = self.current_dir.clone();
-        let path = target_path.to_string();
+        let path = target_path.trim().to_string();
 
         tokio::task::spawn_blocking(move || -> Result<(String, Vec<SftpFileEntry>), String> {
             let mut guard = client_arc.blocking_lock();
 
-            let target = if path.trim().is_empty() || path == "." {
-                match &mut *guard {
-                    FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
-                    FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
-                }
-            } else {
-                path
+            let cached_dir = {
+                let dir_guard = current_dir_arc.blocking_read();
+                dir_guard.clone()
             };
 
-            // Change directory to target
-            match &mut *guard {
-                FtpClientStream::Plain(s) => {
-                    s.cwd(&target).map_err(|e| format!("Failed to change directory to '{}': {}", target, e))?;
-                }
-                FtpClientStream::Secure(s) => {
-                    s.cwd(&target).map_err(|e| format!("Failed to change directory to '{}': {}", target, e))?;
-                }
-            }
+            let is_current = path.is_empty() || path == "." || path == cached_dir;
 
-            let canonical_dir = match &mut *guard {
-                FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| target.clone()),
-                FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| target.clone()),
+            let canonical_dir = if is_current {
+                // If querying current directory, avoid calling CWD as it can trigger spurious syntax errors on chrooted roots.
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| cached_dir.clone()),
+                    FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| cached_dir.clone()),
+                }
+            } else {
+                // Navigate to target directory
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        s.cwd(&path).map_err(|e| format!("Failed to change directory to '{}': {}", path, e))?;
+                        s.pwd().unwrap_or_else(|_| path.clone())
+                    }
+                    FtpClientStream::Secure(s) => {
+                        s.cwd(&path).map_err(|e| format!("Failed to change directory to '{}': {}", path, e))?;
+                        s.pwd().unwrap_or_else(|_| path.clone())
+                    }
+                }
             };
 
             let lines = match &mut *guard {
                 FtpClientStream::Plain(s) => s.list(None).map_err(|e| format!("Failed to list directory: {}", e))?,
-                FtpClientStream::Secure(s) => s.list(None).map_err(|e| format!("Failed to list directory: {}", e))?,
+                FtpClientStream::Secure(s) => s.list(None).map_err(|e| {
+                    let err_str = e.to_string();
+                    if err_str.contains("invalid syntax") || err_str.contains("10053") {
+                        format!(
+                            "Failed to list directory: {}. The server aborted the FTPS data connection. On vsFTPd servers, this occurs when 'require_ssl_reuse=YES' is enabled (vsFTPd rejects TLS data channels without session reuse). Please add 'require_ssl_reuse=NO' to /etc/vsftpd.conf on the server and restart vsftpd.",
+                            e
+                        )
+                    } else {
+                        format!("Failed to list directory: {}", e)
+                    }
+                })?,
             };
 
             let mut entries = Vec::new();
@@ -770,6 +846,125 @@ impl ActiveFtpSession {
             match &mut *guard {
                 FtpClientStream::Plain(s) => s.rename(&src, &dst).map_err(|e| format!("Failed to rename item: {}", e)),
                 FtpClientStream::Secure(s) => s.rename(&src, &dst).map_err(|e| format!("Failed to rename item: {}", e)),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn read_file_binary(&self, path: &str) -> Result<Vec<u8>, String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+            let mut guard = client_arc.blocking_lock();
+            let mut buf = Vec::new();
+
+            match &mut *guard {
+                FtpClientStream::Plain(s) => {
+                    let mut reader = s
+                        .retr_as_stream(&p)
+                        .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
+                    let mut buffer = [0u8; 64 * 1024];
+                    let max_bytes = 25 * 1024 * 1024;
+                    let mut total_read = 0;
+                    loop {
+                        let to_read = std::cmp::min(buffer.len(), max_bytes - total_read);
+                        if to_read == 0 {
+                            let _ = std::io::copy(&mut reader, &mut std::io::sink());
+                            break;
+                        }
+                        let n = reader
+                            .read(&mut buffer[..to_read])
+                            .map_err(|e| format!("Failed to read file '{}': {}", p, e))?;
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&buffer[..n]);
+                        total_read += n;
+                    }
+                    let _ = s.finalize_retr_stream(reader);
+                }
+                FtpClientStream::Secure(s) => {
+                    let mut reader = s
+                        .retr_as_stream(&p)
+                        .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
+                    let mut buffer = [0u8; 64 * 1024];
+                    let max_bytes = 25 * 1024 * 1024;
+                    let mut total_read = 0;
+                    loop {
+                        let to_read = std::cmp::min(buffer.len(), max_bytes - total_read);
+                        if to_read == 0 {
+                            let _ = std::io::copy(&mut reader, &mut std::io::sink());
+                            break;
+                        }
+                        let n = reader
+                            .read(&mut buffer[..to_read])
+                            .map_err(|e| format!("Failed to read file '{}': {}", p, e))?;
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&buffer[..n]);
+                        total_read += n;
+                    }
+                    let _ = s.finalize_retr_stream(reader);
+                }
+            }
+
+            Ok(buf)
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn read_file_text(&self, path: &str) -> Result<String, String> {
+        let bytes = self.read_file_binary(path).await?;
+        match String::from_utf8(bytes) {
+            Ok(s) => Ok(s),
+            Err(e) => Ok(String::from_utf8_lossy(e.as_bytes()).to_string()),
+        }
+    }
+
+    pub async fn write_file_text(&self, path: &str, content: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+        let bytes = content.as_bytes().to_vec();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            let mut cursor = std::io::Cursor::new(bytes);
+
+            match &mut *guard {
+                FtpClientStream::Plain(s) => {
+                    s.put_file(&p, &mut cursor)
+                        .map(|_| ())
+                        .map_err(|e| format!("Failed to save file '{}': {}", p, e))
+                }
+                FtpClientStream::Secure(s) => {
+                    s.put_file(&p, &mut cursor)
+                        .map(|_| ())
+                        .map_err(|e| format!("Failed to save file '{}': {}", p, e))
+                }
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn set_permissions(&self, path: &str, permissions: u32) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            let cmd = format!("SITE CHMOD {:o} {}", permissions, p);
+            match &mut *guard {
+                FtpClientStream::Plain(s) => {
+                    s.site(&cmd).map(|_| ()).map_err(|e| format!("Failed to change permissions: {}", e))
+                }
+                FtpClientStream::Secure(s) => {
+                    s.site(&cmd).map(|_| ()).map_err(|e| format!("Failed to change permissions: {}", e))
+                }
             }
         })
         .await
@@ -975,3 +1170,4 @@ pub fn parse_ftp_list_line(line: &str, current_dir: &str) -> Option<SftpFileEntr
         group,
     })
 }
+

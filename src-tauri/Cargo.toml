@@ -32,7 +32,9 @@ russh = { version = "0.64", default-features = false, features = ["ring", "flate
 russh-sftp = "3.0"
 dirs = "6.0"
 rfd = "0.15"
-suppaftp = { version = "6.0", features = ["native-tls"] }
+suppaftp = { version = "6.0", features = ["rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
 
 
 

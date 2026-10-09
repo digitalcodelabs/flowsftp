@@ -285,6 +285,18 @@ let reconnectTimer: ReturnType<typeof setInterval> | null = null
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 let lastHeartbeatTime = Date.now()
 
+const isFtp = computed(() => {
+  const session = sshStore.sessions.find(s => s.sessionId === props.sessionId)
+  return session?.protocol === 'ftp' || session?.protocol === 'ftps'
+})
+
+const protocolBannerTitle = computed(() => {
+  const session = sshStore.sessions.find(s => s.sessionId === props.sessionId)
+  if (session?.protocol === 'ftps') return 'FTPS Connection Dropped'
+  if (session?.protocol === 'ftp') return 'FTP Connection Dropped'
+  return 'SFTP Connection Dropped'
+})
+
 const startHeartbeat = () => {
   if (heartbeatInterval) clearInterval(heartbeatInterval)
   lastHeartbeatTime = Date.now()
@@ -298,6 +310,13 @@ const startHeartbeat = () => {
     const wokeFromSleep = elapsed > 40_000
 
     if (props.sessionId && !isReconnecting.value) {
+      // FTP sessions keep connection alive with NOOP without showing auto-reconnect banner
+      if (isFtp.value) {
+        isConnectionDropped.value = false
+        await sftpStore.checkSessionHealth(props.sessionId)
+        return
+      }
+
       const isAlive = await sftpStore.checkSessionHealth(props.sessionId)
       if (!isAlive || wokeFromSleep) {
         const confirmAlive = await sftpStore.checkSessionHealth(props.sessionId)
@@ -312,7 +331,7 @@ const startHeartbeat = () => {
 }
 
 const triggerConnectionDropped = () => {
-  if (isConnectionDropped.value || isReconnecting.value) return
+  if (isFtp.value || isConnectionDropped.value || isReconnecting.value) return
   isConnectionDropped.value = true
   autoReconnectCountdown.value = 5
 
@@ -371,6 +390,7 @@ const performAutoReconnect = async () => {
 
 const handleNetworkOnline = async () => {
   if (props.sessionId) {
+    if (isFtp.value) return
     const isAlive = await sftpStore.checkSessionHealth(props.sessionId)
     if (!isAlive) {
       performAutoReconnect()
@@ -1804,7 +1824,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     >
       <div class="flex items-center space-x-2.5">
         <WifiOff class="w-4 h-4 text-amber-400 animate-pulse flex-shrink-0" />
-        <span class="font-semibold text-amber-300">SFTP Connection Dropped</span>
+        <span class="font-semibold text-amber-300">{{ protocolBannerTitle }}</span>
         <span class="text-zinc-300 hidden md:inline">· Network change or computer wake</span>
         <span class="font-mono text-amber-400 font-bold ml-1">
           {{ isReconnecting ? 'Reconnecting now...' : `Auto-reconnecting in ${autoReconnectCountdown}s` }}

@@ -443,6 +443,10 @@ pub async fn sftp_set_permissions(
     recursive: bool,
     target_type: Option<String>,
 ) -> Result<(), String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.set_permissions(&path, permissions).await;
+    }
+
     let session = state
         .get_session(&session_id)
         .await
@@ -458,6 +462,10 @@ pub async fn sftp_read_file_text(
     session_id: String,
     path: String,
 ) -> Result<String, String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.read_file_text(&path).await;
+    }
+
     let session = state
         .get_session(&session_id)
         .await
@@ -474,6 +482,10 @@ pub async fn sftp_write_file_text(
     path: String,
     content: String,
 ) -> Result<(), String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.write_file_text(&path, &content).await;
+    }
+
     let session = state
         .get_session(&session_id)
         .await
@@ -504,6 +516,10 @@ pub async fn sftp_read_file_binary(
     session_id: String,
     path: String,
 ) -> Result<Vec<u8>, String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.read_file_binary(&path).await;
+    }
+
     let session = state
         .get_session(&session_id)
         .await
@@ -536,6 +552,8 @@ pub async fn sftp_ping(
             }
             Err(_) => Ok(false),
         }
+    } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        Ok(ftp.ping().await)
     } else {
         Ok(false)
     }

@@ -30,7 +30,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useSftpStore } from '../stores/sftp'
 import { useVaultStore } from '../stores/vault'
 import { useSettingsStore, TERMINAL_FONTS, BROWSER_FONTS } from '../stores/settings'
-import { useThemeStore, type AppTheme } from '../stores/theme'
+import { useThemeStore, isLightTheme, type AppTheme } from '../stores/theme'
 import FileIcon from './FileIcon.vue'
 import {
   KEYMAP_ACTIONS_META,
@@ -435,6 +435,13 @@ const handleResetVault = async () => {
                       :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
                     >
                       Preset
+                    </span>
+                    <span
+                      v-if="isLightTheme(theme)"
+                      class="px-1.5 py-0.2 rounded text-[9px] font-mono tracking-wider font-semibold border shrink-0"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: theme.ui.accent }"
+                    >
+                      ☀️ Light
                     </span>
                   </div>
 
