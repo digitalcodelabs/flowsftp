@@ -1,0 +1,977 @@
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+use suppaftp::native_tls::TlsConnector;
+use suppaftp::{FtpStream, NativeTlsConnector, NativeTlsFtpStream};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::{Mutex, RwLock};
+
+use crate::sftp::{
+    normalize_to_native_path, FileConflictInfo, RemoteCrawlTask, SftpFileEntry,
+    TransferProgress,
+};
+
+pub enum FtpClientStream {
+    Plain(FtpStream),
+    Secure(NativeTlsFtpStream),
+}
+
+pub struct ActiveFtpSession {
+    pub session_id: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub is_secure: bool,
+    pub current_dir: Arc<RwLock<String>>,
+    client: Arc<Mutex<FtpClientStream>>,
+}
+
+macro_rules! run_ftp_download {
+    ($stream:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr) => {{
+        let stream = $stream;
+        let (native_local, _) = normalize_to_native_path($local_path);
+        let file_name = Path::new($remote_path)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+
+        let total_size = stream.size($remote_path).unwrap_or(0) as u64;
+        let event_name = format!("sftp:progress:{}", $transfer_id);
+
+        let conflict = $conflict_action.as_deref().unwrap_or("overwrite");
+        if conflict == "skip" && native_local.exists() {
+            let _ = $app_handle.emit(
+                &event_name,
+                TransferProgress {
+                    transfer_id: $transfer_id.to_string(),
+                    file_name,
+                    direction: "download".to_string(),
+                    bytes_transferred: total_size,
+                    total_bytes: total_size,
+                    speed_bytes_per_sec: 0,
+                    is_complete: true,
+                    error: Some("Skipped (file exists)".to_string()),
+                },
+            );
+            return Ok::<(), String>(());
+        }
+
+        // Ensure parent directory exists
+        if let Some(parent) = native_local.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let mut reader = stream
+            .retr_as_stream($remote_path)
+            .map_err(|e| format!("Failed to retrieve file: {}", e))?;
+
+        let mut local_file = File::create(&native_local)
+            .map_err(|e| format!("Failed to create local destination file: {}", e))?;
+
+        let mut buffer = [0u8; 64 * 1024];
+        let mut transferred = 0u64;
+        let start_time = Instant::now();
+        let mut last_emit = Instant::now();
+
+        // Emit initial 0% progress immediately so frontend queue displays the item in active state
+        let _ = $app_handle.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id: $transfer_id.to_string(),
+                file_name: file_name.clone(),
+                direction: "download".to_string(),
+                bytes_transferred: 0,
+                total_bytes: total_size,
+                speed_bytes_per_sec: 0,
+                is_complete: false,
+                error: None,
+            },
+        );
+
+        let state = $app_handle.state::<crate::state::AppState>();
+        loop {
+            if state.is_transfer_cancelled($transfer_id) {
+                let err_msg = "Transfer cancelled by user".to_string();
+                log::info!("[ftp_download] Cancelled by user: transfer_id='{}'", $transfer_id);
+                let _ = $app_handle.emit(
+                    &event_name,
+                    TransferProgress {
+                        transfer_id: $transfer_id.to_string(),
+                        file_name: file_name.clone(),
+                        direction: "download".to_string(),
+                        bytes_transferred: transferred,
+                        total_bytes: if total_size > 0 { total_size } else { transferred },
+                        speed_bytes_per_sec: 0,
+                        is_complete: true,
+                        error: Some(err_msg.clone()),
+                    },
+                );
+                return Err(err_msg);
+            }
+
+            let bytes_read = reader
+                .read(&mut buffer)
+                .map_err(|e| format!("Failed to read from FTP stream: {}", e))?;
+
+            if bytes_read == 0 {
+                break;
+            }
+
+            local_file
+                .write_all(&buffer[..bytes_read])
+                .map_err(|e| format!("Failed to write to local file: {}", e))?;
+
+            transferred += bytes_read as u64;
+
+            if last_emit.elapsed().as_millis() >= 100 {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed_secs > 0.0 {
+                    (transferred as f64 / elapsed_secs) as u64
+                } else {
+                    0
+                };
+
+                let _ = $app_handle.emit(
+                    &event_name,
+                    TransferProgress {
+                        transfer_id: $transfer_id.to_string(),
+                        file_name: file_name.clone(),
+                        direction: "download".to_string(),
+                        bytes_transferred: transferred,
+                        total_bytes: if total_size > 0 { total_size } else { transferred },
+                        speed_bytes_per_sec: speed,
+                        is_complete: false,
+                        error: None,
+                    },
+                );
+                last_emit = Instant::now();
+            }
+        }
+
+        let _ = $app_handle.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id: $transfer_id.to_string(),
+                file_name,
+                direction: "download".to_string(),
+                bytes_transferred: transferred,
+                total_bytes: transferred,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: None,
+            },
+        );
+
+        let _ = stream.finalize_retr_stream(reader);
+        Ok::<(), String>(())
+    }};
+}
+
+macro_rules! ensure_ftp_dir_recursive {
+    ($stream:expr, $path:expr) => {{
+        let clean = $path.trim().replace('\\', "/");
+        let segments: Vec<&str> = clean.split('/').filter(|s| !s.is_empty()).collect();
+        if !segments.is_empty() {
+            let is_absolute = clean.starts_with('/');
+            let mut current = if is_absolute { String::from("/") } else { String::new() };
+            for seg in segments {
+                if !current.is_empty() && !current.ends_with('/') {
+                    current.push('/');
+                }
+                current.push_str(seg);
+                if current == "/" {
+                    continue;
+                }
+                let _ = $stream.mkdir(&current);
+            }
+        }
+    }};
+}
+
+macro_rules! crawl_ftp_single_path {
+    ($stream:expr, $clean_p:expr, $target_local:expr, $results:expr) => {{
+        let stream = $stream;
+        let p_str = $clean_p;
+        if stream.cwd(p_str).is_ok() {
+            let folder_name = p_str.split('/').last().unwrap_or("folder");
+            let local_base = if $target_local.is_empty() {
+                folder_name.to_string()
+            } else {
+                format!("{}/{}", $target_local, folder_name)
+            };
+
+            let mut dirs_to_visit = vec![p_str.to_string()];
+            while let Some(dir) = dirs_to_visit.pop() {
+                if stream.cwd(&dir).is_err() {
+                    continue;
+                }
+                let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
+                let lines = match stream.list(None) {
+                    Ok(l) => l,
+                    Err(_) => continue,
+                };
+
+                for line in lines {
+                    if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                        if entry.name == "." || entry.name == ".." {
+                            continue;
+                        }
+                        if entry.is_dir {
+                            dirs_to_visit.push(entry.path);
+                        } else {
+                            let rel = entry.path
+                                .strip_prefix(p_str)
+                                .unwrap_or(&entry.path)
+                                .trim_start_matches('/');
+                            let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
+                            $results.push(RemoteCrawlTask {
+                                remote_path: entry.path,
+                                local_path,
+                                file_name: entry.name,
+                                size: entry.size,
+                            });
+                        }
+                    }
+                }
+            }
+        } else {
+            let file_name = p_str.split('/').last().unwrap_or("file").to_string();
+            let size = stream.size(p_str).unwrap_or(0) as u64;
+            let local_path = if $target_local.is_empty() {
+                file_name.clone()
+            } else {
+                format!("{}/{}", $target_local, file_name)
+            };
+            $results.push(RemoteCrawlTask {
+                remote_path: p_str.to_string(),
+                local_path,
+                file_name,
+                size,
+            });
+        }
+    }};
+}
+
+macro_rules! remove_ftp_dir_recursive {
+    ($stream:expr, $target:expr) => {{
+        let stream = $stream;
+        let p_str = $target;
+
+        if stream.rmdir(p_str).is_ok() {
+            Ok::<(), String>(())
+        } else {
+            let initial_pwd = match stream.pwd() {
+                Ok(pwd) => pwd,
+                Err(_) => "/".to_string(),
+            };
+
+            let mut files_to_delete = Vec::new();
+            let mut dirs_to_delete = Vec::new();
+            let mut dirs_to_visit = vec![p_str.to_string()];
+
+            while let Some(dir) = dirs_to_visit.pop() {
+                if stream.cwd(&dir).is_err() {
+                    continue;
+                }
+                let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
+                dirs_to_delete.push(dir.clone());
+
+                let lines = match stream.list(None) {
+                    Ok(l) => l,
+                    Err(_) => continue,
+                };
+
+                for line in lines {
+                    if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                        if entry.name == "." || entry.name == ".." {
+                            continue;
+                        }
+                        if entry.is_dir {
+                            dirs_to_visit.push(entry.path);
+                        } else {
+                            files_to_delete.push(entry.path);
+                        }
+                    }
+                }
+            }
+
+            // Always restore initial PWD before deleting
+            let _ = stream.cwd(&initial_pwd);
+
+            // Delete files first
+            for file_path in files_to_delete {
+                let _ = stream.rm(&file_path);
+            }
+
+            // Delete subdirectories (reverse order: deepest first)
+            for dir_path in dirs_to_delete.into_iter().rev() {
+                let _ = stream.rmdir(&dir_path);
+            }
+
+            // Finally remove the target directory itself
+            stream.rmdir(p_str).map_err(|e| format!("Failed to remove FTP directory '{}': {}", p_str, e))
+        }
+    }};
+}
+
+macro_rules! run_ftp_upload {
+    ($stream:expr, $app_handle:expr, $local_path:expr, $remote_path:expr, $transfer_id:expr, $conflict_action:expr) => {{
+        let stream = $stream;
+        let (native_local, _) = normalize_to_native_path($local_path);
+        let file_name = native_local
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+
+        let mut local_file = File::open(&native_local)
+            .map_err(|e| format!("Failed to open local source file: {}", e))?;
+
+        let total_size = local_file
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        let event_name = format!("sftp:progress:{}", $transfer_id);
+
+        let conflict = $conflict_action.as_deref().unwrap_or("overwrite");
+        if conflict == "skip" && stream.size($remote_path).is_ok() {
+            let _ = $app_handle.emit(
+                &event_name,
+                TransferProgress {
+                    transfer_id: $transfer_id.to_string(),
+                    file_name,
+                    direction: "upload".to_string(),
+                    bytes_transferred: total_size,
+                    total_bytes: total_size,
+                    speed_bytes_per_sec: 0,
+                    is_complete: true,
+                    error: Some("Skipped (file exists)".to_string()),
+                },
+            );
+            return Ok::<(), String>(());
+        }
+
+        let mut writer = match stream.put_with_stream($remote_path) {
+            Ok(w) => w,
+            Err(initial_err) => {
+                if let Some(parent) = Path::new($remote_path).parent() {
+                    let parent_str = parent.to_string_lossy().replace('\\', "/");
+                    if !parent_str.is_empty() && parent_str != "/" && parent_str != "." {
+                        ensure_ftp_dir_recursive!(stream, &parent_str);
+                    }
+                }
+                stream.put_with_stream($remote_path).map_err(|e| {
+                    format!("Failed to initiate FTP upload for '{}' (initial error: {}): {}", $remote_path, initial_err, e)
+                })?
+            }
+        };
+
+        let mut buffer = [0u8; 64 * 1024];
+        let mut transferred = 0u64;
+        let start_time = Instant::now();
+        let mut last_emit = Instant::now();
+
+        // Emit initial 0% progress immediately so frontend queue displays the item in active state
+        let _ = $app_handle.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id: $transfer_id.to_string(),
+                file_name: file_name.clone(),
+                direction: "upload".to_string(),
+                bytes_transferred: 0,
+                total_bytes: total_size,
+                speed_bytes_per_sec: 0,
+                is_complete: false,
+                error: None,
+            },
+        );
+
+        let state = $app_handle.state::<crate::state::AppState>();
+        loop {
+            if state.is_transfer_cancelled($transfer_id) {
+                let err_msg = "Transfer cancelled by user".to_string();
+                log::info!("[ftp_upload] Cancelled by user: transfer_id='{}'", $transfer_id);
+                let _ = $app_handle.emit(
+                    &event_name,
+                    TransferProgress {
+                        transfer_id: $transfer_id.to_string(),
+                        file_name: file_name.clone(),
+                        direction: "upload".to_string(),
+                        bytes_transferred: transferred,
+                        total_bytes: total_size,
+                        speed_bytes_per_sec: 0,
+                        is_complete: true,
+                        error: Some(err_msg.clone()),
+                    },
+                );
+                return Err(err_msg);
+            }
+
+            let bytes_read = local_file
+                .read(&mut buffer)
+                .map_err(|e| format!("Failed to read from local file: {}", e))?;
+
+            if bytes_read == 0 {
+                break;
+            }
+
+            writer
+                .write_all(&buffer[..bytes_read])
+                .map_err(|e| format!("Failed to write to FTP stream: {}", e))?;
+
+            transferred += bytes_read as u64;
+
+            if last_emit.elapsed().as_millis() >= 100 {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed_secs > 0.0 {
+                    (transferred as f64 / elapsed_secs) as u64
+                } else {
+                    0
+                };
+
+                let _ = $app_handle.emit(
+                    &event_name,
+                    TransferProgress {
+                        transfer_id: $transfer_id.to_string(),
+                        file_name: file_name.clone(),
+                        direction: "upload".to_string(),
+                        bytes_transferred: transferred,
+                        total_bytes: total_size,
+                        speed_bytes_per_sec: speed,
+                        is_complete: false,
+                        error: None,
+                    },
+                );
+                last_emit = Instant::now();
+            }
+        }
+
+        let _ = stream.finalize_put_stream(writer);
+
+        let _ = $app_handle.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id: $transfer_id.to_string(),
+                file_name,
+                direction: "upload".to_string(),
+                bytes_transferred: transferred,
+                total_bytes: total_size,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: None,
+            },
+        );
+
+        Ok::<(), String>(())
+    }};
+}
+
+impl ActiveFtpSession {
+    pub async fn connect(
+        session_id: String,
+        host: String,
+        port: u16,
+        username: String,
+        password: Option<String>,
+        secure: bool,
+    ) -> Result<Self, String> {
+        let addr = format!("{}:{}", host, port);
+        let user = username.clone();
+        let pass = password.unwrap_or_default();
+        let h = host.clone();
+
+        let client = tokio::task::spawn_blocking(move || -> Result<FtpClientStream, String> {
+            if secure {
+                let connector = TlsConnector::builder()
+                    .danger_accept_invalid_certs(true)
+                    .build()
+                    .map_err(|e| format!("TLS configuration error: {}", e))?;
+
+                let stream = NativeTlsFtpStream::connect(&addr)
+                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+                let mut secure_stream = stream
+                    .into_secure(NativeTlsConnector::from(connector), &h)
+                    .map_err(|e| format!("Failed to establish TLS encryption (FTPS): {}", e))?;
+
+                secure_stream
+                    .login(&user, &pass)
+                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
+
+                Ok(FtpClientStream::Secure(secure_stream))
+            } else {
+                let mut stream = FtpStream::connect(&addr)
+                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+                stream
+                    .login(&user, &pass)
+                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
+
+                Ok(FtpClientStream::Plain(stream))
+            }
+        })
+        .await
+        .map_err(|e| format!("FTP worker thread failed: {}", e))??;
+
+        // Get initial working directory
+        let client_arc = Arc::new(Mutex::new(client));
+        let c_clone = client_arc.clone();
+        let initial_pwd = tokio::task::spawn_blocking(move || -> String {
+            let mut guard = c_clone.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+                FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| "/".to_string());
+
+        let clean_pwd = if initial_pwd.is_empty() {
+            "/".to_string()
+        } else {
+            initial_pwd
+        };
+
+        Ok(Self {
+            session_id,
+            host,
+            port,
+            username,
+            is_secure: secure,
+            current_dir: Arc::new(RwLock::new(clean_pwd)),
+            client: client_arc,
+        })
+    }
+
+    pub async fn list_dir(&self, target_path: &str) -> Result<(String, Vec<SftpFileEntry>), String> {
+        let client_arc = self.client.clone();
+        let current_dir_arc = self.current_dir.clone();
+        let path = target_path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(String, Vec<SftpFileEntry>), String> {
+            let mut guard = client_arc.blocking_lock();
+
+            let target = if path.trim().is_empty() || path == "." {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+                    FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+                }
+            } else {
+                path
+            };
+
+            // Change directory to target
+            match &mut *guard {
+                FtpClientStream::Plain(s) => {
+                    s.cwd(&target).map_err(|e| format!("Failed to change directory to '{}': {}", target, e))?;
+                }
+                FtpClientStream::Secure(s) => {
+                    s.cwd(&target).map_err(|e| format!("Failed to change directory to '{}': {}", target, e))?;
+                }
+            }
+
+            let canonical_dir = match &mut *guard {
+                FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| target.clone()),
+                FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| target.clone()),
+            };
+
+            let lines = match &mut *guard {
+                FtpClientStream::Plain(s) => s.list(None).map_err(|e| format!("Failed to list directory: {}", e))?,
+                FtpClientStream::Secure(s) => s.list(None).map_err(|e| format!("Failed to list directory: {}", e))?,
+            };
+
+            let mut entries = Vec::new();
+            for line in lines {
+                if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                    entries.push(entry);
+                }
+            }
+
+            // Sort: directories first, then alphabetical
+            entries.sort_by(|a, b| {
+                if a.is_dir == b.is_dir {
+                    a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                } else if a.is_dir {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            });
+
+            // Update cached current dir
+            {
+                let mut dir_guard = current_dir_arc.blocking_write();
+                *dir_guard = canonical_dir.clone();
+            }
+
+            Ok((canonical_dir, entries))
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn canonicalize_path(&self, path: &str) -> Result<String, String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<String, String> {
+            let mut guard = client_arc.blocking_lock();
+            if p.trim().is_empty() || p == "." {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => s.pwd().map_err(|e| format!("FTP pwd failed: {}", e)),
+                    FtpClientStream::Secure(s) => s.pwd().map_err(|e| format!("FTP pwd failed: {}", e)),
+                }
+            } else {
+                Ok(p)
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn create_dir(&self, path: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => s.mkdir(&p).map_err(|e| format!("Failed to create directory: {}", e)),
+                FtpClientStream::Secure(s) => s.mkdir(&p).map_err(|e| format!("Failed to create directory: {}", e)),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn ensure_dir_recursive(&self, path: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => {
+                    ensure_ftp_dir_recursive!(s, &p);
+                }
+                FtpClientStream::Secure(s) => {
+                    ensure_ftp_dir_recursive!(s, &p);
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn crawl_remote_paths(
+        &self,
+        paths: Vec<String>,
+        target_local_dir: String,
+    ) -> Result<Vec<RemoteCrawlTask>, String> {
+        let client_arc = self.client.clone();
+        let target_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<Vec<RemoteCrawlTask>, String> {
+            let mut guard = client_arc.blocking_lock();
+            let mut results = Vec::new();
+
+            let initial_pwd = match &mut *guard {
+                FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+                FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+            };
+
+            for p in paths {
+                let clean_p = p.trim().trim_end_matches('/').to_string();
+                if clean_p.is_empty() {
+                    continue;
+                }
+
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        crawl_ftp_single_path!(s, &clean_p, &target_local, &mut results);
+                    }
+                    FtpClientStream::Secure(s) => {
+                        crawl_ftp_single_path!(s, &clean_p, &target_local, &mut results);
+                    }
+                }
+            }
+
+            // Restore initial PWD
+            match &mut *guard {
+                FtpClientStream::Plain(s) => { let _ = s.cwd(&initial_pwd); }
+                FtpClientStream::Secure(s) => { let _ = s.cwd(&initial_pwd); }
+            }
+
+            Ok(results)
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn create_file(&self, path: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            let mut cursor = std::io::Cursor::new(&[]);
+            match &mut *guard {
+                FtpClientStream::Plain(s) => s.put_file(&p, &mut cursor).map(|_| ()).map_err(|e| format!("Failed to create file: {}", e)),
+                FtpClientStream::Secure(s) => s.put_file(&p, &mut cursor).map(|_| ()).map_err(|e| format!("Failed to create file: {}", e)),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn remove_dir(&self, path: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            let clean = p.trim().replace('\\', "/");
+            let target = clean.trim_end_matches('/').to_string();
+
+            match &mut *guard {
+                FtpClientStream::Plain(s) => remove_ftp_dir_recursive!(s, &target),
+                FtpClientStream::Secure(s) => remove_ftp_dir_recursive!(s, &target),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn remove_file(&self, path: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => s.rm(&p).map_err(|e| format!("Failed to delete file: {}", e)),
+                FtpClientStream::Secure(s) => s.rm(&p).map_err(|e| format!("Failed to delete file: {}", e)),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn rename(&self, from: &str, to: &str) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let src = from.to_string();
+        let dst = to.to_string();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => s.rename(&src, &dst).map_err(|e| format!("Failed to rename item: {}", e)),
+                FtpClientStream::Secure(s) => s.rename(&src, &dst).map_err(|e| format!("Failed to rename item: {}", e)),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn check_file_exists(&self, path: &str) -> FileConflictInfo {
+        let client_arc = self.client.clone();
+        let p = path.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let mut guard = client_arc.blocking_lock();
+            let size = match &mut *guard {
+                FtpClientStream::Plain(s) => s.size(&p).ok().map(|s| s as u64),
+                FtpClientStream::Secure(s) => s.size(&p).ok().map(|s| s as u64),
+            };
+
+            if let Some(s) = size {
+                FileConflictInfo {
+                    exists: true,
+                    size: s,
+                    modified: 0,
+                }
+            } else {
+                FileConflictInfo {
+                    exists: false,
+                    size: 0,
+                    modified: 0,
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| FileConflictInfo {
+            exists: false,
+            size: 0,
+            modified: 0,
+        })
+    }
+
+    pub async fn download_file(
+        &self,
+        app: &AppHandle,
+        remote_path: &str,
+        local_path: &str,
+        transfer_id: &str,
+        conflict_action: Option<String>,
+    ) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let r_path = remote_path.to_string();
+        let l_path = local_path.to_string();
+        let t_id = transfer_id.to_string();
+        let app_handle = app.clone();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action),
+                FtpClientStream::Secure(s) => run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn upload_file(
+        &self,
+        app: &AppHandle,
+        local_path: &str,
+        remote_path: &str,
+        transfer_id: &str,
+        conflict_action: Option<String>,
+    ) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        let r_path = remote_path.to_string();
+        let l_path = local_path.to_string();
+        let t_id = transfer_id.to_string();
+        let app_handle = app.clone();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action),
+                FtpClientStream::Secure(s) => run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action),
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn close(&self) -> Result<(), String> {
+        let client_arc = self.client.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = client_arc.blocking_lock();
+            match &mut *guard {
+                FtpClientStream::Plain(s) => {
+                    let _ = s.quit();
+                }
+                FtpClientStream::Secure(s) => {
+                    let _ = s.quit();
+                }
+            }
+        })
+        .await
+        .map_err(|e| format!("Failed to close FTP session: {}", e))
+    }
+}
+
+pub fn parse_ftp_list_line(line: &str, current_dir: &str) -> Option<SftpFileEntry> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with("total ") {
+        return None;
+    }
+
+    // Windows / IIS FTP format check:
+    if line.len() > 18 && (&line[2..3] == "-" || &line[2..3] == "/") {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 4 {
+            let is_dir = parts[2] == "<DIR>";
+            let size = if is_dir { 0 } else { parts[2].parse::<u64>().unwrap_or(0) };
+            let name = parts[3..].join(" ");
+            if name == "." || name == ".." {
+                return None;
+            }
+            let full_path = if current_dir == "/" {
+                format!("/{}", name)
+            } else {
+                format!("{}/{}", current_dir.trim_end_matches('/'), name)
+            };
+            return Some(SftpFileEntry {
+                name,
+                path: full_path,
+                is_dir,
+                is_symlink: false,
+                size,
+                modified: 0,
+                permissions: if is_dir { 0o755 } else { 0o644 },
+                owner: None,
+                group: None,
+            });
+        }
+    }
+
+    // Unix style:
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 9 {
+        return None;
+    }
+
+    let first_char = parts[0].chars().next().unwrap_or('-');
+    let is_dir = first_char == 'd';
+    let is_symlink = first_char == 'l';
+
+    // Parse unix mode bits from permissions string (e.g. -rwxr-xr-x)
+    let mut perm: u32 = 0;
+    let mode_bytes = parts[0].as_bytes();
+    if mode_bytes.len() >= 10 {
+        if mode_bytes[1] == b'r' { perm |= 0o400; }
+        if mode_bytes[2] == b'w' { perm |= 0o200; }
+        if mode_bytes[3] == b'x' || mode_bytes[3] == b's' { perm |= 0o100; }
+        if mode_bytes[4] == b'r' { perm |= 0o040; }
+        if mode_bytes[5] == b'w' { perm |= 0o020; }
+        if mode_bytes[6] == b'x' || mode_bytes[6] == b's' { perm |= 0o010; }
+        if mode_bytes[7] == b'r' { perm |= 0o004; }
+        if mode_bytes[8] == b'w' { perm |= 0o002; }
+        if mode_bytes[9] == b'x' || mode_bytes[9] == b't' { perm |= 0o001; }
+    } else {
+        perm = if is_dir { 0o755 } else { 0o644 };
+    }
+
+    let owner = Some(parts[2].to_string());
+    let group = Some(parts[3].to_string());
+
+    // File size is usually index 4
+    let size = parts[4].parse::<u64>().unwrap_or(0);
+
+    // Filename is from index 8 onwards
+    let raw_name = parts[8..].join(" ");
+    let name = if is_symlink {
+        raw_name.split(" -> ").next().unwrap_or(&raw_name).to_string()
+    } else {
+        raw_name
+    };
+
+    if name == "." || name == ".." {
+        return None;
+    }
+
+    let full_path = if current_dir == "/" {
+        format!("/{}", name)
+    } else {
+        format!("{}/{}", current_dir.trim_end_matches('/'), name)
+    };
+
+    Some(SftpFileEntry {
+        name,
+        path: full_path,
+        is_dir,
+        is_symlink,
+        size,
+        modified: 0,
+        permissions: perm,
+        owner,
+        group,
+    })
+}

@@ -1,0 +1,940 @@
+use tauri::{AppHandle, State};
+use crate::sftp::{
+    canonicalize_remote, copy_local_paths, create_local_dir, create_local_file,
+    create_remote_dir, create_remote_file, download_file, get_default_local_path,
+    get_git_status, get_wsl_distributions, list_local_dir, list_remote_dir,
+    normalize_to_native_path, open_in_default_app, read_local_file_binary,
+    read_local_file_text, read_remote_file_binary, read_remote_file_text, remove_local_item,
+    remove_remote_dir_recursive_with_cancel, remove_remote_file, rename_local, rename_remote,
+    set_remote_permissions, upload_file, write_local_file_text, write_remote_file_text,
+    compress_local_archive, compress_remote_archive, extract_local_archive, extract_remote_archive,
+    FileConflictInfo, GitRepoStatus, LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry,
+};
+use crate::state::AppState;
+
+#[tauri::command]
+pub async fn sftp_list_remote(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<(String, Vec<SftpFileEntry>), String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.list_dir(&path).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    list_remote_dir(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_canonicalize_remote(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<String, String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.canonicalize_path(&path).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    canonicalize_remote(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_create_remote_dir(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<(), String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.create_dir(&path).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    create_remote_dir(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_create_remote_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<(), String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.create_file(&path).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    create_remote_file(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_remove_remote_dir(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    deletion_id: Option<String>,
+    use_fast_rm: Option<bool>,
+) -> Result<(), String> {
+    let clean = path.trim().replace('\\', "/");
+    let clean_path = clean.trim_end_matches('/');
+    eprintln!("[TERMSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}", session_id, path, clean_path, use_fast_rm);
+
+    if clean_path.is_empty() || clean_path == "/" || clean_path == "." || clean_path == ".." {
+        let err = "Cannot delete root or empty directory".to_string();
+        eprintln!("[TERMSFTP_BACKEND] Error: {}", err);
+        return Err(err);
+    }
+
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        eprintln!("[TERMSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
+        let res = ftp.remove_dir(clean_path).await;
+        eprintln!("[TERMSFTP_BACKEND] FTP remove_dir result: {:?}", res);
+        return res;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| {
+            let err = format!("Session '{}' not found", session_id);
+            eprintln!("[TERMSFTP_BACKEND] Error: {}", err);
+            err
+        })?;
+
+    if let Some(ref del_id) = deletion_id {
+        if state.is_deletion_cancelled(del_id) {
+            eprintln!("[TERMSFTP_BACKEND] Deletion was cancelled by user: {}", del_id);
+            return Err("Deletion cancelled by user".to_string());
+        }
+    }
+
+    let sftp = session.get_sftp().await?;
+
+    if use_fast_rm.unwrap_or(false) {
+        log::info!("Attempting fast rm -rf for remote directory '{}'", clean_path);
+        eprintln!("[TERMSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
+        let escaped_path = clean_path.replace('\'', "'\\''");
+        let cmd = format!("rm -rf -- '{}'", escaped_path);
+
+        let exec_result: Result<(), String> = async {
+            let channel = session
+                .handle
+                .channel_open_session()
+                .await
+                .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
+
+            channel
+                .exec(true, cmd)
+                .await
+                .map_err(|e| format!("Failed to execute rm -rf: {}", e))?;
+
+            use tokio::io::AsyncReadExt;
+            let mut stream = channel.into_stream();
+            let mut dummy = Vec::new();
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                stream.read_to_end(&mut dummy),
+            )
+            .await;
+
+            Ok(())
+        }
+        .await;
+
+        if exec_result.is_ok() {
+            // Verify if the directory was deleted
+            if sftp.metadata(clean_path).await.is_err() {
+                log::info!("Fast rm -rf succeeded for '{}'", clean_path);
+                eprintln!("[TERMSFTP_BACKEND] Fast rm -rf verified succeeded for '{}'", clean_path);
+                return Ok(());
+            }
+            log::warn!("rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
+            eprintln!("[TERMSFTP_BACKEND] rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
+        } else {
+            log::warn!("Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
+            eprintln!("[TERMSFTP_BACKEND] Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
+        }
+    }
+
+    let res = remove_remote_dir_recursive_with_cancel(&sftp, clean_path, &state, deletion_id.as_deref()).await;
+    eprintln!("[TERMSFTP_BACKEND] remove_remote_dir_recursive_with_cancel result for '{}': {:?}", clean_path, res);
+    res
+}
+
+#[tauri::command]
+pub async fn sftp_remove_remote_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    deletion_id: Option<String>,
+) -> Result<(), String> {
+    eprintln!("[TERMSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}'", session_id, path);
+    if let Some(ref del_id) = deletion_id {
+        if state.is_deletion_cancelled(del_id) {
+            eprintln!("[TERMSFTP_BACKEND] File deletion cancelled by user: {}", del_id);
+            return Err("Deletion cancelled by user".to_string());
+        }
+    }
+
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        let res = ftp.remove_file(&path).await;
+        eprintln!("[TERMSFTP_BACKEND] FTP remove_file result: {:?}", res);
+        return res;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| {
+            let err = format!("Session '{}' not found", session_id);
+            eprintln!("[TERMSFTP_BACKEND] Error: {}", err);
+            err
+        })?;
+
+    let sftp = session.get_sftp().await?;
+    let res = remove_remote_file(&sftp, &path).await;
+    eprintln!("[TERMSFTP_BACKEND] SFTP remove_file result: {:?}", res);
+    res
+}
+
+#[tauri::command]
+pub async fn sftp_rename_remote(
+    state: State<'_, AppState>,
+    session_id: String,
+    old_path: String,
+    new_path: String,
+) -> Result<(), String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.rename(&old_path, &new_path).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    rename_remote(&sftp, &old_path, &new_path).await
+}
+
+#[tauri::command]
+pub async fn sftp_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    transfer_id: String,
+    remote_path: String,
+    local_path: String,
+    conflict_action: Option<String>,
+    file_size: Option<u64>,
+) -> Result<(), String> {
+    log::info!(
+        "Command sftp_download: session='{}', transfer_id='{}', remote='{}' -> local='{}' (conflict: '{:?}', size: '{:?}')",
+        session_id, transfer_id, remote_path, local_path, conflict_action, file_size
+    );
+
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp
+            .download_file(&app, &remote_path, &local_path, &transfer_id, conflict_action)
+            .await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    download_file(app, &sftp, transfer_id, remote_path, local_path, conflict_action, file_size).await
+}
+
+#[tauri::command]
+pub async fn sftp_upload(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    transfer_id: String,
+    local_path: String,
+    remote_path: String,
+    conflict_action: Option<String>,
+    file_size: Option<u64>,
+) -> Result<(), String> {
+    log::info!(
+        "Command sftp_upload: session='{}', transfer_id='{}', local='{}' -> remote='{}' (conflict: '{:?}', size: '{:?}')",
+        session_id, transfer_id, local_path, remote_path, conflict_action, file_size
+    );
+
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp
+            .upload_file(&app, &local_path, &remote_path, &transfer_id, conflict_action)
+            .await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    upload_file(app, &sftp, transfer_id, local_path, remote_path, conflict_action, file_size).await
+}
+
+#[tauri::command]
+pub async fn sftp_check_conflict(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+    path: String,
+    is_remote: bool,
+) -> Result<FileConflictInfo, String> {
+    if is_remote {
+        let sid = session_id.ok_or_else(|| "No session ID provided for remote check".to_string())?;
+
+        if let Some(ftp) = state.get_ftp_session(&sid).await {
+            return Ok(ftp.check_file_exists(&path).await);
+        }
+
+        let session = state
+            .get_session(&sid)
+            .await
+            .ok_or_else(|| format!("Session '{}' not found", sid))?;
+        let sftp = session.get_sftp().await?;
+        match sftp.metadata(&path).await {
+            Ok(meta) => Ok(FileConflictInfo {
+                exists: true,
+                size: meta.size.unwrap_or(0),
+                modified: meta.mtime.unwrap_or(0) as u64,
+            }),
+            Err(_) => Ok(FileConflictInfo {
+                exists: false,
+                size: 0,
+                modified: 0,
+            }),
+        }
+    } else {
+        let (native, _) = normalize_to_native_path(&path);
+        if native.exists() {
+            let meta = tokio::fs::metadata(&native).await.ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            Ok(FileConflictInfo {
+                exists: true,
+                size,
+                modified,
+            })
+        } else {
+            Ok(FileConflictInfo {
+                exists: false,
+                size: 0,
+                modified: 0,
+            })
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn sftp_list_local(
+    dir_path: Option<String>,
+) -> Result<(String, Vec<LocalFileEntry>), String> {
+    list_local_dir(dir_path).await
+}
+
+#[tauri::command]
+pub async fn sftp_create_local_dir(path: String) -> Result<(), String> {
+    create_local_dir(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_create_local_file(path: String) -> Result<(), String> {
+    create_local_file(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_remove_local(path: String) -> Result<(), String> {
+    eprintln!("[TERMSFTP_BACKEND] sftp_remove_local: path='{}'", path);
+    let res = remove_local_item(&path).await;
+    eprintln!("[TERMSFTP_BACKEND] sftp_remove_local result: {:?}", res);
+    res
+}
+
+#[tauri::command]
+pub async fn sftp_rename_local(old_path: String, new_path: String) -> Result<(), String> {
+    rename_local(&old_path, &new_path).await
+}
+
+#[tauri::command]
+pub async fn sftp_get_default_local_path() -> Result<String, String> {
+    Ok(get_default_local_path())
+}
+
+#[tauri::command]
+pub async fn sftp_get_wsl_distros() -> Result<Vec<String>, String> {
+    get_wsl_distributions().await
+}
+
+#[tauri::command]
+pub async fn sftp_get_paths_metadata(paths: Vec<String>) -> Result<Vec<LocalFileEntry>, String> {
+    let mut entries = Vec::new();
+    for p in paths {
+        let (native, _) = normalize_to_native_path(&p);
+        if let Ok(meta) = tokio::fs::metadata(&native).await {
+            let name = native
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.clone());
+            let is_dir = meta.is_dir();
+            let is_symlink = meta.is_symlink();
+            let size = if is_dir { 0 } else { meta.len() };
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            entries.push(LocalFileEntry {
+                name,
+                path: native.to_string_lossy().to_string(),
+                is_dir,
+                is_symlink,
+                size,
+                modified,
+            });
+        }
+    }
+    Ok(entries)
+}
+
+#[tauri::command]
+pub async fn sftp_copy_local_paths(paths: Vec<String>, target_dir: String) -> Result<(), String> {
+    copy_local_paths(paths, &target_dir).await
+}
+
+#[tauri::command]
+pub async fn sftp_set_permissions(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    permissions: u32,
+    recursive: bool,
+    target_type: Option<String>,
+) -> Result<(), String> {
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    set_remote_permissions(&sftp, &path, permissions, recursive, target_type.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn sftp_read_file_text(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<String, String> {
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    read_remote_file_text(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_write_file_text(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    write_remote_file_text(&sftp, &path, &content).await
+}
+
+#[tauri::command]
+pub async fn sftp_read_local_file_text(path: String) -> Result<String, String> {
+    read_local_file_text(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_write_local_file_text(path: String, content: String) -> Result<(), String> {
+    write_local_file_text(&path, &content).await
+}
+
+#[tauri::command]
+pub async fn sftp_open_in_default_app(path: String) -> Result<(), String> {
+    open_in_default_app(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_read_file_binary(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    read_remote_file_binary(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_read_local_file_binary(path: String) -> Result<Vec<u8>, String> {
+    read_local_file_binary(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_ping(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<bool, String> {
+    if let Some(session) = state.get_session(&session_id).await {
+        if session.is_closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(false);
+        }
+        match session.get_sftp().await {
+            Ok(sftp) => {
+                match tokio::time::timeout(std::time::Duration::from_secs(4), sftp.canonicalize(".")).await {
+                    Ok(Ok(_)) => Ok(true),
+                    _ => Ok(false),
+                }
+            }
+            Err(_) => Ok(false),
+        }
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub async fn sftp_get_git_status(path: String) -> Result<GitRepoStatus, String> {
+    get_git_status(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_get_remote_git_status(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<GitRepoStatus, String> {
+    let session = match state.get_session(&session_id).await {
+        Some(s) => s,
+        None => return Ok(GitRepoStatus::default()),
+    };
+
+    let channel = match session.handle.channel_open_session().await {
+        Ok(c) => c,
+        Err(_) => return Ok(GitRepoStatus::default()),
+    };
+
+    let cmd = format!(
+        "cd '{}' 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && git branch --show-current 2>/dev/null && echo '---TERMSFTP_GIT_SEPARATOR---' && git status --porcelain=v1 -uall 2>/dev/null",
+        path.replace('\'', "'\\''")
+    );
+    if channel.exec(true, cmd).await.is_err() {
+        return Ok(GitRepoStatus::default());
+    }
+
+    use tokio::io::AsyncReadExt;
+    let mut stream = channel.into_stream();
+    let mut output_bytes = Vec::new();
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        stream.read_to_end(&mut output_bytes),
+    )
+    .await;
+
+    let text = String::from_utf8_lossy(&output_bytes);
+    if !text.contains("---TERMSFTP_GIT_SEPARATOR---") {
+        return Ok(GitRepoStatus::default());
+    }
+
+    let parts: Vec<&str> = text.split("---TERMSFTP_GIT_SEPARATOR---").collect();
+    let header_part = parts[0].trim();
+    let status_part = if parts.len() > 1 { parts[1] } else { "" };
+
+    let header_lines: Vec<&str> = header_part.lines().collect();
+    let root = header_lines.first().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if root.is_none() {
+        return Ok(GitRepoStatus::default());
+    }
+
+    let branch = header_lines.get(1).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let mut files = std::collections::HashMap::new();
+
+    for line in status_part.lines() {
+        let line = line.trim();
+        if line.len() < 4 {
+            continue;
+        }
+        let xy = &line[0..2];
+        let file_part = line[3..].trim();
+        let file_path = if let Some(idx) = file_part.find(" -> ") {
+            &file_part[idx + 4..]
+        } else {
+            file_part
+        }
+        .trim_matches('"');
+
+        let status_type = match xy {
+            "??" => "untracked",
+            " M" | "M " | "MM" | "AM" => "modified",
+            "A " => "staged",
+            "D " | " D" => "deleted",
+            "R " => "renamed",
+            "UU" | "AA" | "DD" => "conflict",
+            s if s.starts_with('M') || s.ends_with('M') => "modified",
+            s if s.starts_with('A') => "staged",
+            _ => "modified",
+        };
+
+        let norm_path = file_path.replace('\\', "/");
+        files.insert(norm_path.clone(), status_type.to_string());
+        if let Some(ref r) = root {
+            files.insert(format!("{}/{}", r.trim_end_matches('/'), norm_path), status_type.to_string());
+        }
+        if let Some(fname) = norm_path.split('/').last() {
+            files.entry(fname.to_string()).or_insert_with(|| status_type.to_string());
+        }
+    }
+
+    Ok(GitRepoStatus {
+        is_repo: true,
+        root,
+        branch,
+        files,
+    })
+}
+
+#[tauri::command]
+pub fn sftp_cancel_transfer(state: State<'_, AppState>, transfer_id: String) {
+    log::info!("Command sftp_cancel_transfer: transfer_id='{}'", transfer_id);
+    state.cancel_transfer(&transfer_id);
+}
+
+#[tauri::command]
+pub fn sftp_cancel_all_transfers(state: State<'_, AppState>) {
+    log::info!("Command sftp_cancel_all_transfers: stopping all active transfers");
+    state.cancel_all_transfers();
+}
+
+#[tauri::command]
+pub fn sftp_reset_cancel_transfers(state: State<'_, AppState>) {
+    state.reset_cancel_all();
+}
+
+#[tauri::command]
+pub async fn sftp_extract_remote_archive(
+    state: State<'_, AppState>,
+    session_id: String,
+    archive_path: String,
+    target_dir: Option<String>,
+) -> Result<String, String> {
+    if state.get_ftp_session(&session_id).await.is_some() {
+        return Err("Remote archive extraction requires an SSH/SFTP session".to_string());
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    extract_remote_archive(&session, &archive_path, target_dir.as_deref().unwrap_or("")).await
+}
+
+#[tauri::command]
+pub async fn sftp_compress_remote_archive(
+    state: State<'_, AppState>,
+    session_id: String,
+    parent_dir: String,
+    items: Vec<String>,
+    archive_name: String,
+) -> Result<String, String> {
+    if state.get_ftp_session(&session_id).await.is_some() {
+        return Err("Remote archive compression requires an SSH/SFTP session".to_string());
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    compress_remote_archive(&session, &parent_dir, &items, &archive_name).await
+}
+
+#[tauri::command]
+pub async fn sftp_extract_local_archive(
+    archive_path: String,
+    target_dir: Option<String>,
+) -> Result<String, String> {
+    extract_local_archive(&archive_path, target_dir.as_deref().unwrap_or("")).await
+}
+
+#[tauri::command]
+pub async fn sftp_compress_local_archive(
+    parent_dir: String,
+    items: Vec<String>,
+    archive_name: String,
+) -> Result<String, String> {
+    compress_local_archive(&parent_dir, &items, &archive_name).await
+}
+
+#[tauri::command]
+pub async fn sftp_crawl_local_paths(
+    paths: Vec<String>,
+    target_remote_dir: String,
+) -> Result<Vec<LocalCrawlTask>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut results = Vec::new();
+        let clean_remote = target_remote_dir.trim().trim_end_matches('/').to_string();
+
+        for p in paths {
+            let (native_path, _) = normalize_to_native_path(&p);
+            if !native_path.exists() {
+                continue;
+            }
+
+            if native_path.is_file() || native_path.is_symlink() {
+                let file_name = native_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".to_string());
+                let size = std::fs::metadata(&native_path).map(|m| m.len()).unwrap_or(0);
+                let remote_path = if clean_remote.is_empty() {
+                    file_name.clone()
+                } else {
+                    format!("{}/{}", clean_remote, file_name)
+                };
+
+                results.push(LocalCrawlTask {
+                    local_path: native_path.to_string_lossy().to_string(),
+                    remote_path,
+                    file_name,
+                    size,
+                });
+            } else if native_path.is_dir() {
+                let root_folder_name = native_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "folder".to_string());
+                let remote_base = if clean_remote.is_empty() {
+                    root_folder_name
+                } else {
+                    format!("{}/{}", clean_remote, root_folder_name)
+                };
+
+                crawl_local_dir_recursive(&native_path, &native_path, &remote_base, &mut results);
+            }
+        }
+
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("Local crawler failed: {}", e))?
+}
+
+fn crawl_local_dir_recursive(
+    root: &std::path::Path,
+    current: &std::path::Path,
+    remote_base: &str,
+    results: &mut Vec<LocalCrawlTask>,
+) {
+    let read_dir = match std::fs::read_dir(current) {
+        Ok(rd) => rd,
+        Err(e) => {
+            log::warn!("Failed to read directory {:?}: {}", current, e);
+            return;
+        }
+    };
+
+    for entry_res in read_dir {
+        let entry = match entry_res {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+
+        if file_type.is_dir() {
+            crawl_local_dir_recursive(root, &path, remote_base, results);
+        } else if file_type.is_file() || file_type.is_symlink() {
+            let rel_path = match path.strip_prefix(root) {
+                Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+                Err(_) => continue,
+            };
+
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string());
+
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let remote_path = format!("{}/{}", remote_base, rel_path.trim_start_matches('/'));
+
+            results.push(LocalCrawlTask {
+                local_path: path.to_string_lossy().to_string(),
+                remote_path,
+                file_name,
+                size,
+            });
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn sftp_crawl_remote_paths(
+    state: State<'_, AppState>,
+    session_id: String,
+    paths: Vec<String>,
+    target_local_dir: String,
+) -> Result<Vec<RemoteCrawlTask>, String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.crawl_remote_paths(paths, target_local_dir).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    let mut results = Vec::new();
+    let clean_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
+
+    for p in paths {
+        let clean_p = p.trim().trim_end_matches('/').to_string();
+        if clean_p.is_empty() {
+            continue;
+        }
+
+        match sftp.read_dir(&clean_p).await {
+            Ok(_) => {
+                let folder_name = clean_p.split('/').last().unwrap_or("folder");
+                let local_base = if clean_local.is_empty() {
+                    folder_name.to_string()
+                } else {
+                    format!("{}/{}", clean_local, folder_name)
+                };
+                crawl_remote_dir_recursive(&sftp, &clean_p, &clean_p, &local_base, &mut results).await?;
+            }
+            Err(_) => {
+                let file_name = clean_p.split('/').last().unwrap_or("file").to_string();
+                let size = sftp.metadata(&clean_p).await.ok().and_then(|m| m.size).unwrap_or(0);
+                let local_path = if clean_local.is_empty() {
+                    file_name.clone()
+                } else {
+                    format!("{}/{}", clean_local, file_name)
+                };
+                results.push(RemoteCrawlTask {
+                    remote_path: clean_p,
+                    local_path,
+                    file_name,
+                    size,
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+fn crawl_remote_dir_recursive<'a>(
+    sftp: &'a russh_sftp::client::SftpSession,
+    root: &'a str,
+    current: &'a str,
+    local_base: &'a str,
+    results: &'a mut Vec<RemoteCrawlTask>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+    Box::pin(async move {
+        let entries = match sftp.read_dir(current).await {
+            Ok(e) => e,
+            Err(err) => {
+                log::warn!("Failed to read remote directory '{}': {}", current, err);
+                return Ok(());
+            }
+        };
+
+        for entry in entries {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+
+            let child_remote = if current == "/" {
+                format!("/{}", name)
+            } else {
+                format!("{}/{}", current.trim_end_matches('/'), name)
+            };
+
+            let file_type = entry.file_type();
+            if file_type.is_dir() {
+                crawl_remote_dir_recursive(sftp, root, &child_remote, local_base, results).await?;
+            } else {
+                let rel = child_remote
+                    .strip_prefix(root)
+                    .unwrap_or(&child_remote)
+                    .trim_start_matches('/');
+
+                let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
+                let size = entry.metadata().size.unwrap_or(0);
+
+                results.push(RemoteCrawlTask {
+                    remote_path: child_remote,
+                    local_path,
+                    file_name: name,
+                    size,
+                });
+            }
+        }
+
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn exit_app(app: AppHandle) {
+    eprintln!("[TERMSFTP_BACKEND] exit_app invoked. Exiting application.");
+    app.exit(0);
+}
+
+
+

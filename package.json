@@ -1,0 +1,40 @@
+{
+  "name": "termsftp",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@iconify-json/catppuccin": "^1.2.17",
+    "@iconify/vue": "^5.0.3",
+    "@pinia/nuxt": "^1.0.2",
+    "@replit/codemirror-vim": "^6.4.0",
+    "@tauri-apps/api": "^2.12.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "codemirror": "^6.0.2",
+    "lucide-vue-next": "^1.0.0",
+    "nuxt": "^4.5.2",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "@nuxtjs/tailwindcss": "^6.14.0",
+    "@tauri-apps/cli": "^2.12.1",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^3.4.19"
+  }
+}
