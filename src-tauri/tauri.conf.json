@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "TermSFTP - Terminal & SFTP Client",
+        "title": "TermSFTP",
         "width": 1440,
         "height": 900,
         "minWidth": 950,

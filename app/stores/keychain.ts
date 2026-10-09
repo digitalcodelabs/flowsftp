@@ -55,12 +55,32 @@ export const useKeychainStore = defineStore('keychain', () => {
     }
   }
 
+  async function renameGroup(oldName: string, newName: string): Promise<number> {
+    const updatedCount = await invoke<number>('keychain_rename_group', {
+      oldName,
+      newName,
+    })
+    await loadProfiles()
+    return updatedCount
+  }
+
+  async function renameProfile(id: string, newName: string): Promise<SavedConnectionProfile> {
+    const updated = await invoke<SavedConnectionProfile>('keychain_rename_profile', {
+      id,
+      newName,
+    })
+    await loadProfiles()
+    return updated
+  }
+
   return {
     profiles,
     isLoading,
     loadProfiles,
     saveProfile,
     deleteProfile,
+    renameGroup,
+    renameProfile,
     getSecret,
   }
 })

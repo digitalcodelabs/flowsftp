@@ -7,6 +7,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderMinus,
   Pencil,
   Trash2,
   Plus,
@@ -17,10 +18,12 @@ import {
   Lock,
   ShieldCheck,
   Check,
+  CheckCircle2,
   AlertTriangle,
   Layers,
   Terminal,
   Loader2,
+  SlidersHorizontal,
 } from 'lucide-vue-next'
 import { useKeychainStore, type SavedConnectionProfile } from '../stores/keychain'
 import { useVaultStore } from '../stores/vault'
@@ -41,8 +44,37 @@ const connectingProfileName = ref<string | null>(null)
 const isSaving = ref(false)
 const isPickingKey = ref(false)
 const errorMessage = ref<string | null>(null)
+const successMessage = ref<string | null>(null)
+let successTimer: any = null
+const showSuccess = (msg: string) => {
+  successMessage.value = msg
+  if (successTimer) clearTimeout(successTimer)
+  successTimer = setTimeout(() => {
+    successMessage.value = null
+  }, 3500)
+}
+
 const currentMode = ref<'list' | 'add' | 'edit'>('list')
 const editingProfileId = ref<string | null>(null)
+
+// Rename Folder / Group modal state
+const showRenameGroupModal = ref(false)
+const groupToRename = ref('')
+const newGroupName = ref('')
+const isRenamingGroup = ref(false)
+const renameGroupInputRef = ref<HTMLInputElement | null>(null)
+
+// Ungroup Folder modal state
+const showUngroupModal = ref(false)
+const groupToUngroup = ref('')
+const isUngrouping = ref(false)
+
+// Quick Rename Profile modal state
+const showRenameProfileModal = ref(false)
+const profileToRename = ref<SavedConnectionProfile | null>(null)
+const newProfileName = ref('')
+const isRenamingProfile = ref(false)
+const renameProfileInputRef = ref<HTMLInputElement | null>(null)
 
 interface ConnectionLogEntry {
   time: string
@@ -523,6 +555,7 @@ const saveProfileData = async (shouldConnect: boolean) => {
     if (!shouldConnect) {
       currentMode.value = 'list'
       editingProfileId.value = null
+      showSuccess(isEdit ? `Profile "${profileToSave.name}" updated successfully` : `Profile "${profileToSave.name}" saved successfully`)
       return
     }
 
@@ -589,10 +622,172 @@ const executeDeleteProfile = async () => {
     await vaultStore.deleteSecret(id)
     showDeleteConfirmModal.value = false
     profileToDelete.value = null
+    showSuccess('Profile deleted')
   } catch (err: any) {
     console.error('Failed to delete profile:', err)
   } finally {
     isDeleting.value = false
+  }
+}
+
+// Rename Folder / Group handlers
+const openRenameGroupModal = (groupName: string) => {
+  groupToRename.value = groupName
+  newGroupName.value = groupName
+  errorMessage.value = null
+  showRenameGroupModal.value = true
+  nextTick(() => {
+    setTimeout(() => {
+      if (renameGroupInputRef.value) {
+        renameGroupInputRef.value.focus()
+        renameGroupInputRef.value.select()
+      }
+    }, 50)
+  })
+}
+
+const closeRenameGroupModal = () => {
+  if (isRenamingGroup.value) return
+  showRenameGroupModal.value = false
+  groupToRename.value = ''
+  newGroupName.value = ''
+}
+
+const executeRenameGroup = async () => {
+  const trimmed = newGroupName.value.trim()
+  if (!trimmed) {
+    errorMessage.value = 'Please enter a folder name'
+    return
+  }
+  if (trimmed === groupToRename.value) {
+    closeRenameGroupModal()
+    return
+  }
+
+  isRenamingGroup.value = true
+  errorMessage.value = null
+  try {
+    const oldName = groupToRename.value
+    await keychainStore.renameGroup(oldName, trimmed)
+    if (selectedGroupFilter.value === oldName) {
+      selectedGroupFilter.value = trimmed
+    }
+    if (form.value.group === oldName) {
+      form.value.group = trimmed
+    }
+    showRenameGroupModal.value = false
+    groupToRename.value = ''
+    newGroupName.value = ''
+    showSuccess(`Folder renamed to "${trimmed}"`)
+  } catch (err: any) {
+    errorMessage.value = err?.message || String(err)
+  } finally {
+    isRenamingGroup.value = false
+  }
+}
+
+// Ungroup Folder handlers
+const openUngroupModal = (groupName: string) => {
+  groupToUngroup.value = groupName
+  showUngroupModal.value = true
+}
+
+const closeUngroupModal = () => {
+  if (isUngrouping.value) return
+  showUngroupModal.value = false
+  groupToUngroup.value = ''
+}
+
+const executeUngroup = async () => {
+  if (!groupToUngroup.value) return
+  isUngrouping.value = true
+  errorMessage.value = null
+  try {
+    const oldName = groupToUngroup.value
+    await keychainStore.renameGroup(oldName, '')
+    if (selectedGroupFilter.value === oldName) {
+      selectedGroupFilter.value = 'all'
+    }
+    if (form.value.group === oldName) {
+      form.value.group = ''
+    }
+    showUngroupModal.value = false
+    groupToUngroup.value = ''
+    showSuccess(`Profiles moved to Ungrouped`)
+  } catch (err: any) {
+    errorMessage.value = err?.message || String(err)
+  } finally {
+    isUngrouping.value = false
+  }
+}
+
+// Quick Rename Profile handlers
+const openRenameProfileModal = (profile: SavedConnectionProfile) => {
+  profileToRename.value = profile
+  newProfileName.value = profile.name
+  errorMessage.value = null
+  showRenameProfileModal.value = true
+  nextTick(() => {
+    setTimeout(() => {
+      if (renameProfileInputRef.value) {
+        renameProfileInputRef.value.focus()
+        renameProfileInputRef.value.select()
+      }
+    }, 50)
+  })
+}
+
+const closeRenameProfileModal = () => {
+  if (isRenamingProfile.value) return
+  showRenameProfileModal.value = false
+  profileToRename.value = null
+  newProfileName.value = ''
+}
+
+const executeRenameProfile = async () => {
+  if (!profileToRename.value) return
+  const trimmed = newProfileName.value.trim()
+  if (!trimmed) {
+    errorMessage.value = 'Please enter a profile name'
+    return
+  }
+  if (trimmed === profileToRename.value.name) {
+    closeRenameProfileModal()
+    return
+  }
+
+  isRenamingProfile.value = true
+  errorMessage.value = null
+  try {
+    await keychainStore.renameProfile(profileToRename.value.id, trimmed)
+    showRenameProfileModal.value = false
+    profileToRename.value = null
+    newProfileName.value = ''
+    showSuccess(`Profile renamed to "${trimmed}"`)
+  } catch (err: any) {
+    errorMessage.value = err?.message || String(err)
+  } finally {
+    isRenamingProfile.value = false
+  }
+}
+
+const profilesInRenamingGroupCount = computed(() => {
+  if (!groupToRename.value) return 0
+  return keychainStore.profiles.filter((p) => p.group === groupToRename.value).length
+})
+
+const profilesInUngroupingCount = computed(() => {
+  if (!groupToUngroup.value) return 0
+  return keychainStore.profiles.filter((p) => p.group === groupToUngroup.value).length
+})
+
+const handleFormSubmit = () => {
+  if (currentMode.value === 'edit') {
+    // In edit mode, submitting the form (e.g. Enter key) saves changes without forcing connection
+    saveProfileData(false)
+  } else {
+    // In add mode, Save & Connect
+    saveProfileData(true)
   }
 }
 </script>
@@ -696,6 +891,17 @@ const executeDeleteProfile = async () => {
       <div v-if="errorMessage" class="mx-5 mt-3 p-3 rounded-lg bg-red-950/60 border border-red-800/50 text-red-300 text-xs shrink-0 flex items-start space-x-2">
         <AlertTriangle class="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
         <span class="flex-1">{{ errorMessage }}</span>
+      </div>
+
+      <!-- Success Toast -->
+      <div v-if="successMessage" class="mx-5 mt-3 p-2.5 rounded-lg bg-emerald-950/70 border border-emerald-700/60 text-emerald-300 text-xs shrink-0 flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-150">
+        <div class="flex items-center space-x-2">
+          <CheckCircle2 class="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{{ successMessage }}</span>
+        </div>
+        <button type="button" @click="successMessage = null" class="p-0.5 text-emerald-400 hover:text-white transition" title="Dismiss">
+          <X class="w-3.5 h-3.5" />
+        </button>
       </div>
 
       <!-- ================= LIST MODE: Saved Profiles ================= -->
@@ -872,9 +1078,35 @@ const executeDeleteProfile = async () => {
                   {{ section.profiles.length }}
                 </span>
               </div>
-              <span class="text-[11px] opacity-0 group-hover:opacity-100 transition" :style="{ color: 'var(--color-text-muted)' }">
-                {{ collapsedGroups.has(section.name) ? 'Expand' : 'Collapse' }}
-              </span>
+
+              <!-- Folder Actions -->
+              <div class="flex items-center space-x-1.5">
+                <template v-if="!section.isUngrouped">
+                  <button
+                    type="button"
+                    @click.stop="openRenameGroupModal(section.name)"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center space-x-1 transition hover:text-amber-300 hover:bg-white/5"
+                    :style="{ color: 'var(--color-text-muted)' }"
+                    title="Rename Folder"
+                  >
+                    <Pencil class="w-3 h-3" />
+                    <span>Rename</span>
+                  </button>
+                  <button
+                    type="button"
+                    @click.stop="openUngroupModal(section.name)"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center space-x-1 transition hover:text-rose-400 hover:bg-white/5"
+                    :style="{ color: 'var(--color-text-muted)' }"
+                    title="Move all profiles in this folder to Ungrouped"
+                  >
+                    <FolderMinus class="w-3 h-3" />
+                    <span>Ungroup</span>
+                  </button>
+                </template>
+                <span class="text-[11px] opacity-0 group-hover:opacity-100 transition ml-1" :style="{ color: 'var(--color-text-muted)' }">
+                  {{ collapsedGroups.has(section.name) ? 'Expand' : 'Collapse' }}
+                </span>
+              </div>
             </div>
 
             <!-- Profiles inside Folder -->
@@ -887,8 +1119,24 @@ const executeDeleteProfile = async () => {
               >
                 <!-- Profile details -->
                 <div class="flex flex-col min-w-0 flex-1 mr-3">
-                  <div class="flex items-center space-x-2">
-                    <span class="text-xs font-semibold truncate" :style="{ color: 'var(--color-text-main)' }">{{ prof.name }}</span>
+                  <div class="flex items-center space-x-1.5">
+                    <span
+                      @dblclick="openRenameProfileModal(prof)"
+                      class="text-xs font-semibold truncate cursor-pointer hover:underline"
+                      :style="{ color: 'var(--color-text-main)' }"
+                      title="Double-click to quick rename profile"
+                    >
+                      {{ prof.name }}
+                    </span>
+                    <button
+                      type="button"
+                      @click.stop="openRenameProfileModal(prof)"
+                      class="p-0.5 rounded opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:text-amber-300 transition shrink-0"
+                      :style="{ color: 'var(--color-text-muted)' }"
+                      title="Rename Profile"
+                    >
+                      <Pencil class="w-3 h-3" />
+                    </button>
                     <span
                       :class="[
                         'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border',
@@ -950,13 +1198,22 @@ const executeDeleteProfile = async () => {
                     <span>{{ connectingProfileId === prof.id ? 'Connecting...' : 'Connect' }}</span>
                   </button>
                   <button
-                    @click="handleStartEdit(prof)"
+                    @click="openRenameProfileModal(prof)"
                     :disabled="isConnecting"
                     class="p-1.5 rounded-md transition hover:text-amber-300"
                     :style="{ color: 'var(--color-text-muted)' }"
-                    title="Edit Profile"
+                    title="Rename Profile"
                   >
                     <Pencil class="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    @click="handleStartEdit(prof)"
+                    :disabled="isConnecting"
+                    class="p-1.5 rounded-md transition hover:text-sky-300"
+                    :style="{ color: 'var(--color-text-muted)' }"
+                    title="Edit Connection Details (Host, Port, Credentials)"
+                  >
+                    <SlidersHorizontal class="w-3.5 h-3.5" />
                   </button>
                   <button
                     @click="openDeleteConfirm(prof)"
@@ -977,7 +1234,7 @@ const executeDeleteProfile = async () => {
       <!-- ================= ADD / EDIT MODE: Form ================= -->
       <form
         v-else
-        @submit.prevent="saveProfileData(true)"
+        @submit.prevent="handleFormSubmit"
         class="p-5 flex-1 flex flex-col min-h-0 overflow-y-auto space-y-3.5"
       >
         <div class="flex items-center justify-between pb-1 border-b" :style="{ borderColor: 'var(--color-border)' }">
@@ -1070,15 +1327,25 @@ const executeDeleteProfile = async () => {
               <div
                 v-for="grp in availableGroups"
                 :key="grp"
-                @click="selectFolder(grp)"
-                class="px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-between transition"
+                class="px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition group/folder"
                 :style="form.group === grp ? { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', fontWeight: 600 } : { color: 'var(--color-text-main)' }"
               >
-                <div class="flex items-center space-x-2 truncate">
+                <div @click="selectFolder(grp)" class="flex items-center space-x-2 truncate flex-1 cursor-pointer">
                   <Folder class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent)' }" />
                   <span class="truncate">{{ grp }}</span>
                 </div>
-                <Check v-if="form.group === grp" class="w-3 h-3 shrink-0 ml-2" :style="{ color: 'var(--color-accent)' }" />
+                <div class="flex items-center space-x-1 shrink-0 ml-2">
+                  <button
+                    type="button"
+                    @click.stop="openRenameGroupModal(grp)"
+                    class="p-0.5 rounded opacity-0 group-hover/folder:opacity-80 hover:!opacity-100 hover:text-amber-300 transition"
+                    :style="{ color: 'var(--color-text-muted)' }"
+                    title="Rename this folder"
+                  >
+                    <Pencil class="w-3 h-3" />
+                  </button>
+                  <Check v-if="form.group === grp" class="w-3 h-3" :style="{ color: 'var(--color-accent)' }" />
+                </div>
               </div>
 
               <!-- If user is typing a new group name that isn't in availableGroups -->
@@ -1343,29 +1610,57 @@ const executeDeleteProfile = async () => {
           </button>
 
           <div class="flex items-center space-x-2">
-            <!-- Save Changes button (does not connect) -->
-            <button
-              type="button"
-              @click="saveProfileData(false)"
-              :disabled="isSaving || isConnecting"
-              class="px-3.5 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition flex items-center space-x-1.5 btn-theme-card"
-              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
-            >
-              <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
-              <Check v-else class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
-              <span>{{ currentMode === 'edit' ? 'Save Changes' : 'Save Profile' }}</span>
-            </button>
+            <!-- Edit Mode: Save Changes is primary, Update & Connect is secondary -->
+            <template v-if="currentMode === 'edit'">
+              <button
+                type="button"
+                @click="saveProfileData(true)"
+                :disabled="isConnecting || isSaving"
+                class="px-3.5 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition flex items-center space-x-1.5 btn-theme-card"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                title="Save changes and connect immediately"
+              >
+                <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin text-white" />
+                <Terminal v-else class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                <span>{{ isConnecting ? 'Connecting...' : 'Update & Connect' }}</span>
+              </button>
 
-            <!-- Save & Connect button -->
-            <button
-              type="submit"
-              :disabled="isConnecting || isSaving"
-              class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-white text-xs font-semibold shadow-md flex items-center space-x-1.5 transition btn-accent"
-            >
-              <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin text-white" />
-              <Terminal v-else class="w-3.5 h-3.5" />
-              <span>{{ isConnecting ? 'Connecting...' : (currentMode === 'edit' ? 'Update & Connect' : 'Save & Connect') }}</span>
-            </button>
+              <button
+                type="submit"
+                :disabled="isSaving || isConnecting"
+                class="px-4 py-1.5 rounded-lg text-white text-xs font-semibold shadow-md flex items-center space-x-1.5 transition btn-accent"
+                title="Save profile changes (Enter)"
+              >
+                <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+                <Check v-else class="w-3.5 h-3.5" />
+                <span>Save Changes</span>
+              </button>
+            </template>
+
+            <!-- Add Mode: Save & Connect is primary, Save Only is secondary -->
+            <template v-else>
+              <button
+                type="button"
+                @click="saveProfileData(false)"
+                :disabled="isSaving || isConnecting"
+                class="px-3.5 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition flex items-center space-x-1.5 btn-theme-card"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+              >
+                <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+                <Check v-else class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                <span>Save Profile Only</span>
+              </button>
+
+              <button
+                type="submit"
+                :disabled="isConnecting || isSaving"
+                class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-white text-xs font-semibold shadow-md flex items-center space-x-1.5 transition btn-accent"
+              >
+                <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin text-white" />
+                <Terminal v-else class="w-3.5 h-3.5" />
+                <span>{{ isConnecting ? 'Connecting...' : 'Save & Connect' }}</span>
+              </button>
+            </template>
           </div>
         </div>
       </form>
@@ -1554,6 +1849,209 @@ const executeDeleteProfile = async () => {
             <span>{{ isDeleting ? 'Deleting...' : 'Delete Profile' }}</span>
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- Rename Folder / Group Modal -->
+    <div
+      v-if="showRenameGroupModal"
+      class="fixed inset-0 z-70 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
+      @click.self="closeRenameGroupModal"
+      @keydown.esc="closeRenameGroupModal"
+    >
+      <div
+        class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+      >
+        <div class="flex items-start space-x-3">
+          <div
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+          >
+            <Folder class="w-5 h-5" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <h4 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">Rename Folder</h4>
+            <p class="text-xs mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+              Rename folder <span class="font-semibold text-amber-300">"{{ groupToRename }}"</span>
+            </p>
+          </div>
+        </div>
+
+        <form @submit.prevent="executeRenameGroup" class="space-y-3">
+          <div>
+            <label class="block text-[11px] font-medium uppercase tracking-wider mb-1" :style="{ color: 'var(--color-text-muted)' }">
+              New Folder Name
+            </label>
+            <input
+              ref="renameGroupInputRef"
+              v-model="newGroupName"
+              type="text"
+              required
+              placeholder="e.g. Work, Staging, Clients"
+              class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
+              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+            />
+          </div>
+
+          <div
+            class="p-2.5 rounded-xl border text-[11px] space-y-1"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+          >
+            <div class="flex items-center space-x-1.5">
+              <Layers class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent)' }" />
+              <span>Will update {{ profilesInRenamingGroupCount }} connection profile(s) in this folder.</span>
+            </div>
+            <div
+              v-if="newGroupName.trim() && newGroupName.trim() !== groupToRename && availableGroups.includes(newGroupName.trim())"
+              class="flex items-center space-x-1.5 text-amber-300 pt-1"
+            >
+              <AlertTriangle class="w-3.5 h-3.5 shrink-0" />
+              <span>Folder "{{ newGroupName.trim() }}" already exists. Profiles will be merged.</span>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end space-x-2 pt-2">
+            <button
+              type="button"
+              @click="closeRenameGroupModal"
+              :disabled="isRenamingGroup"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
+              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              :disabled="isRenamingGroup || !newGroupName.trim()"
+              class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 shadow-md flex items-center space-x-1.5 transition btn-accent"
+            >
+              <span v-if="isRenamingGroup" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+              <Check v-else class="w-3.5 h-3.5" />
+              <span>{{ isRenamingGroup ? 'Renaming...' : 'Save Folder Name' }}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Ungroup Folder Confirmation Modal -->
+    <div
+      v-if="showUngroupModal"
+      class="fixed inset-0 z-70 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
+      @click.self="closeUngroupModal"
+      @keydown.esc="closeUngroupModal"
+    >
+      <div
+        class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+      >
+        <div class="flex items-start space-x-3">
+          <div
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+          >
+            <FolderMinus class="w-5 h-5" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <h4 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">Ungroup Folder?</h4>
+            <p class="text-xs mt-0.5 leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
+              Move all profiles from <span class="font-semibold text-amber-300">"{{ groupToUngroup }}"</span> to Default / Ungrouped?
+            </p>
+          </div>
+        </div>
+
+        <p class="text-xs" :style="{ color: 'var(--color-text-muted)' }">
+          Your {{ profilesInUngroupingCount }} profile(s) will <span class="font-medium text-emerald-400">not</span> be deleted. They will simply be moved out of this folder.
+        </p>
+
+        <div class="flex items-center justify-end space-x-2 pt-2">
+          <button
+            type="button"
+            @click="closeUngroupModal"
+            :disabled="isUngrouping"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            @click="executeUngroup"
+            :disabled="isUngrouping"
+            class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-50 shadow-md flex items-center space-x-1.5 transition"
+          >
+            <span v-if="isUngrouping" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+            <FolderMinus v-else class="w-3.5 h-3.5" />
+            <span>{{ isUngrouping ? 'Ungrouping...' : 'Ungroup Folder' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Rename Profile Modal -->
+    <div
+      v-if="showRenameProfileModal"
+      class="fixed inset-0 z-70 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
+      @click.self="closeRenameProfileModal"
+      @keydown.esc="closeRenameProfileModal"
+    >
+      <div
+        class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+      >
+        <div class="flex items-start space-x-3">
+          <div
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+          >
+            <Pencil class="w-5 h-5" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <h4 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">Rename Connection Profile</h4>
+            <p class="text-xs mt-0.5 font-mono truncate" :style="{ color: 'var(--color-text-muted)' }">
+              {{ profileToRename?.username }}@{{ profileToRename?.host }}:{{ profileToRename?.port }}
+            </p>
+          </div>
+        </div>
+
+        <form @submit.prevent="executeRenameProfile" class="space-y-3">
+          <div>
+            <label class="block text-[11px] font-medium uppercase tracking-wider mb-1" :style="{ color: 'var(--color-text-muted)' }">
+              Profile Name
+            </label>
+            <input
+              ref="renameProfileInputRef"
+              v-model="newProfileName"
+              type="text"
+              required
+              placeholder="e.g. Production Web Server"
+              class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
+              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+            />
+          </div>
+
+          <div class="flex items-center justify-end space-x-2 pt-2">
+            <button
+              type="button"
+              @click="closeRenameProfileModal"
+              :disabled="isRenamingProfile"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
+              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              :disabled="isRenamingProfile || !newProfileName.trim()"
+              class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 shadow-md flex items-center space-x-1.5 transition btn-accent"
+            >
+              <span v-if="isRenamingProfile" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+              <Check v-else class="w-3.5 h-3.5" />
+              <span>{{ isRenamingProfile ? 'Saving...' : 'Rename Profile' }}</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

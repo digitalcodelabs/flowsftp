@@ -8,7 +8,8 @@ pub mod state;
 use commands::dialog::{pick_and_read_file, save_file_dialog};
 use commands::ftp::ftp_connect;
 use commands::keychain::{
-    keychain_delete_profile, keychain_get_secret, keychain_list_profiles, keychain_save_profile,
+    keychain_delete_profile, keychain_get_secret, keychain_list_profiles,
+    keychain_rename_group, keychain_rename_profile, keychain_save_profile,
     pick_key_file, vault_delete_file, vault_load_file, vault_save_file,
 };
 use commands::sftp::{
@@ -95,6 +96,8 @@ pub fn run() {
             sftp_crawl_remote_paths,
             // Keychain & Saved Profiles Commands
             keychain_save_profile,
+            keychain_rename_group,
+            keychain_rename_profile,
             keychain_list_profiles,
             keychain_delete_profile,
             keychain_get_secret,

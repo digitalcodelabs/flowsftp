@@ -128,6 +128,62 @@ pub fn delete_profile(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn rename_group(
+    app: &tauri::AppHandle,
+    old_name: &str,
+    new_name: &str,
+) -> Result<usize, String> {
+    let path = get_storage_path(app)?;
+    let mut profiles = load_profiles(app)?;
+    let mut updated_count = 0;
+
+    let target_group = if new_name.trim().is_empty() {
+        None
+    } else {
+        Some(new_name.trim().to_string())
+    };
+
+    for p in profiles.iter_mut() {
+        if p.group.as_deref() == Some(old_name) {
+            p.group = target_group.clone();
+            updated_count += 1;
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&profiles)
+        .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
+
+    fs::write(&path, json)
+        .map_err(|e| format!("Failed to write profiles file: {}", e))?;
+
+    Ok(updated_count)
+}
+
+pub fn rename_profile(
+    app: &tauri::AppHandle,
+    id: &str,
+    new_name: &str,
+) -> Result<SavedConnectionProfile, String> {
+    let path = get_storage_path(app)?;
+    let mut profiles = load_profiles(app)?;
+
+    let profile = profiles
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| format!("Profile not found: {}", id))?;
+
+    profile.name = new_name.trim().to_string();
+    let updated = profile.clone();
+
+    let json = serde_json::to_string_pretty(&profiles)
+        .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
+
+    fs::write(&path, json)
+        .map_err(|e| format!("Failed to write profiles file: {}", e))?;
+
+    Ok(updated)
+}
+
 fn get_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_dir = app
         .path()
