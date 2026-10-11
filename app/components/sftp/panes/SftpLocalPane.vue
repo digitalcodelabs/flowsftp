@@ -226,7 +226,7 @@ defineExpose({
           <button
             v-if="sessionId"
             @click="emit('batch-upload', selectedFiles)"
-            :title="`Upload ${selectedFiles.length} selected item(s) to remote (F5)`"
+            :title="`Upload ${selectedFiles.length} selected item(s) to remote (Alt+F5)`"
             class="h-6 px-1.5 rounded text-xs transition flex items-center justify-center bg-sky-500/15 hover:bg-sky-500/30 text-sky-700 dark:text-sky-400 border border-sky-500/30 shadow-sm"
           >
             <CatppuccinIcon name="upload" :size="15" />
@@ -316,7 +316,7 @@ defineExpose({
         </button>
         <button
           @click="emit('refresh')"
-          title="Refresh"
+          title="Refresh (F5)"
           class="p-1 rounded text-xs transition hover:opacity-80 flex items-center justify-center"
           :style="{ color: 'var(--color-text-muted)' }"
         >

@@ -1608,7 +1608,7 @@ const browserOtherFonts = computed(() => {
               </div>
               <div>
                 <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Dual-Pane File Manager &amp; Navigation</h4>
-                <p class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">Switch active pane with Tab, transfer items (F5/F6), create folders (F7), delete (F8), and navigate folder history.</p>
+                <p class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">Switch active pane with Tab, refresh (F5), transfer items (Alt+F5/F6), create folders (F7), delete (F8), and navigate folder history.</p>
               </div>
             </div>
 

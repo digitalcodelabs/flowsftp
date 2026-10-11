@@ -424,6 +424,30 @@ const handleRemoteRefresh = async () => {
   }
 }
 
+const handleRefresh = async (target?: 'local' | 'remote' | 'both') => {
+  const t = target || (activePane.value === 'remote' ? 'remote' : 'local')
+  if (t === 'both') {
+    const promises: Promise<any>[] = [
+      sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }),
+    ]
+    if (props.sessionId) {
+      promises.push(handleRemoteRefresh())
+    }
+    await Promise.allSettled(promises)
+    return
+  }
+
+  if (t === 'remote') {
+    if (props.sessionId) {
+      await handleRemoteRefresh()
+    } else {
+      await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
+    }
+  } else {
+    await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
+  }
+}
+
 const openPermissions = (item: SftpFileEntry) => {
   permissionsItem.value = item
   showPermissionsModal.value = true
@@ -1585,6 +1609,7 @@ const {
   onScrollToRow: (pane, idx) => scrollToRow(pane, idx),
   onTogglePane: () => toggleActivePane(),
   onEditPath: () => editActivePath(),
+  onRefresh: (pane, both) => handleRefresh(both ? 'both' : pane),
   onTransferCopy: () => handleTransferCopy(),
   onTransferMove: () => handleTransferMove(),
   onNewFolder: (pane) => openNewFolder(pane),
@@ -1636,7 +1661,7 @@ const handleDownload = async (remoteFile: SftpFileEntry) => {
   }
 }
 
-// F5: Copy / Transfer selected files to opposite pane
+// Copy / Transfer selected files to opposite pane (Alt+F5)
 const handleTransferCopy = async () => {
   if (!props.sessionId) return
   if (activePane.value === 'local') {
@@ -2399,7 +2424,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @navigate-forward="navigateLocalForward"
         @navigate-to="(path) => sftpStore.fetchLocalDir(path)"
         @copy-path="handleCopyPath"
-        @refresh="sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })"
+        @refresh="() => handleRefresh('local')"
         @new-file="openNewFile('local')"
         @new-folder="openNewFolder('local')"
         @open-dir-watcher="() => openDirWatcherModal()"
@@ -2482,7 +2507,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @navigate-forward="navigateRemoteForward"
         @navigate-to="(path) => props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, path)"
         @copy-path="handleCopyPath"
-        @refresh="handleRemoteRefresh"
+        @refresh="() => handleRefresh('remote')"
         @reconnect="performAutoReconnect"
         @new-file="openNewFile('remote')"
         @new-folder="openNewFolder('remote')"
@@ -2558,7 +2583,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       @select-all="(target) => selectAll(target)"
       @batch-delete-local="(files) => handleBatchDeleteLocal(files)"
       @batch-delete-remote="(files) => handleBatchDeleteRemote(files)"
-      @refresh="(target) => target === 'local' ? sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }) : (props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true }))"
+      @refresh="(target) => handleRefresh(target)"
     />
 
     <!-- Rename Modal -->

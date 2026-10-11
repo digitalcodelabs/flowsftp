@@ -56,6 +56,7 @@ export interface UseSftpKeyboardNavOptions {
   onScrollToRow: (pane: 'local' | 'remote', index: number) => void
   onTogglePane?: () => void
   onEditPath?: () => void
+  onRefresh?: (pane: 'local' | 'remote', both?: boolean) => void
   onTransferCopy?: () => void
   onTransferMove?: () => void
   onNewFolder?: (pane: 'local' | 'remote') => void
@@ -320,10 +321,27 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       return
     }
 
-    // F5 / Transfer Copy to opposite pane
+    // Refresh Active Pane (F5 / Ctrl+R / settingsStore.keymaps.refresh)
+    const isRefreshKey =
+      (settingsStore.keymaps.refresh && matchesShortcut(e, settingsStore.keymaps.refresh)) ||
+      (!settingsStore.keymaps.refresh && e.key === 'F5') ||
+      e.key === 'F5' ||
+      ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r')
+
+    if (isRefreshKey) {
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      const both = Boolean(e.ctrlKey || e.metaKey || e.shiftKey)
+      options.onRefresh?.(options.activePane.value, both)
+      return
+    }
+
+    // Transfer Copy to opposite pane
     if (
-      (settingsStore.keymaps.transferCopy && matchesShortcut(e, settingsStore.keymaps.transferCopy)) ||
-      (!settingsStore.keymaps.transferCopy && e.key === 'F5')
+      settingsStore.keymaps.transferCopy &&
+      matchesShortcut(e, settingsStore.keymaps.transferCopy)
     ) {
       if (isTypingInInput(e)) return
       if (options.isAnyModalOpen()) return

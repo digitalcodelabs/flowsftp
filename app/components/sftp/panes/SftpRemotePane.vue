@@ -210,7 +210,7 @@ defineExpose({
         <template v-if="selectedFiles.length > 0">
           <button
             @click="emit('batch-download', selectedFiles)"
-            :title="`Download ${selectedFiles.length} selected item(s) to local (F5)`"
+            :title="`Download ${selectedFiles.length} selected item(s) to local (Alt+F5)`"
             class="h-6 px-1.5 rounded text-xs transition flex items-center justify-center bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 shadow-sm"
           >
             <CatppuccinIcon name="download" :size="15" />
@@ -301,7 +301,7 @@ defineExpose({
         </button>
         <button
           @click="emit('refresh')"
-          title="Refresh"
+          title="Refresh (F5)"
           class="p-1 rounded text-xs transition hover:opacity-80 flex items-center justify-center"
           :style="{ color: 'var(--color-text-muted)' }"
         >

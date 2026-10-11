@@ -172,7 +172,16 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       const saved = localStorage.getItem('flowsftp_keymaps')
       if (saved) {
-        return { ...DEFAULT_KEYMAPS, ...JSON.parse(saved) }
+        const parsed = JSON.parse(saved)
+        // If older version stored transferCopy as F5, migrate transferCopy to Alt+F5 and ensure refresh is F5
+        if (parsed.transferCopy === 'F5' && !parsed.refresh) {
+          parsed.transferCopy = 'Alt+F5'
+          parsed.refresh = 'F5'
+        }
+        if (!parsed.refresh) {
+          parsed.refresh = DEFAULT_KEYMAPS.refresh
+        }
+        return { ...DEFAULT_KEYMAPS, ...parsed }
       }
     } catch (e) {
       console.warn('Failed to parse saved keymaps:', e)

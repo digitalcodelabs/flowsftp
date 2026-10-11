@@ -215,6 +215,7 @@ With native OS performance, encrypted credential vaulting, live file search filt
 
 | Shortcut | Context | Action |
 | :--- | :--- | :--- |
+| <kbd>F5</kbd> / <kbd>Ctrl</kbd> + <kbd>R</kbd> | File Browser | Refresh active directory listing (<kbd>Ctrl</kbd> + <kbd>F5</kbd> for both) |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> | Remote / Global | Open Recursive Remote Search & SSH Grep |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> | File Browser | Toggle Directory Comparison Mode |
 | <kbd>Ctrl</kbd> + <kbd>F</kbd> / <kbd>⌘</kbd> + <kbd>F</kbd> | File Browser | Toggle In-Pane Live Filter |

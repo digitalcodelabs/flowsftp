@@ -7,6 +7,7 @@ export type KeymapAction =
   | 'prevSession'
   | 'togglePane'
   | 'editPath'
+  | 'refresh'
   | 'transferCopy'
   | 'transferMove'
   | 'newFolder'
@@ -24,6 +25,7 @@ export interface KeymapSettings {
   prevSession: string
   togglePane: string
   editPath: string
+  refresh: string
   transferCopy: string
   transferMove: string
   newFolder: string
@@ -50,7 +52,8 @@ export const DEFAULT_KEYMAPS: KeymapSettings = {
   prevSession: 'Ctrl+Shift+Tab',
   togglePane: 'Tab',
   editPath: 'Ctrl+L',
-  transferCopy: 'F5',
+  refresh: 'F5',
+  transferCopy: 'Alt+F5',
   transferMove: 'F6',
   newFolder: 'F7',
   deleteFiles: 'F8',
@@ -117,8 +120,15 @@ export const KEYMAP_ACTIONS_META: KeymapMeta[] = [
     defaultShortcut: DEFAULT_KEYMAPS.editPath,
   },
   {
+    id: 'refresh',
+    title: 'Refresh Directory Listing (F5)',
+    description: 'Reload file list from disk or remote server (F5, Ctrl+R, or Ctrl+F5 for both)',
+    category: 'fileManager',
+    defaultShortcut: DEFAULT_KEYMAPS.refresh,
+  },
+  {
     id: 'transferCopy',
-    title: 'Copy / Transfer to Other Pane (F5)',
+    title: 'Copy / Transfer to Other Pane (Alt+F5)',
     description: 'Upload local files or download remote files to opposite pane',
     category: 'fileManager',
     defaultShortcut: DEFAULT_KEYMAPS.transferCopy,
@@ -170,6 +180,7 @@ export const KEYMAP_ACTIONS_META: KeymapMeta[] = [
 export const FILE_MANAGER_ACTIONS: KeymapAction[] = [
   'togglePane',
   'editPath',
+  'refresh',
   'transferCopy',
   'transferMove',
   'newFolder',
@@ -194,7 +205,7 @@ export const KEYMAP_PRESETS: KeymapPreset[] = [
   {
     id: 'default',
     name: 'Modern (Default)',
-    description: 'Ctrl+Tab for tabs, Tab for pane toggle, F5-F8 dual-pane shortcuts',
+    description: 'F5 refresh, Ctrl+Tab for tabs, Tab for pane toggle, F6-F8 dual-pane shortcuts',
     keymaps: {
       ...DEFAULT_KEYMAPS,
     },
@@ -202,7 +213,7 @@ export const KEYMAP_PRESETS: KeymapPreset[] = [
   {
     id: 'alt',
     name: 'Alt-Based',
-    description: 'Alt+T view toggle, Tab for pane toggle, F5-F8 dual-pane shortcuts',
+    description: 'Alt+T view toggle, Tab for pane toggle, F5 refresh, F6-F8 dual-pane shortcuts',
     keymaps: {
       ...DEFAULT_KEYMAPS,
       toggleView: 'Alt+T',
@@ -211,7 +222,7 @@ export const KEYMAP_PRESETS: KeymapPreset[] = [
   {
     id: 'function',
     name: 'Function Keys',
-    description: 'F4 view toggle, F1 terminal, F3 files, Tab for pane toggle',
+    description: 'F4 view toggle, F1 terminal, F3 files, F5 refresh, Tab for pane toggle',
     keymaps: {
       ...DEFAULT_KEYMAPS,
       toggleView: 'F4',
@@ -318,6 +329,7 @@ export function getKeymapAction(
     'switchToTerminal',
     'switchToFiles',
     'editPath',
+    'refresh',
     'navBack',
     'navForward',
     'navUp',
