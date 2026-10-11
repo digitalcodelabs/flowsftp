@@ -339,7 +339,7 @@ Install the required development libraries for WebKit2GTK 4.1, GTK 3, OpenSSL, a
 
 ### 1. Clone Repository
 ```bash
-git clone https://github.com/your-username/flowsftp.git
+git clone https://github.com/digitalcodelabs/flowsftp.git
 cd flowsftp
 ```
 
