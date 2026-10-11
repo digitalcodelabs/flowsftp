@@ -28,6 +28,9 @@ import {
   AlertTriangle,
   Code2,
   Search,
+  Info,
+  ExternalLink,
+  Mail,
 } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 import { useSftpStore } from '../stores/sftp'
@@ -47,7 +50,7 @@ import {
 const props = withDefaults(
   defineProps<{
     show?: boolean
-    initialTab?: 'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'
+    initialTab?: 'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer' | 'about'
   }>(),
   {
     show: true,
@@ -65,7 +68,15 @@ const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
 const dirWatcherStore = useDirWatcherStore()
 
-const activeTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>(props.initialTab || 'themes')
+const activeTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer' | 'about'>(props.initialTab || 'themes')
+
+const openExternalUrl = async (url: string) => {
+  try {
+    await invoke('sftp_open_in_default_app', { path: url })
+  } catch {
+    window.open(url, '_blank')
+  }
+}
 
 watch(
   () => props.initialTab,
@@ -480,6 +491,15 @@ const browserOtherFonts = computed(() => {
         >
           <Code2 class="w-3.5 h-3.5" />
           <span>Developer</span>
+        </button>
+        <button
+          @click="activeTab = 'about'"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          :class="{ 'font-semibold': activeTab === 'about' }"
+          :style="activeTab === 'about' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+        >
+          <Info class="w-3.5 h-3.5" />
+          <span>About</span>
         </button>
       </div>
 
@@ -2052,6 +2072,95 @@ const browserOtherFonts = computed(() => {
                 <span class="font-semibold text-sky-300">Native Server Speed:</span>
                 SSH sessions execute native Linux <code class="font-mono text-sky-300">find</code> and <code class="font-mono text-sky-300">grep</code> directly on the server host, returning matching lines and line numbers instantly without downloading files.
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7. ABOUT TAB -->
+        <div v-if="activeTab === 'about'" class="space-y-5 max-w-xl mx-auto py-2">
+          <!-- App Header Card -->
+          <div
+            class="rounded-xl border p-6 flex flex-col items-center text-center space-y-3"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <img :src="appIcon" alt="FlowSFTP" class="w-20 h-20 object-contain drop-shadow-md" />
+            <div>
+              <h3 class="text-lg font-bold tracking-tight" :style="{ color: 'var(--color-text-main)' }">FlowSFTP</h3>
+              <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">v0.1.0 (Production Release)</p>
+            </div>
+            <p class="text-xs max-w-md leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
+              A modern, blazing-fast, and secure dual-pane SFTP / FTP / FTPS client with an integrated hardware-accelerated SSH terminal.
+            </p>
+          </div>
+
+          <!-- Company & Contact Card -->
+          <div
+            class="rounded-xl border p-5 space-y-4"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div class="flex items-center justify-between border-b pb-3" :style="{ borderColor: 'var(--color-border)' }">
+              <div>
+                <div class="text-[11px] font-semibold uppercase tracking-wider" :style="{ color: 'var(--color-text-muted)' }">
+                  Developed & Maintained By
+                </div>
+                <div class="text-sm font-bold mt-0.5" :style="{ color: 'var(--color-text-main)' }">
+                  digital code labs s.r.l.
+                </div>
+              </div>
+              <button
+                @click="openExternalUrl('https://digitalcodelabs.dev')"
+                class="px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card cursor-pointer"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+              >
+                <Globe class="w-3.5 h-3.5" />
+                <span>digitalcodelabs.dev</span>
+                <ExternalLink class="w-3 h-3 ml-0.5 opacity-70" />
+              </button>
+            </div>
+
+            <!-- Contact Emails -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div
+                class="rounded-lg border p-3 flex flex-col justify-between space-y-2 cursor-pointer transition hover:border-[var(--color-accent)]"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                @click="openExternalUrl('mailto:contact@digitalcodelabs.dev')"
+              >
+                <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
+                  <Mail class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
+                  <span class="font-medium">Business & Inquiries</span>
+                </div>
+                <span class="font-mono text-xs select-all truncate" :style="{ color: 'var(--color-text-main)' }">
+                  contact@digitalcodelabs.dev
+                </span>
+              </div>
+
+              <div
+                class="rounded-lg border p-3 flex flex-col justify-between space-y-2 cursor-pointer transition hover:border-[var(--color-accent)]"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                @click="openExternalUrl('mailto:dan@spiral8.net')"
+              >
+                <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
+                  <Mail class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
+                  <span class="font-medium">Direct Contact</span>
+                </div>
+                <span class="font-mono text-xs select-all truncate" :style="{ color: 'var(--color-text-main)' }">
+                  dan@spiral8.net
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- License & Tech Specs Card -->
+          <div
+            class="rounded-xl border p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div>
+              <span class="font-medium" :style="{ color: 'var(--color-text-main)' }">License:</span>
+              <span class="ml-1" :style="{ color: 'var(--color-text-muted)' }">MIT License — Copyright &copy; 2026 digital code labs s.r.l.</span>
+            </div>
+            <div class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
+              Tauri v2 • Nuxt 4 • Rust
             </div>
           </div>
         </div>

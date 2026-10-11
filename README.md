@@ -61,16 +61,23 @@ With native OS performance, encrypted credential vaulting, live file search filt
 - **Parent Directory Entry (`📁 ..`)**: Classic FileZilla-style parent directory row for swift mouse and keyboard navigation.
 - **Path Address Bars**: Direct keyboard path input with auto-completion and breadcrumbs.
 - **Quick Bookmarks**: Pin frequently visited remote directories (`/var/www`, `/etc`, `~`) and local folders.
-- **Multi-Selection & Batch Operations**:
+- **Selection & Deselection Ergonomics**:
   - Multi-file selection with <kbd>Shift+Click</kbd>, <kbd>Ctrl/Cmd+Click</kbd>, and <kbd>Ctrl+A</kbd>.
-  - Batch upload, download, and recursive deletion with confirmation modals.
+  - **Empty-Space Click to Deselect**: Clicking anywhere on the empty space of the local or remote pane immediately clears all selected files.
+  - Pressing <kbd>Esc</kbd> clears selections instantly when no modals are open.
+  - Context menu on empty space enables one-click file/folder creation, pasting, and refreshing.
+- **Background Async Deletion with Instant Cancel**:
+  - Deleting massive directories (such as `node_modules` or `vendor`) runs asynchronously in the background without freezing the UI or blocking file navigation.
+  - Real-time floating status card shows item title, completed/total count, and live spinner.
+  - **Reliable Cancellation**: Instantly halts recursive deletion loops safely on both local and remote filesystems without UI lockup or retry loops.
 - **Drag & Drop**:
   - Drag files directly between Local and Remote panes.
   - Drag into subfolders or onto parent `..` directory to drop into parent folders.
   - Native OS drag-and-drop from Windows Explorer / macOS Finder / Linux file managers.
-- **WSL (Windows Subsystem for Linux) Integration**:
-  - Automatic detection of installed WSL distributions (e.g. `Ubuntu-24.04`).
-  - One-click jumping to `//wsl.localhost/<distro>` directly from the local toolbar.
+- **WSL (Windows Subsystem for Linux) & Linux Distro Recognition**:
+  - Automatic detection of installed WSL distributions (e.g. `Ubuntu`, `Debian`, `Fedora`, `Arch`, `Alpine`, `openSUSE`, `Kali`).
+  - Distro-specific brand icons rendered in the breadcrumbs bar and quick navigation dropdowns.
+  - One-click jumping to `//wsl.localhost/<distro>` or `\\wsl$\<distro>` directly from the local toolbar.
 - **Git Status Indicators**:
   - Visual badges (`M` Modified, `U` Untracked, `S` Staged, `D` Deleted) for local and remote repositories.
   - Active branch indicators in path address bars.
@@ -187,9 +194,17 @@ With native OS performance, encrypted credential vaulting, live file search filt
 ---
 
 ### 🎨 Customization & Theming
+- **Catppuccin Flow Ribbon Branding**: Custom-crafted Flow Ribbon emblem and squircle application icons aligned with the Catppuccin color scheme with transparent margins.
 - **Curated Theme Palettes**:
   - **Catppuccin**: Mocha, Macchiato, Frappé, Latte.
   - **Developer Classics**: Tokyo Night, Dracula, Nord, One Dark, GitHub Dark & Light.
+- **100% Theme Consistency**:
+  - Dynamically styled toast notifications (top-center and bottom-right floating messages).
+  - Themed background deletion and auto-sync status pills.
+  - Consistent context menus, including empty-pane right-click states.
+- **Native Window Dragging**:
+  - Click and drag freely anywhere across the custom topbar (`data-tauri-drag-region`) to move the window between displays.
+  - Themed minimize, maximize/restore, and close buttons integrated into the titlebar.
 - **File & Folder Icons**: Rich file type icons powered by Catppuccin file icons and Lucide icons.
 - **Row Density Options**: Compact, Normal, and Relaxed row heights.
 - **Custom Fonts**: Configurable monospace fonts and font sizes for file listings and terminal.
@@ -210,7 +225,7 @@ With native OS performance, encrypted credential vaulting, live file search filt
 | <kbd>Ctrl</kbd> + <kbd>A</kbd> / <kbd>⌘</kbd> + <kbd>A</kbd> | File Browser | Select all files in active pane |
 | <kbd>Delete</kbd> | File Browser | Delete selected file(s) (with async background cancel) |
 | <kbd>Ctrl</kbd> + <kbd>S</kbd> / <kbd>⌘</kbd> + <kbd>S</kbd> | Code Editor | Save and upload file |
-| <kbd>Esc</kbd> | Global | Close modals, clear filter, or dismiss preview |
+| <kbd>Esc</kbd> | Global | Close modals, clear filter, dismiss preview, or deselect all items |
 | <kbd>Ctrl</kbd> + <kbd>T</kbd> / <kbd>⌘</kbd> + <kbd>T</kbd> | Global | Open Connection Manager |
 
 ---
@@ -251,25 +266,72 @@ Ensure you have the following installed on your development machine:
 - **C++ Build Tools**: Install [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the *"Desktop development with C++"* workload.
 - **WebView2**: Built into Windows 10 & 11.
 
-#### Linux (Debian / Ubuntu)
-```bash
-sudo apt update
-sudo apt install -y libwebkit2gtk-4.1-dev \
+#### Linux Dependencies
+Install the required development libraries for WebKit2GTK 4.1, GTK 3, OpenSSL, and AppIndicator based on your Linux distribution:
+
+- **Debian / Ubuntu / Linux Mint / Pop!_OS**:
+  ```bash
+  sudo apt update
+  sudo apt install -y \
     build-essential \
     curl \
     wget \
     file \
-    libxdo-dev \
     libssl-dev \
+    libgtk-3-dev \
+    libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev \
-    librsvg2-dev
-```
+    librsvg2-dev \
+    libxdo-dev
+  ```
+
+- **Fedora / RHEL**:
+  ```bash
+  sudo dnf groupinstall -y "Development Tools"
+  sudo dnf install -y \
+    webkit2gtk4.1-devel \
+    openssl-devel \
+    curl \
+    wget \
+    file \
+    gtk3-devel \
+    libappindicator-gtk3-devel \
+    librsvg2-devel \
+    libxdo-devel
+  ```
+
+- **Arch Linux / Manjaro**:
+  ```bash
+  sudo pacman -Syu --needed \
+    base-devel \
+    curl \
+    wget \
+    file \
+    openssl \
+    gtk3 \
+    webkit2gtk-4.1 \
+    libappindicator-gtk3 \
+    librsvg \
+    xdotool
+  ```
+
+- **openSUSE (Tumbleweed / Leap)**:
+  ```bash
+  sudo zypper install -t pattern devel_basis
+  sudo zypper install -y \
+    webkit2gtk-4.1-devel \
+    libopenssl-devel \
+    gtk3-devel \
+    libappindicator3-devel \
+    librsvg-devel
+  ```
 
 #### macOS
 - Install Xcode Command Line Tools:
   ```bash
   xcode-select --install
   ```
+
 
 ---
 
@@ -297,7 +359,7 @@ npm run tauri:dev
 ## 🏗️ Building for Production
 
 ### Build Desktop Application Installer
-To compile the optimized Rust release binary and bundle platform installers (`.exe`/`.msi` on Windows, `.dmg`/`.app` on macOS, `.deb`/`.AppImage` on Linux):
+To compile the optimized Rust release binary and bundle platform installers:
 
 ```bash
 npm run tauri:build
@@ -307,6 +369,51 @@ The output artifacts will be generated in:
 ```
 src-tauri/target/release/bundle/
 ```
+
+- **Windows**: `.exe` (NSIS installer) and `.msi`
+- **macOS**: `.dmg` and `.app`
+- **Linux**: `.deb` package and `.AppImage` standalone binary
+
+---
+
+### 🐧 Building & Running on Linux
+
+FlowSFTP compiles and runs natively across all modern Linux distributions.
+
+#### 1. Quick Build (AppImage & Debian Package)
+After installing the [Linux Dependencies](#linux-dependencies), run:
+
+```bash
+npm run tauri:build
+```
+
+The compiled bundles will be generated under `src-tauri/target/release/bundle/`:
+```bash
+# Debian / Ubuntu / Linux Mint (.deb)
+sudo dpkg -i src-tauri/target/release/bundle/deb/flowsftp_*_amd64.deb
+
+# Universal Standalone (.AppImage)
+chmod +x src-tauri/target/release/bundle/appimage/flowsftp_*_amd64.AppImage
+./src-tauri/target/release/bundle/appimage/flowsftp_*_amd64.AppImage
+```
+
+#### 2. Development Mode on Linux
+To run with live hot reloading during development:
+```bash
+npm run tauri:dev
+```
+
+#### 3. Linux Desktop Environment Tips
+- **Wayland / WebKit Compositing**: If you experience WebKit rendering glitches or black windows on certain graphics drivers (or inside Linux VMs), launch with software compositing:
+  ```bash
+  WEBKIT_DISABLE_COMPOSITING_MODE=1 ./flowsftp
+  ```
+- **Force X11 Backend**: To force X11 compatibility mode under Wayland:
+  ```bash
+  GDK_BACKEND=x11 ./flowsftp
+  ```
+
+---
 
 ### Frontend-Only Build (Web Validation)
 To validate and type-check the Vue/Nuxt application:
@@ -330,12 +437,19 @@ flowsftp/
 │   │   ├── ConnectionManagerModal.vue # Connection profiles & vault
 │   │   ├── PermissionsModal.vue # Unix chmod visual calculator
 │   │   ├── SettingsModal.vue    # App settings & preferences
-│   │   └── sftp/                # SFTP panes, modals, and toolbars
+│   │   └── sftp/                # SFTP panes, modals, composables, and queue
 │   │       ├── SftpExternalEditBar.vue   # Floating status bar for external editor live sync
+│   │       ├── composables/
+│   │       │   ├── useModalEscape.ts     # Reusable Esc key modal dismiss composable
+│   │       │   ├── useSftpDragDrop.ts    # Pane & OS drag-and-drop coordinator
+│   │       │   └── useSftpKeyboardNav.ts # Arrow key, Enter, Backspace navigation
 │   │       ├── modals/
 │   │       │   ├── SftpDirWatcherModal.vue # Directory watcher & folder pairing modal
-│   │       │   └── SftpSearchModal.vue     # Recursive remote search & SSH grep modal
-│   │       └── panes/           # Local and remote browser panes
+│   │       │   ├── SftpSearchModal.vue     # Recursive remote search & SSH grep modal
+│   │       │   ├── SftpCompressModal.vue   # Archive compression dialog
+│   │       │   └── SftpExtractModal.vue    # Archive extraction dialog
+│   │       ├── panes/           # Local and remote browser panes & breadcrumbs
+│   │       └── queue/           # FileZilla-exact 3-tab transfer queue drawer
 │   ├── stores/                  # Pinia state stores
 │   │   ├── sftp.ts              # SFTP/Local files, queue, bookmarks
 │   │   ├── ssh.ts               # SSH session management
@@ -344,7 +458,9 @@ flowsftp/
 │   │   ├── dirWatcher.ts        # Folder pairing & background sync state
 │   │   ├── settings.ts          # Density, fonts, keymaps, external editor config
 │   │   └── theme.ts             # Theme palettes
-│   └── utils/                   # Keymap & utility helpers
+│   └── utils/                   # Keymap, formatters, and file icon helpers
+│       ├── formatters.ts        # formatBytes, formatDate, isArchiveFile, highlightMatch
+│       └── fileIcons.ts         # Catppuccin file and folder icon resolvers
 │
 ├── src-tauri/                   # Rust backend (Tauri v2)
 │   ├── Cargo.toml               # Rust dependencies
@@ -354,7 +470,7 @@ flowsftp/
 │       ├── lib.rs               # Library entry & command registration
 │       ├── state.rs             # Shared application state
 │       ├── sftp/                # SFTP, FTP, watcher, and search engines
-│       │   ├── mod.rs
+│       │   ├── mod.rs           # Core types, now_epoch_secs, transfer helpers
 │       │   ├── client.rs        # SFTP client implementation
 │       │   ├── dir_watcher.rs   # Recursive directory watcher & auto-sync engine
 │       │   ├── external_edit.rs # External editor launcher & file change monitor
@@ -376,6 +492,16 @@ flowsftp/
 
 ---
 
+## 🏢 Developed & Maintained By
+
+**digital code labs s.r.l.**
+
+- 🌐 **Website**: [https://digitalcodelabs.dev](https://digitalcodelabs.dev)
+- 📧 **Inquiries**: [contact@digitalcodelabs.dev](mailto:contact@digitalcodelabs.dev)
+- 📬 **Direct Contact**: [dan@spiral8.net](mailto:dan@spiral8.net)
+
+---
+
 ## 🤝 Contributing
 
 Contributions, bug reports, and feature requests are welcome!
@@ -390,4 +516,6 @@ Contributions, bug reports, and feature requests are welcome!
 
 ## 📄 License
 
-This project is distributed under the MIT License. See [LICENSE](LICENSE) for details.
+This project is distributed under the MIT License — Copyright (c) 2026 **digital code labs s.r.l.**  
+See the full [LICENSE](LICENSE) file for details.
+

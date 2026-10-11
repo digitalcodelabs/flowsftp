@@ -33,6 +33,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "copyright": "Copyright © 2026 digital code labs s.r.l.",
+    "publisher": "digital code labs s.r.l.",
+    "category": "DeveloperTool",
+    "shortDescription": "Modern dual-pane SFTP and FTP client with integrated SSH terminal",
+    "longDescription": "FlowSFTP is a high-performance, modern dual-pane SFTP and FTP client with integrated hardware-accelerated SSH terminal, developed by digital code labs s.r.l.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,7 +1,16 @@
 {
   "name": "flowsftp",
+  "version": "0.1.0",
+  "description": "A modern, blazing-fast dual-pane SFTP and FTP client with integrated hardware-accelerated SSH terminal",
   "type": "module",
   "private": true,
+  "author": {
+    "name": "digital code labs s.r.l.",
+    "email": "contact@digitalcodelabs.dev",
+    "url": "https://digitalcodelabs.dev"
+  },
+  "license": "MIT",
+  "homepage": "https://digitalcodelabs.dev",
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",
