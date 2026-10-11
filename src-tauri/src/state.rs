@@ -9,7 +9,7 @@ use crate::sftp::external_edit::{ActiveWatcherHandle, ExternalEditInfo};
 use crate::ssh::session::ActiveSession;
 use crate::ssh::types::SessionInfo;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct AppState {
     sessions: Arc<RwLock<HashMap<String, Arc<ActiveSession>>>>,
     ftp_sessions: Arc<RwLock<HashMap<String, Arc<ActiveFtpSession>>>>,

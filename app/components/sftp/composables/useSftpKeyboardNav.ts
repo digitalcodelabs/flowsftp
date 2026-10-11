@@ -519,6 +519,21 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       if (sftpStore.activeConflictDialog?.show) {
         sftpStore.resolveConflict('skip')
       }
+      if (options.activePane.value === 'local') {
+        if (options.selectedLocalPaths.value.size > 0 || options.isLocalParentSelected.value) {
+          options.selectedLocalPaths.value = new Set()
+          sftpStore.selectedLocalPath = null
+          options.isLocalParentSelected.value = false
+          options.lastLocalClickedIndex.value = null
+        }
+      } else {
+        if (options.selectedRemotePaths.value.size > 0 || options.isRemoteParentSelected.value) {
+          options.selectedRemotePaths.value = new Set()
+          sftpStore.selectedRemotePath = null
+          options.isRemoteParentSelected.value = false
+          options.lastRemoteClickedIndex.value = null
+        }
+      }
       return
     }
 

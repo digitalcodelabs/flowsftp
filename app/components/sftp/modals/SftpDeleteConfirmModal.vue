@@ -49,7 +49,14 @@ const handleConfirm = () => {
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
     >
       <div class="flex items-start space-x-3">
-        <div class="w-10 h-10 rounded-xl bg-rose-950/60 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0 shadow-inner">
+        <div
+          class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
+          :style="{
+            backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 18%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 35%, transparent)',
+            color: 'var(--color-danger, #f38ba8)'
+          }"
+        >
           <Trash2 class="w-5 h-5" />
         </div>
         <div class="flex-1 min-w-0">
@@ -63,10 +70,10 @@ const handleConfirm = () => {
           <p class="text-xs mt-1 leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
             Are you sure you want to permanently delete
             <template v-if="target.files.length === 1">
-              <span class="font-semibold text-rose-300">"{{ target.files[0].name }}"</span>
+              <span class="font-semibold" :style="{ color: 'var(--color-danger, #f38ba8)' }">"{{ target.files[0].name }}"</span>
             </template>
             <template v-else>
-              these <span class="font-semibold text-rose-300">{{ target.files.length }} items</span>
+              these <span class="font-semibold" :style="{ color: 'var(--color-danger, #f38ba8)' }">{{ target.files.length }} items</span>
             </template>
             from {{ target.pane === 'local' ? 'local disk' : 'the remote server' }}?
           </p>
@@ -131,10 +138,11 @@ const handleConfirm = () => {
           <input
             type="checkbox"
             v-model="useFastRm"
-            class="rounded border-zinc-700 bg-zinc-900 text-rose-500 focus:ring-0 cursor-pointer mt-0.5"
+            class="rounded cursor-pointer mt-0.5"
+            :style="{ accentColor: 'var(--color-danger, #f38ba8)' }"
           />
           <div class="flex flex-col">
-            <span class="font-medium text-[11px]">Use fast remote deletion (<code class="font-mono text-[10px] text-amber-300">rm -rf</code> via SSH)</span>
+            <span class="font-medium text-[11px]">Use fast remote deletion (<code class="font-mono text-[10px] text-amber-400">rm -rf</code> via SSH)</span>
             <span class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
               Recommended for massive directories (e.g. node_modules, vendor). Requires remote shell permissions.
             </span>
@@ -154,7 +162,7 @@ const handleConfirm = () => {
         <button
           type="button"
           @click="handleConfirm"
-          class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 shadow-md shadow-rose-950/50 flex items-center space-x-1.5 transition cursor-pointer"
+          class="px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 cursor-pointer btn-danger"
         >
           <Trash2 class="w-3.5 h-3.5" />
           <span>{{ target.files.length === 1 ? 'Delete Permanently' : 'Delete All Selected' }}</span>

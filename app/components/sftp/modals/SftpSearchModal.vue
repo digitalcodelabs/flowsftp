@@ -15,6 +15,7 @@ import {
 } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 import FileIcon from '../../FileIcon.vue'
+import { useModalEscape } from '../composables/useModalEscape'
 
 export interface RemoteSearchResultItem {
   path: string
@@ -84,20 +85,12 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 }
 
-const handleWindowKeydown = (e: KeyboardEvent) => {
-  if (!props.show) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    handleClose()
-  }
-}
+useModalEscape(() => props.show, handleClose)
 
 watch(
   () => props.show,
   (isOpen) => {
     if (isOpen) {
-      window.addEventListener('keydown', handleWindowKeydown, true)
       searchBasePath.value = props.currentRemotePath || '/'
       results.value = []
       searchError.value = null
@@ -108,7 +101,6 @@ watch(
         searchInputRef.value?.select()
       })
     } else {
-      window.removeEventListener('keydown', handleWindowKeydown, true)
       if (isSearching.value) {
         handleStop()
       }
@@ -118,7 +110,6 @@ watch(
 )
 
 onUnmounted(() => {
-  window.removeEventListener('keydown', handleWindowKeydown, true)
   if (isSearching.value && currentSearchId.value) {
     invoke('sftp_cancel_search', { searchId: currentSearchId.value }).catch(() => {})
   }

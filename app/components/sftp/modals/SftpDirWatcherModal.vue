@@ -15,6 +15,7 @@ import {
   Plus,
 } from 'lucide-vue-next'
 import { useDirWatcherStore, type DirWatcherPairing } from '../../../stores/dirWatcher'
+import { useModalEscape } from '../composables/useModalEscape'
 
 const props = defineProps<{
   show: boolean
@@ -36,36 +37,22 @@ const ignorePatternsInput = ref('.git, node_modules, .vscode, .idea, dist, build
 const isStarting = ref(false)
 const errorMessage = ref<string | null>(null)
 
-const handleWindowKeyDown = (e: KeyboardEvent) => {
-  if (!props.show) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    emit('close')
-  }
-}
+useModalEscape(() => props.show, () => emit('close'))
 
 watch(
   () => [props.show, props.initialLocalDir, props.initialRemoteDir] as const,
   ([isOpen, local, remote]) => {
     if (isOpen) {
-      window.addEventListener('keydown', handleWindowKeyDown, true)
       localDirInput.value = local || ''
       remoteDirInput.value = remote || ''
       errorMessage.value = null
       if (props.sessionId) {
         dirWatcherStore.loadPairings(props.sessionId)
       }
-    } else {
-      window.removeEventListener('keydown', handleWindowKeyDown, true)
     }
   },
   { immediate: true }
 )
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleWindowKeyDown, true)
-})
 
 const activePairings = computed(() => {
   if (!props.sessionId) return dirWatcherStore.pairings

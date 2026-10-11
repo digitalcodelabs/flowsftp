@@ -335,9 +335,34 @@ const handleResizeStart = (
   }
 }
 
+const handleHeaderMouseDown = async (e: MouseEvent) => {
+  // Only trigger dragging on primary left mouse click
+  if (e.button !== 0) return
+
+  // Do not drag if clicking on interactive controls (buttons, inputs, session tabs)
+  const target = e.target as HTMLElement | null
+  if (target?.closest('button, input, a, select, textarea, [role="button"], [data-session-id], .no-drag')) {
+    return
+  }
+
+  // Prevent drag if this is part of a double-click (maximize)
+  if (e.detail > 1) {
+    return
+  }
+
+  if (typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)) {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      await getCurrentWindow().startDragging()
+    } catch (err) {
+      console.warn('Failed to start window dragging:', err)
+    }
+  }
+}
+
 const handleHeaderDblClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement | null
-  if (target?.closest('button, input, a, [role="button"]')) {
+  if (target?.closest('button, input, a, select, textarea, [role="button"], [data-session-id], .no-drag')) {
     return
   }
   if (typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)) {
@@ -372,17 +397,18 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
     <header
       @contextmenu.prevent
       data-tauri-drag-region
+      @mousedown="handleHeaderMouseDown"
       @dblclick="handleHeaderDblClick"
-      class="flex items-center justify-between pl-3 pr-0 h-10 border-b gap-2 transition-colors duration-150 select-none relative z-40"
+      class="flex items-center justify-between pl-3 pr-0 h-10 border-b gap-2 transition-colors duration-150 select-none relative z-40 cursor-default"
       :style="{
         backgroundColor: currentTab === 'terminal' ? 'var(--color-terminal-bg)' : 'var(--color-bg-header)',
         borderColor: 'var(--color-border)'
       }"
     >
       <!-- Left: Logo & View Switcher -->
-      <div class="flex items-center space-x-2.5 shrink-0">
+      <div class="flex items-center space-x-2.5 shrink-0" data-tauri-drag-region>
         <!-- App Logo -->
-        <div class="flex items-center select-none" title="FlowSFTP">
+        <div class="flex items-center select-none" title="FlowSFTP" data-tauri-drag-region>
           <img :src="appIcon" alt="FlowSFTP" class="w-6 h-6 rounded-md object-contain shrink-0 pointer-events-none drop-shadow-xs" />
         </div>
 
@@ -446,20 +472,21 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
       <div
         v-if="sshStore.sessions.length === 0"
         data-tauri-drag-region
-        class="flex-1 flex items-center justify-center min-w-0 pointer-events-none select-none"
+        class="flex-1 flex items-center justify-center min-w-0 h-full cursor-default select-none"
       />
 
       <!-- Middle: Active Sessions Tabs (Scrollable + Overflow Menu) -->
       <div
         v-if="sshStore.sessions.length > 0"
         data-tauri-drag-region
-        class="flex-1 min-w-0 flex items-center space-x-1.5 overflow-hidden"
+        class="flex-1 min-w-0 flex items-center space-x-1.5 overflow-hidden h-full"
       >
         <!-- Scrollable tab strip with wheel navigation -->
         <div
           ref="tabsContainerRef"
           @wheel.passive="handleTabWheel"
-          class="flex-1 min-w-0 flex items-center space-x-1 overflow-x-auto no-scrollbar py-1"
+          data-tauri-drag-region
+          class="flex-1 min-w-0 flex items-center space-x-1 overflow-x-auto no-scrollbar py-1 h-full"
         >
           <div
             v-for="sess in sshStore.sessions"
@@ -467,7 +494,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             :data-session-id="sess.sessionId"
             @click="selectSession(sess.sessionId)"
             :title="`${sess.username}@${sess.host}:${sess.port} (${sess.protocol?.toUpperCase() || 'SFTP'}) • ${settingsStore.keymaps.nextSession} to switch`"
-            class="group flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border transition-all shrink-0 max-w-[140px] sm:max-w-[180px]"
+            class="group flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border transition-all shrink-0 max-w-[140px] sm:max-w-[180px] no-drag"
             :style="sess.sessionId === sshStore.activeSessionId
               ? { backgroundColor: 'var(--color-bg-hover)', borderColor: 'var(--color-border-active)', color: 'var(--color-text-main)' }
               : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
@@ -492,7 +519,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
       </div>
 
       <!-- Right: Action Buttons (Always Preserved and Visible) -->
-      <div class="flex items-center space-x-1.5 shrink-0 h-full" data-tauri-drag-region="false">
+      <div class="flex items-center space-x-1.5 shrink-0 h-full no-drag" data-tauri-drag-region="false">
         <div v-if="sshStore.activeSession && currentTab === 'terminal' && (!sshStore.activeSession.protocol || sshStore.activeSession.protocol === 'sftp')" class="text-[11px] font-mono hidden xl:inline pr-1" :style="{ color: 'var(--color-text-muted)' }">
           PTY: {{ terminalDimensions.cols }}x{{ terminalDimensions.rows }}
         </div>

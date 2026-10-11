@@ -3,6 +3,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { Lock, Shield, Check, AlertCircle, X } from 'lucide-vue-next'
 import { type SftpFileEntry } from '../stores/sftp'
+import { useModalEscape } from './sftp/composables/useModalEscape'
 import FileIcon from './FileIcon.vue'
 
 const props = defineProps<{
@@ -103,25 +104,11 @@ const applyPreset = (preset: string) => {
   applyNumeric(numericInput.value)
 }
 
-// Populate from item on show
-const handleWindowKeyDown = (e: KeyboardEvent) => {
-  if (!props.show) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    emit('close')
-  }
-}
+useModalEscape(() => props.show, () => emit('close'))
 
 watch(
   () => [props.show, props.item] as const,
   ([show, item]) => {
-    if (show) {
-      window.addEventListener('keydown', handleWindowKeyDown, true)
-    } else {
-      window.removeEventListener('keydown', handleWindowKeyDown, true)
-    }
-
     if (show && item) {
       errorMessage.value = null
       successMessage.value = null
@@ -136,10 +123,6 @@ watch(
   },
   { immediate: true }
 )
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleWindowKeyDown, true)
-})
 
 const handleSave = async () => {
   if (!props.item || !props.sessionId) return

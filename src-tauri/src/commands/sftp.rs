@@ -97,30 +97,14 @@ pub async fn sftp_remove_remote_dir(
     use_fast_rm: Option<bool>,
 ) -> Result<(), String> {
     let clean = path.trim().replace('\\', "/");
-    let clean_path = clean.trim_end_matches('/');
-    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}", session_id, path, clean_path, use_fast_rm);
+    let clean_path = clean.trim_end_matches('/').to_string();
+    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}, deletion_id={:?}", session_id, path, clean_path, use_fast_rm, deletion_id);
 
     if clean_path.is_empty() || clean_path == "/" || clean_path == "." || clean_path == ".." {
         let err = "Cannot delete root or empty directory".to_string();
         eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
         return Err(err);
     }
-
-    if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        eprintln!("[FLOWSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
-        let res = ftp.remove_dir(clean_path).await;
-        eprintln!("[FLOWSFTP_BACKEND] FTP remove_dir result: {:?}", res);
-        return res;
-    }
-
-    let session = state
-        .get_session(&session_id)
-        .await
-        .ok_or_else(|| {
-            let err = format!("Session '{}' not found", session_id);
-            eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
-            err
-        })?;
 
     if let Some(ref del_id) = deletion_id {
         if state.is_deletion_cancelled(del_id) {
@@ -129,57 +113,130 @@ pub async fn sftp_remove_remote_dir(
         }
     }
 
-    let sftp = session.get_sftp().await?;
-
-    if use_fast_rm.unwrap_or(false) {
-        log::info!("Attempting fast rm -rf for remote directory '{}'", clean_path);
-        eprintln!("[FLOWSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
-        let escaped_path = clean_path.replace('\'', "'\\''");
-        let cmd = format!("rm -rf -- '{}'", escaped_path);
-
-        let exec_result: Result<(), String> = async {
-            let channel = session
-                .handle
-                .channel_open_session()
-                .await
-                .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
-
-            channel
-                .exec(true, cmd)
-                .await
-                .map_err(|e| format!("Failed to execute rm -rf: {}", e))?;
-
-            use tokio::io::AsyncReadExt;
-            let mut stream = channel.into_stream();
-            let mut dummy = Vec::new();
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                stream.read_to_end(&mut dummy),
-            )
-            .await;
-
-            Ok(())
-        }
-        .await;
-
-        if exec_result.is_ok() {
-            // Verify if the directory was deleted
-            if sftp.metadata(clean_path).await.is_err() {
-                log::info!("Fast rm -rf succeeded for '{}'", clean_path);
-                eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf verified succeeded for '{}'", clean_path);
-                return Ok(());
+    let del_id_clone = deletion_id.clone();
+    let app_state = state.inner().clone();
+    let cancel_watcher = async move {
+        if let Some(ref id) = del_id_clone {
+            loop {
+                if app_state.is_deletion_cancelled(id) {
+                    return;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             }
-            log::warn!("rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
-            eprintln!("[FLOWSFTP_BACKEND] rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
         } else {
-            log::warn!("Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
-            eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
+            std::future::pending::<()>().await;
+        }
+    };
+
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        eprintln!("[FLOWSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
+        let ftp_work = async {
+            tokio::time::timeout(tokio::time::Duration::from_secs(60), ftp.remove_dir(&clean_path))
+                .await
+                .map_err(|_| format!("FTP remove_dir timed out for '{}'", clean_path))?
+        };
+
+        tokio::select! {
+            res = ftp_work => {
+                eprintln!("[FLOWSFTP_BACKEND] FTP remove_dir result: {:?}", res);
+                if let Some(ref del_id) = deletion_id {
+                    if state.is_deletion_cancelled(del_id) {
+                        return Err("Deletion cancelled by user".to_string());
+                    }
+                }
+                res
+            }
+            _ = cancel_watcher => {
+                eprintln!("[FLOWSFTP_BACKEND] FTP remove_dir cancelled by user: {:?}", deletion_id);
+                Err("Deletion cancelled by user".to_string())
+            }
+        }
+    } else {
+        let session = state
+            .get_session(&session_id)
+            .await
+            .ok_or_else(|| {
+                let err = format!("Session '{}' not found", session_id);
+                eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
+                err
+            })?;
+
+        let sftp = session.get_sftp().await?;
+
+        let dir_work = async {
+            if use_fast_rm.unwrap_or(false) {
+                log::info!("Attempting fast rm -rf for remote directory '{}'", clean_path);
+                eprintln!("[FLOWSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
+                let escaped_path = clean_path.replace('\'', "'\\''");
+                let cmd = format!("rm -rf -- '{}'", escaped_path);
+
+                let exec_result: Result<(), String> = async {
+                    let channel = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        session.handle.channel_open_session(),
+                    )
+                    .await
+                    .map_err(|_| "Timeout opening SSH channel".to_string())?
+                    .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
+
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        channel.exec(true, cmd),
+                    )
+                    .await
+                    .map_err(|_| "Timeout executing rm -rf command".to_string())?
+                    .map_err(|e| format!("Failed to execute rm -rf: {}", e))?;
+
+                    use tokio::io::AsyncReadExt;
+                    let mut stream = channel.into_stream();
+                    let mut dummy = Vec::new();
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        stream.read_to_end(&mut dummy),
+                    )
+                    .await;
+
+                    Ok(())
+                }
+                .await;
+
+                if exec_result.is_ok() {
+                    let exists = match tokio::time::timeout(std::time::Duration::from_secs(5), sftp.metadata(&clean_path)).await {
+                        Ok(Ok(_)) => true,
+                        _ => false,
+                    };
+                    if !exists {
+                        log::info!("Fast rm -rf succeeded for '{}'", clean_path);
+                        eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf verified succeeded for '{}'", clean_path);
+                        return Ok(());
+                    }
+                    log::warn!("rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
+                    eprintln!("[FLOWSFTP_BACKEND] rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
+                } else {
+                    log::warn!("Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
+                    eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
+                }
+            }
+
+            remove_remote_dir_recursive_with_cancel(&sftp, &clean_path, &state, deletion_id.as_deref()).await
+        };
+
+        tokio::select! {
+            res = dir_work => {
+                eprintln!("[FLOWSFTP_BACKEND] remove_remote_dir result for '{}': {:?}", clean_path, res);
+                if let Some(ref del_id) = deletion_id {
+                    if state.is_deletion_cancelled(del_id) {
+                        return Err("Deletion cancelled by user".to_string());
+                    }
+                }
+                res
+            }
+            _ = cancel_watcher => {
+                eprintln!("[FLOWSFTP_BACKEND] remove_remote_dir cancelled by user: {:?}", deletion_id);
+                Err("Deletion cancelled by user".to_string())
+            }
         }
     }
-
-    let res = remove_remote_dir_recursive_with_cancel(&sftp, clean_path, &state, deletion_id.as_deref()).await;
-    eprintln!("[FLOWSFTP_BACKEND] remove_remote_dir_recursive_with_cancel result for '{}': {:?}", clean_path, res);
-    res
 }
 
 #[tauri::command]
@@ -189,7 +246,8 @@ pub async fn sftp_remove_remote_file(
     path: String,
     deletion_id: Option<String>,
 ) -> Result<(), String> {
-    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}'", session_id, path);
+    let clean_path = path.trim().replace('\\', "/");
+    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}', deletion_id={:?}", session_id, clean_path, deletion_id);
     if let Some(ref del_id) = deletion_id {
         if state.is_deletion_cancelled(del_id) {
             eprintln!("[FLOWSFTP_BACKEND] File deletion cancelled by user: {}", del_id);
@@ -197,25 +255,71 @@ pub async fn sftp_remove_remote_file(
         }
     }
 
+    let del_id_clone = deletion_id.clone();
+    let app_state = state.inner().clone();
+    let cancel_watcher = async move {
+        if let Some(ref id) = del_id_clone {
+            loop {
+                if app_state.is_deletion_cancelled(id) {
+                    return;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        let res = ftp.remove_file(&path).await;
-        eprintln!("[FLOWSFTP_BACKEND] FTP remove_file result: {:?}", res);
-        return res;
+        let ftp_work = async {
+            tokio::time::timeout(tokio::time::Duration::from_secs(15), ftp.remove_file(&clean_path))
+                .await
+                .map_err(|_| format!("FTP remove_file timed out after 15s for '{}'", clean_path))?
+        };
+
+        tokio::select! {
+            res = ftp_work => {
+                eprintln!("[FLOWSFTP_BACKEND] FTP remove_file result: {:?}", res);
+                if let Some(ref del_id) = deletion_id {
+                    if state.is_deletion_cancelled(del_id) {
+                        return Err("Deletion cancelled by user".to_string());
+                    }
+                }
+                res
+            }
+            _ = cancel_watcher => {
+                eprintln!("[FLOWSFTP_BACKEND] FTP remove_file cancelled by user: {:?}", deletion_id);
+                Err("Deletion cancelled by user".to_string())
+            }
+        }
+    } else {
+        let session = state
+            .get_session(&session_id)
+            .await
+            .ok_or_else(|| {
+                let err = format!("Session '{}' not found", session_id);
+                eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
+                err
+            })?;
+
+        let sftp = session.get_sftp().await?;
+
+        tokio::select! {
+            res = remove_remote_file(&sftp, &clean_path) => {
+                eprintln!("[FLOWSFTP_BACKEND] SFTP remove_file result: {:?}", res);
+                if let Some(ref del_id) = deletion_id {
+                    if state.is_deletion_cancelled(del_id) {
+                        return Err("Deletion cancelled by user".to_string());
+                    }
+                }
+                res
+            }
+            _ = cancel_watcher => {
+                eprintln!("[FLOWSFTP_BACKEND] SFTP remove_file cancelled by user: {:?}", deletion_id);
+                Err("Deletion cancelled by user".to_string())
+            }
+        }
     }
-
-    let session = state
-        .get_session(&session_id)
-        .await
-        .ok_or_else(|| {
-            let err = format!("Session '{}' not found", session_id);
-            eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
-            err
-        })?;
-
-    let sftp = session.get_sftp().await?;
-    let res = remove_remote_file(&sftp, &path).await;
-    eprintln!("[FLOWSFTP_BACKEND] SFTP remove_file result: {:?}", res);
-    res
 }
 
 #[tauri::command]
@@ -376,7 +480,10 @@ pub async fn sftp_create_local_file(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn sftp_remove_local(path: String) -> Result<(), String> {
     eprintln!("[FLOWSFTP_BACKEND] sftp_remove_local: path='{}'", path);
-    let res = remove_local_item(&path).await;
+    let res = match tokio::time::timeout(tokio::time::Duration::from_secs(15), remove_local_item(&path)).await {
+        Ok(inner) => inner,
+        Err(_) => Err(format!("Timed out removing local item '{}'", path)),
+    };
     eprintln!("[FLOWSFTP_BACKEND] sftp_remove_local result: {:?}", res);
     res
 }

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
@@ -43,12 +43,7 @@ pub struct DirWatcherSyncEvent {
     pub timestamp: u64,
 }
 
-pub fn now_epoch_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+pub use super::now_epoch_secs;
 
 pub fn should_ignore_file(rel_path: &Path, ignore_patterns: &[String]) -> bool {
     let rel_str = rel_path.to_string_lossy().replace('\\', "/");

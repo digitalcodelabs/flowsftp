@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { Package, X, RotateCw } from 'lucide-vue-next'
 import type { LocalFileEntry, SftpFileEntry } from '../../../stores/sftp'
+import { useModalEscape } from '../composables/useModalEscape'
 
 const props = defineProps<{
   show: boolean
@@ -20,20 +21,12 @@ const format = ref<'.tar.gz' | '.zip'>('.tar.gz')
 const archiveName = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 
-const handleWindowKeyDown = (e: KeyboardEvent) => {
-  if (!props.show) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    emit('close')
-  }
-}
+useModalEscape(() => props.show, () => emit('close'))
 
 watch(
   () => props.show,
   (isOpen) => {
     if (isOpen) {
-      window.addEventListener('keydown', handleWindowKeyDown, true)
       format.value = '.tar.gz'
       if (props.selectedItems.length === 1) {
         archiveName.value = `${props.selectedItems[0].name}.tar.gz`
@@ -48,16 +41,10 @@ watch(
           inputRef.value?.select()
         }, 50)
       })
-    } else {
-      window.removeEventListener('keydown', handleWindowKeyDown, true)
     }
   },
   { immediate: true }
 )
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleWindowKeyDown, true)
-})
 
 const selectFormat = (newFormat: '.tar.gz' | '.zip') => {
   format.value = newFormat

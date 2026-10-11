@@ -9,12 +9,14 @@ import {
   GitBranch,
 } from 'lucide-vue-next'
 import CatppuccinIcon from '../../CatppuccinIcon.vue'
+import { getWslDistroIcon } from '../../../utils/fileIcons'
 import type { GitRepoStatus } from '../../../stores/sftp'
 
 interface BreadcrumbItem {
   label: string
   path: string
   isLast: boolean
+  icon?: string
 }
 
 const props = withDefaults(
@@ -78,23 +80,63 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
     normalized = normalized.replace(/\/+$/, '')
   }
 
-  // 1. WSL UNC paths: //wsl.localhost/Distro/path...
+  // 1. WSL & Network UNC paths: //wsl.localhost/Distro/path... or //server/share/path...
   if (normalized.startsWith('//')) {
     const withoutPrefix = normalized.slice(2)
     const segments = withoutPrefix.split('/').filter(Boolean)
-    if (segments.length >= 2) {
-      const server = segments[0] // e.g. wsl.localhost
-      const distro = segments[1] // e.g. Ubuntu-24.04
-      const distroRoot = `//${server}/${distro}`
+    if (segments.length >= 1) {
+      const server = segments[0] // e.g. wsl.localhost, wsl$, or a server name
+      const isWsl = server.toLowerCase().includes('wsl')
+
+      if (isWsl && segments.length === 1) {
+        return [
+          {
+            label: 'WSL',
+            path: `//${server}`,
+            isLast: true,
+            icon: 'wsl',
+          },
+        ]
+      }
+
+      if (isWsl && segments.length >= 2) {
+        const distro = segments[1] // e.g. Ubuntu-24.04
+        const distroRoot = `//${server}/${distro}`
+        const distroIcon = getWslDistroIcon(distro)
+        const items: BreadcrumbItem[] = [
+          {
+            label: distro,
+            path: distroRoot,
+            isLast: segments.length === 2,
+            icon: distroIcon,
+          },
+        ]
+
+        let currentAcc = distroRoot
+        for (let i = 2; i < segments.length; i++) {
+          const seg = segments[i]
+          currentAcc += `/${seg}`
+          items.push({
+            label: seg,
+            path: currentAcc,
+            isLast: i === segments.length - 1,
+          })
+        }
+        return items
+      }
+
+      // Standard non-WSL UNC network share
+      const shareRoot = `//${server}/${segments[1] || ''}`.replace(/\/$/, '')
       const items: BreadcrumbItem[] = [
         {
-          label: `//${server}/${distro}`,
-          path: distroRoot,
-          isLast: segments.length === 2,
+          label: shareRoot,
+          path: shareRoot,
+          isLast: segments.length <= 2,
+          icon: 'server',
         },
       ]
 
-      let currentAcc = distroRoot
+      let currentAcc = shareRoot
       for (let i = 2; i < segments.length; i++) {
         const seg = segments[i]
         currentAcc += `/${seg}`
@@ -175,6 +217,39 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
     : [{ label: normalized || '/', path: normalized || '/', isLast: true }]
 })
 
+// WSL Path resolution for local pane
+const isWslPath = computed(() => {
+  if (props.pane !== 'local' || !props.path) return false
+  const normalized = props.path.replace(/\\/g, '/')
+  return normalized.startsWith('//wsl') || normalized.startsWith('//wsl.localhost') || normalized.startsWith('//wsl$')
+})
+
+const wslDistroName = computed<string | null>(() => {
+  if (!isWslPath.value) return null
+  const normalized = props.path.replace(/\\/g, '/')
+  const segments = normalized.replace(/^\/\//, '').split('/').filter(Boolean)
+  return segments.length >= 2 ? segments[1] : null
+})
+
+const paneIcon = computed(() => {
+  if (props.pane === 'remote') return 'server'
+  if (isWslPath.value) {
+    if (wslDistroName.value) {
+      return getWslDistroIcon(wslDistroName.value)
+    }
+    return 'wsl'
+  }
+  return 'laptop'
+})
+
+const paneTitle = computed(() => {
+  if (props.pane === 'remote') return 'Remote Server'
+  if (isWslPath.value) {
+    return wslDistroName.value ? `WSL: ${wslDistroName.value}` : 'Windows Subsystem for Linux'
+  }
+  return 'Local File System'
+})
+
 // Determine whether a path divider slash '/' should be rendered before crumb at idx
 const shouldShowDivider = (idx: number) => {
   if (idx === 0) return false
@@ -242,10 +317,10 @@ defineExpose({
     <!-- Left Icon (Pane identifier) -->
     <div
       class="p-1 rounded shrink-0 flex items-center justify-center opacity-85 transition-opacity hover:opacity-100"
-      :title="pane === 'local' ? 'Local File System' : 'Remote Server'"
+      :title="paneTitle"
     >
       <CatppuccinIcon
-        :name="pane === 'local' ? 'laptop' : 'server'"
+        :name="paneIcon"
         :size="15"
       />
     </div>
@@ -314,7 +389,7 @@ defineExpose({
           <button
             type="button"
             @click.stop="handleCrumbClick(crumb)"
-            class="px-1.5 py-0.5 rounded text-xs font-mono shrink-0 transition-all duration-100 flex items-center"
+            class="px-1.5 py-0.5 rounded text-xs font-mono shrink-0 transition-all duration-100 flex items-center space-x-1"
             :class="[
               crumb.isLast
                 ? 'font-semibold cursor-default'
@@ -325,6 +400,12 @@ defineExpose({
               : { color: 'var(--color-text-main)' }"
             :title="crumb.isLast ? `Current folder: ${crumb.path}` : `Jump to: ${crumb.path}`"
           >
+            <CatppuccinIcon
+              v-if="crumb.icon"
+              :name="crumb.icon"
+              :size="13"
+              class="shrink-0"
+            />
             <span class="truncate max-w-[140px]">{{ crumb.label }}</span>
           </button>
         </template>

@@ -22,6 +22,10 @@
   --color-accent-secondary: #10b981;
   --color-terminal-bg: #090d16;
   --color-terminal-fg: #e2e8f0;
+  --color-danger: #f38ba8;
+  --color-success: #a6e3a1;
+  --color-warning: #f9e2af;
+  --color-info: #89b4fa;
 }
 
 html, body, #__nuxt {
@@ -129,6 +133,24 @@ html, body, #__nuxt {
 .btn-theme-card:active {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
   filter: brightness(0.92);
+}
+
+.btn-danger {
+  background: color-mix(in srgb, var(--color-danger, #f38ba8) 20%, var(--color-bg-card, #181926)) !important;
+  border: 1px solid color-mix(in srgb, var(--color-danger, #f38ba8) 45%, var(--color-border)) !important;
+  color: var(--color-danger, #f38ba8) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  transition: all 0.15s ease;
+}
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--color-danger, #f38ba8) 32%, var(--color-bg-card, #181926)) !important;
+  border-color: var(--color-danger, #f38ba8) !important;
+  color: var(--color-text-main, #ffffff) !important;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-danger, #f38ba8) 25%, transparent) !important;
+}
+.btn-danger:active {
+  background: color-mix(in srgb, var(--color-danger, #f38ba8) 16%, var(--color-bg-card, #181926)) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
 }
 
 .input-theme {

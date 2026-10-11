@@ -142,3 +142,11 @@ export const highlightMatch = (text: string, query: string): { before: string; m
     after: text.slice(idx + q.length),
   }
 }
+
+/**
+ * Test whether a filename has an archive file extension.
+ */
+export const isArchiveFile = (fileName: string): boolean => {
+  return /\.(zip|tar|gz|tgz|tar\.gz|tar\.bz2|tbz2|bz2|tar\.xz|txz|xz|7z)$/i.test(fileName)
+}
+

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { Package, X, RotateCw } from 'lucide-vue-next'
 import type { LocalFileEntry, SftpFileEntry } from '../../../stores/sftp'
+import { useModalEscape } from '../composables/useModalEscape'
 
 const props = defineProps<{
   show: boolean
@@ -18,20 +19,12 @@ const emit = defineEmits<{
 const subfolderName = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 
-const handleWindowKeyDown = (e: KeyboardEvent) => {
-  if (!props.show) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    emit('close')
-  }
-}
+useModalEscape(() => props.show, () => emit('close'))
 
 watch(
   () => [props.show, props.archiveFile] as const,
   ([isOpen, file]) => {
     if (isOpen) {
-      window.addEventListener('keydown', handleWindowKeyDown, true)
       if (file) {
         const baseName = file.name.replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar|7z)$/i, '')
         subfolderName.value = baseName
@@ -44,16 +37,10 @@ watch(
           inputRef.value?.select()
         }, 50)
       })
-    } else {
-      window.removeEventListener('keydown', handleWindowKeyDown, true)
     }
   },
   { immediate: true }
 )
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleWindowKeyDown, true)
-})
 
 const handleSubmit = () => {
   const trimmed = subfolderName.value.trim()

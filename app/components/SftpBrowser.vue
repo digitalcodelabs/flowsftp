@@ -41,6 +41,7 @@ import { useSftpDragDrop } from './sftp/composables/useSftpDragDrop'
 import SftpLocalPane from './sftp/panes/SftpLocalPane.vue'
 import SftpRemotePane from './sftp/panes/SftpRemotePane.vue'
 import SftpContextMenu from './sftp/contextmenu/SftpContextMenu.vue'
+import { isArchiveFile } from '../utils/formatters'
 import {
   type FileSortField,
   type FileSortOrder,
@@ -180,9 +181,6 @@ const isDeletingFiles = ref(false)
 const activeDeletion = ref<ActiveDeletion | null>(null)
 const useFastRm = ref(false)
 
-// Archive Operations State
-const isArchiveFile = (fileName: string) =>
-  /\.(zip|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar|7z)$/i.test(fileName)
 
 const showCompressModal = ref(false)
 const compressTarget = ref<'local' | 'remote'>('remote')
@@ -205,11 +203,10 @@ let archiveToastTimer: any = null
 const showArchiveToast = (message: string, isError = false, isLoading = false, duration = 3500) => {
   if (archiveToastTimer) clearTimeout(archiveToastTimer)
   archiveToast.value = { message, isError, isLoading }
-  if (!isLoading) {
-    archiveToastTimer = setTimeout(() => {
-      archiveToast.value = null
-    }, duration)
-  }
+  const effectiveDuration = duration > 0 ? duration : (isLoading ? 10000 : 3500)
+  archiveToastTimer = setTimeout(() => {
+    archiveToast.value = null
+  }, effectiveDuration)
 }
 
 // Transfer drawer state & queue tabs (FileZilla 3-Tab Architecture)
@@ -1376,6 +1373,34 @@ const handleRemoteRowClick = (event: MouseEvent, file: SftpFileEntry, index: num
   sftpStore.selectedRemotePath = file.path
 }
 
+const clearLocalSelection = () => {
+  selectedLocalPaths.value = new Set()
+  sftpStore.selectedLocalPath = null
+  lastLocalClickedIndex.value = null
+  isLocalParentSelected.value = false
+  localSelectionAnchor.value = null
+}
+
+const clearRemoteSelection = () => {
+  selectedRemotePaths.value = new Set()
+  sftpStore.selectedRemotePath = null
+  lastRemoteClickedIndex.value = null
+  isRemoteParentSelected.value = false
+  remoteSelectionAnchor.value = null
+}
+
+const handleLocalEmptyClick = (_event?: MouseEvent) => {
+  closeContextMenu()
+  activePane.value = 'local'
+  clearLocalSelection()
+}
+
+const handleRemoteEmptyClick = (_event?: MouseEvent) => {
+  closeContextMenu()
+  activePane.value = 'remote'
+  clearRemoteSelection()
+}
+
 const selectAll = (pane: 'local' | 'remote') => {
   if (pane === 'local') {
     selectedLocalPaths.value = new Set(filteredLocalFiles.value.map((f) => f.path))
@@ -1399,16 +1424,19 @@ const openLocalContextMenu = (e: MouseEvent, file?: LocalFileEntry) => {
     if (!selectedLocalPaths.value.has(file.path)) {
       selectedLocalPaths.value = new Set([file.path])
       lastLocalClickedIndex.value = filteredLocalFiles.value.findIndex((f) => f.path === file.path)
+      sftpStore.selectedLocalPath = file.path
     }
+  } else {
+    clearLocalSelection()
   }
-  const x = Math.min(e.clientX, window.innerWidth - 220)
-  const y = Math.min(e.clientY, window.innerHeight - 380)
+  const x = Math.max(10, Math.min(e.clientX, window.innerWidth - 275))
+  const y = Math.max(45, Math.min(e.clientY, window.innerHeight - 420))
   contextMenu.value = {
     show: true,
     x,
     y,
     pane: 'local',
-    targetItem: file || (selectedLocalFiles.value[0] ?? null),
+    targetItem: file || null,
   }
 }
 
@@ -1418,16 +1446,19 @@ const openRemoteContextMenu = (e: MouseEvent, file?: SftpFileEntry) => {
     if (!selectedRemotePaths.value.has(file.path)) {
       selectedRemotePaths.value = new Set([file.path])
       lastRemoteClickedIndex.value = filteredRemoteFiles.value.findIndex((f) => f.path === file.path)
+      sftpStore.selectedRemotePath = file.path
     }
+  } else {
+    clearRemoteSelection()
   }
-  const x = Math.min(e.clientX, window.innerWidth - 220)
-  const y = Math.min(e.clientY, window.innerHeight - 380)
+  const x = Math.max(10, Math.min(e.clientX, window.innerWidth - 275))
+  const y = Math.max(45, Math.min(e.clientY, window.innerHeight - 420))
   contextMenu.value = {
     show: true,
     x,
     y,
     pane: 'remote',
-    targetItem: file || (selectedRemoteFiles.value[0] ?? null),
+    targetItem: file || null,
   }
 }
 
@@ -1647,12 +1678,33 @@ const closeDeleteConfirm = () => {
 const cancelActiveDeletion = async () => {
   if (!activeDeletion.value || activeDeletion.value.isCancelling) return
   activeDeletion.value.isCancelling = true
+  const cancellingDelId = activeDeletion.value.id
+  const cancellingTitle = activeDeletion.value.title
+  const cancellingPane = activeDeletion.value.pane
+
+  showArchiveToast(`Cancelling deletion of ${cancellingTitle}...`, false, true, 2500)
+
   try {
-    await invoke('sftp_cancel_transfer', { transferId: activeDeletion.value.id })
-    showArchiveToast(`Cancelling deletion of ${activeDeletion.value.title}...`, false, true, 2500)
+    await invoke('sftp_cancel_transfer', { transferId: cancellingDelId })
   } catch (e) {
     console.error('Failed to cancel deletion:', e)
   }
+
+  // Safety fallback: ensure deletion UI never gets stuck even if backend takes longer
+  setTimeout(() => {
+    if (activeDeletion.value && activeDeletion.value.id === cancellingDelId) {
+      console.warn('[cancelActiveDeletion] Fallback clearing deletion state after 1.5s timeout')
+      activeDeletion.value = null
+      isDeletingFiles.value = false
+      showArchiveToast(`Deletion of ${cancellingTitle} was cancelled`, false, false, 3500)
+      const targetSessionId = props.sessionId || sftpStore.currentSessionId
+      if (cancellingPane === 'remote' && targetSessionId) {
+        sftpStore.fetchRemoteDir(targetSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+      } else if (cancellingPane === 'local') {
+        sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }).catch(() => {})
+      }
+    }
+  }, 1500)
 }
 
 const executeDeleteFiles = async () => {
@@ -1743,15 +1795,16 @@ const executeDeleteFiles = async () => {
       showArchiveToast(`Delete failed: ${errMsg}`, true, false, 8000)
     }
   } finally {
-    if (pane === 'local') {
-      selectedLocalPaths.value.clear()
-      await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }).catch(() => {})
-    } else if (pane === 'remote' && targetSessionId) {
-      selectedRemotePaths.value.clear()
-      await sftpStore.fetchRemoteDir(targetSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
-    }
     isDeletingFiles.value = false
     activeDeletion.value = null
+
+    if (pane === 'local') {
+      selectedLocalPaths.value.clear()
+      sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }).catch(() => {})
+    } else if (pane === 'remote' && targetSessionId) {
+      selectedRemotePaths.value.clear()
+      sftpStore.fetchRemoteDir(targetSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+    }
   }
 }
 
@@ -2147,31 +2200,68 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       </div>
     </div>
 
-    <!-- Archive Operation Floating Notification -->
+    <!-- Operation Floating Notification (Top Center) -->
     <transition
       enter-active-class="transition duration-200 ease-out"
-      enter-from-class="transform -translate-y-4 opacity-0"
-      enter-to-class="transform translate-y-0 opacity-100"
+      enter-from-class="transform -translate-y-4 opacity-0 scale-95"
+      enter-to-class="transform translate-y-0 opacity-100 scale-100"
       leave-active-class="transition duration-150 ease-in"
-      leave-from-class="transform translate-y-0 opacity-100"
-      leave-to-class="transform -translate-y-4 opacity-0"
+      leave-from-class="transform translate-y-0 opacity-100 scale-100"
+      leave-to-class="transform -translate-y-4 opacity-0 scale-95"
     >
       <div
         v-if="archiveToast"
-        class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-2.5 px-4 py-2 rounded-full border shadow-2xl text-xs font-medium backdrop-blur-md"
-        :class="archiveToast.isError ? 'bg-red-950/90 border-red-500/50 text-red-200' : archiveToast.isLoading ? 'bg-sky-950/90 border-sky-500/50 text-sky-200' : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200'"
+        class="fixed top-13 left-1/2 -translate-x-1/2 z-[80] flex items-center space-x-2.5 px-4 py-2 rounded-full border shadow-2xl text-xs font-medium backdrop-blur-xl select-none pointer-events-auto"
+        :style="{
+          backgroundColor: 'var(--color-bg-card)',
+          borderColor: archiveToast.isError
+            ? 'var(--color-danger, #f38ba8)'
+            : archiveToast.isLoading
+              ? 'var(--color-accent)'
+              : 'var(--color-success, #a6e3a1)',
+          color: 'var(--color-text-main)',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.28), 0 0 20px ' + (
+            archiveToast.isError
+              ? 'color-mix(in srgb, var(--color-danger, #f38ba8) 25%, transparent)'
+              : archiveToast.isLoading
+                ? 'color-mix(in srgb, var(--color-accent) 25%, transparent)'
+                : 'color-mix(in srgb, var(--color-success, #a6e3a1) 25%, transparent)'
+          ),
+        }"
       >
-        <RotateCw v-if="archiveToast.isLoading" class="w-3.5 h-3.5 animate-spin text-sky-400" />
-        <CheckCircle2 v-else-if="!archiveToast.isError" class="w-3.5 h-3.5 text-emerald-400" />
-        <AlertTriangle v-else class="w-3.5 h-3.5 text-red-400" />
-        <span class="font-medium">{{ archiveToast.message }}</span>
-        <button v-if="!archiveToast.isLoading" @click="archiveToast = null" class="ml-1 opacity-60 hover:opacity-100">
+        <div
+          class="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+          :style="{
+            backgroundColor: archiveToast.isError
+              ? 'color-mix(in srgb, var(--color-danger, #f38ba8) 18%, transparent)'
+              : archiveToast.isLoading
+                ? 'color-mix(in srgb, var(--color-accent) 18%, transparent)'
+                : 'color-mix(in srgb, var(--color-success, #a6e3a1) 18%, transparent)',
+            color: archiveToast.isError
+              ? 'var(--color-danger, #f38ba8)'
+              : archiveToast.isLoading
+                ? 'var(--color-accent)'
+                : 'var(--color-success, #a6e3a1)'
+          }"
+        >
+          <RotateCw v-if="archiveToast.isLoading" class="w-3.5 h-3.5 animate-spin" />
+          <CheckCircle2 v-else-if="!archiveToast.isError" class="w-3.5 h-3.5" />
+          <AlertTriangle v-else class="w-3.5 h-3.5" />
+        </div>
+        <span class="font-medium tracking-wide">{{ archiveToast.message }}</span>
+        <button
+          type="button"
+          @click="archiveToast = null"
+          class="ml-1 p-0.5 rounded-full opacity-60 hover:opacity-100 transition cursor-pointer hover:bg-black/10 dark:hover:bg-white/10"
+          :style="{ color: 'var(--color-text-muted)' }"
+          title="Dismiss"
+        >
           <X class="w-3 h-3" />
         </button>
       </div>
     </transition>
 
-    <!-- Floating Active Deletion Progress Card with Live Cancel Action -->
+    <!-- Floating Active Deletion Progress Card with Live Cancel Action (Right Corner) -->
     <transition
       enter-active-class="transition duration-200 ease-out"
       enter-from-class="transform translate-y-4 opacity-0 scale-95"
@@ -2182,17 +2272,40 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     >
       <div
         v-if="activeDeletion"
-        class="fixed bottom-6 right-6 z-50 flex items-center space-x-3 px-4 py-2.5 rounded-xl border shadow-2xl backdrop-blur-md bg-stone-900/95 border-rose-500/50 text-stone-200 max-w-md ring-1 ring-rose-500/20"
+        class="fixed bottom-6 right-6 z-[80] flex items-center space-x-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-xl max-w-md select-none transition-all duration-200 pointer-events-auto"
+        :style="{
+          backgroundColor: 'var(--color-bg-card)',
+          borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 45%, var(--color-border))',
+          color: 'var(--color-text-main)',
+          boxShadow: '0 10px 32px rgba(0, 0, 0, 0.28), 0 0 16px color-mix(in srgb, var(--color-danger, #f38ba8) 20%, transparent)'
+        }"
       >
-        <div class="relative shrink-0 flex items-center justify-center w-5 h-5">
-          <span class="animate-spin w-4 h-4 border-2 border-rose-400/30 border-t-rose-400 rounded-full" />
+        <div
+          class="relative shrink-0 flex items-center justify-center w-7 h-7 rounded-xl border"
+          :style="{
+            backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 16%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 35%, transparent)',
+            color: 'var(--color-danger, #f38ba8)'
+          }"
+        >
+          <span
+            class="animate-spin w-4 h-4 border-2 rounded-full"
+            :style="{
+              borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 30%, transparent)',
+              borderTopColor: 'var(--color-danger, #f38ba8)'
+            }"
+          />
         </div>
         <div class="flex flex-col min-w-0 pr-1">
-          <div class="flex items-center space-x-1.5 text-xs font-semibold text-rose-300 truncate">
-            <span>{{ activeDeletion.isCancelling ? 'Cancelling deletion...' : 'Deleting' }}</span>
-            <span class="text-stone-200 font-mono truncate max-w-[200px]">"{{ activeDeletion.title }}"</span>
+          <div class="flex items-center space-x-1.5 text-xs font-semibold truncate">
+            <span :style="{ color: 'var(--color-danger, #f38ba8)' }">
+              {{ activeDeletion.isCancelling ? 'Cancelling deletion...' : 'Deleting' }}
+            </span>
+            <span class="font-mono truncate max-w-[200px]" :style="{ color: 'var(--color-text-main)' }">
+              "{{ activeDeletion.title }}"
+            </span>
           </div>
-          <span class="text-[10px] text-stone-400 truncate">
+          <span class="text-[10px] truncate" :style="{ color: 'var(--color-text-muted)' }">
             {{ activeDeletion.pane === 'remote' ? 'Remote server' : 'Local filesystem' }}
             <template v-if="activeDeletion.totalCount > 1">
               • {{ activeDeletion.completedCount }}/{{ activeDeletion.totalCount }} items
@@ -2203,7 +2316,12 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
           type="button"
           @click="cancelActiveDeletion"
           :disabled="activeDeletion.isCancelling"
-          class="shrink-0 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/40 active:bg-rose-500/60 text-rose-200 border border-rose-500/40 hover:border-rose-500 transition disabled:opacity-50 flex items-center space-x-1 cursor-pointer"
+          class="shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 flex items-center space-x-1 cursor-pointer"
+          :style="{
+            backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 18%, var(--color-bg-card))',
+            borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 45%, var(--color-border))',
+            color: 'var(--color-danger, #f38ba8)'
+          }"
           title="Cancel deletion"
         >
           <X class="w-3.5 h-3.5" />
@@ -2280,6 +2398,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @batch-delete="(files) => handleBatchDeleteLocal(files)"
         @row-click="handleLocalRowClick"
         @row-dblclick="handleLocalRowDoubleClick"
+        @empty-click="handleLocalEmptyClick"
         @parent-click="handleLocalParentClick"
         @close-context-menu="closeContextMenu"
         @contextmenu="openLocalContextMenu"
@@ -2363,6 +2482,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @batch-delete="(files) => handleBatchDeleteRemote(files)"
         @row-click="handleRemoteRowClick"
         @row-dblclick="handleRemoteRowDoubleClick"
+        @empty-click="handleRemoteEmptyClick"
         @parent-click="handleRemoteParentClick"
         @close-context-menu="closeContextMenu"
         @contextmenu="openRemoteContextMenu"

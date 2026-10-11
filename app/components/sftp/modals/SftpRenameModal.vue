@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onUnmounted } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import CatppuccinIcon from '../../CatppuccinIcon.vue'
+import { useModalEscape } from '../composables/useModalEscape'
 
 const props = defineProps<{
   show: boolean
@@ -17,14 +18,7 @@ const emit = defineEmits<{
 const newName = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 
-const handleWindowKeyDown = (e: KeyboardEvent) => {
-  if (!props.show) return
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    emit('close')
-  }
-}
+useModalEscape(() => props.show, () => emit('close'))
 
 const focusInput = () => {
   const el = inputRef.value
@@ -47,22 +41,15 @@ watch(
   () => props.show,
   (isOpen) => {
     if (isOpen) {
-      window.addEventListener('keydown', handleWindowKeyDown, true)
       newName.value = props.initialName
       nextTick(() => {
         focusInput()
         setTimeout(focusInput, 50)
       })
-    } else {
-      window.removeEventListener('keydown', handleWindowKeyDown, true)
     }
   },
   { immediate: true }
 )
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleWindowKeyDown, true)
-})
 
 const handleSubmit = () => {
   const trimmed = newName.value.trim()

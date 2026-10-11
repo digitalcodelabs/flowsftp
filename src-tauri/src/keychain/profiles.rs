@@ -42,7 +42,7 @@ fn default_auth_type() -> String {
     "Password".to_string()
 }
 
-fn get_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn get_app_data_file(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
     let app_dir = app
         .path()
         .app_data_dir()
@@ -53,7 +53,11 @@ fn get_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
             .map_err(|e| format!("Failed to create app data directory: {}", e))?;
     }
 
-    Ok(app_dir.join("saved_connections.json"))
+    Ok(app_dir.join(filename))
+}
+
+fn get_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    get_app_data_file(app, "saved_connections.json")
 }
 
 pub fn load_profiles(app: &tauri::AppHandle) -> Result<Vec<SavedConnectionProfile>, String> {
@@ -185,17 +189,7 @@ pub fn rename_profile(
 }
 
 fn get_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let app_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-
-    if !app_dir.exists() {
-        fs::create_dir_all(&app_dir)
-            .map_err(|e| format!("Failed to create app data directory: {}", e))?;
-    }
-
-    Ok(app_dir.join("vault.json"))
+    get_app_data_file(app, "vault.json")
 }
 
 pub fn load_vault_file(app: &tauri::AppHandle) -> Result<Option<String>, String> {

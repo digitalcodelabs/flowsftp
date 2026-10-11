@@ -23,8 +23,8 @@ import CatppuccinIcon from '../../CatppuccinIcon.vue'
 import SftpBreadcrumbBar from './SftpBreadcrumbBar.vue'
 import SftpComparisonBadge from '../compare/SftpComparisonBadge.vue'
 import type { ComparisonResult } from '../compare/types'
-import type { FileSortField, FileSortOrder } from './sorting'
 import { formatBytes, formatDate, getFileType, highlightMatch } from '../../../utils/formatters'
+import { getWslDistroIcon } from '../../../utils/fileIcons'
 
 const props = defineProps<{
   active: boolean
@@ -57,6 +57,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-pane'): void
+  (e: 'empty-click', event: MouseEvent): void
   (e: 'update:showHiddenFiles', val: boolean): void
   (e: 'update:searchQuery', val: string): void
   (e: 'update:showFilter', val: boolean): void
@@ -99,6 +100,22 @@ const emit = defineEmits<{
 
 const sftpStore = useSftpStore()
 const settingsStore = useSettingsStore()
+
+const handleContainerClick = (e: MouseEvent) => {
+  const target = e.target as HTMLElement | null
+  if (target?.closest('.file-row, thead, button, input, a, select, textarea, [role="button"]')) {
+    return
+  }
+  emit('empty-click', e)
+}
+
+const handleContainerContextMenu = (e: MouseEvent) => {
+  const target = e.target as HTMLElement | null
+  if (target?.closest('.file-row')) {
+    return
+  }
+  emit('contextmenu', e)
+}
 
 const rootEl = ref<HTMLElement | null>(null)
 const filterInputRef = ref<HTMLInputElement | null>(null)
@@ -370,22 +387,21 @@ defineExpose({
             title="Browse WSL Linux distributions"
             class="px-2 py-0.5 rounded border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card"
           >
-            <CatppuccinIcon name="wsl" :size="14" />
             <span>WSL</span>
             <span class="text-[9px]" :style="{ color: 'var(--color-text-muted)' }">▼</span>
           </button>
 
           <div
             v-if="showWslMenu"
-            class="absolute right-0 mt-1.5 z-50 w-56 backdrop-blur-md rounded-xl border shadow-2xl p-1 text-xs select-none animate-in fade-in zoom-in-95 duration-75"
+            class="absolute right-0 mt-1.5 z-50 w-60 backdrop-blur-md rounded-xl border shadow-2xl p-1.5 text-xs select-none animate-in fade-in zoom-in-95 duration-75"
             :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
             @click.stop
           >
             <div
-              class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider border-b mb-1"
+              class="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider border-b mb-1 flex items-center justify-between"
               :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
             >
-              WSL Distributions
+              <span>WSL Distributions</span>
             </div>
 
             <div v-if="isLoadingWsl" class="px-3 py-2 text-xs flex items-center space-x-2" :style="{ color: 'var(--color-text-muted)' }">
@@ -393,14 +409,15 @@ defineExpose({
               <span>Scanning distros...</span>
             </div>
 
-            <div v-else-if="wslDistros.length === 0" class="px-3 py-2 text-xs space-y-1" :style="{ color: 'var(--color-text-muted)' }">
-              <div>No WSL distros detected.</div>
+            <div v-else-if="wslDistros.length === 0" class="px-3 py-2 text-xs space-y-1.5" :style="{ color: 'var(--color-text-muted)' }">
+              <div>No running WSL distros detected.</div>
               <button
                 @click="navigateToWslDistro('Ubuntu-24.04')"
-                class="hover:underline text-[11px] block"
+                class="flex items-center space-x-1.5 hover:underline text-[11px] pt-1"
                 :style="{ color: 'var(--color-accent)' }"
               >
-                Open //wsl.localhost/Ubuntu-24.04
+                <CatppuccinIcon :name="getWslDistroIcon('Ubuntu')" :size="14" />
+                <span>Open //wsl.localhost/Ubuntu-24.04</span>
               </button>
             </div>
 
@@ -409,13 +426,15 @@ defineExpose({
                 v-for="distro in wslDistros"
                 :key="distro"
                 @click="navigateToWslDistro(distro)"
-                class="w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left hover:opacity-90"
+                class="w-full flex items-center space-x-2.5 px-2 py-1.5 rounded-lg transition text-left hover:bg-[var(--color-bg-hover)] group cursor-pointer"
                 :style="{ color: 'var(--color-text-main)' }"
               >
-                <CatppuccinIcon name="linux" :size="15" />
+                <div class="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-black/5 dark:bg-white/5 border border-[var(--color-border)] group-hover:scale-105 transition-transform shadow-2xs">
+                  <CatppuccinIcon :name="getWslDistroIcon(distro)" :size="15" />
+                </div>
                 <div class="flex-1 min-w-0">
-                  <div class="font-medium truncate">{{ distro }}</div>
-                  <div class="text-[10px] font-mono truncate" :style="{ color: 'var(--color-text-muted)' }">//wsl.localhost/{{ distro }}</div>
+                  <div class="font-medium truncate text-xs">{{ distro }}</div>
+                  <div class="text-[10px] font-mono truncate opacity-65">//wsl.localhost/{{ distro }}</div>
                 </div>
               </button>
             </template>
@@ -563,9 +582,10 @@ defineExpose({
     <!-- Local File List Table -->
     <div
       class="flex-1 overflow-auto"
+      @click="handleContainerClick"
       @dragover="emit('dragover', $event)"
       @drop="emit('drop', $event)"
-      @contextmenu.self="emit('contextmenu', $event)"
+      @contextmenu="handleContainerContextMenu"
     >
       <div v-if="sftpStore.isLoadingLocal" class="flex items-center justify-center p-8 text-xs" :style="{ color: 'var(--color-text-muted)' }">
         <span class="animate-spin w-4 h-4 border-2 border-slate-600 rounded-full mr-2" :style="{ borderTopColor: 'var(--color-accent)' }" />

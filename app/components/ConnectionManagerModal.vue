@@ -888,18 +888,34 @@ const handleFormSubmit = () => {
       </div>
 
       <!-- Error Toast -->
-      <div v-if="errorMessage" class="mx-5 mt-3 p-3 rounded-lg bg-red-950/60 border border-red-800/50 text-red-300 text-xs shrink-0 flex items-start space-x-2">
-        <AlertTriangle class="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-        <span class="flex-1">{{ errorMessage }}</span>
+      <div
+        v-if="errorMessage"
+        class="mx-5 mt-3 p-3 rounded-xl border text-xs shrink-0 flex items-start space-x-2.5 backdrop-blur-md"
+        :style="{
+          backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 12%, var(--color-bg-card))',
+          borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 40%, var(--color-border))',
+          color: 'var(--color-danger, #f38ba8)'
+        }"
+      >
+        <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+        <span class="flex-1 font-medium">{{ errorMessage }}</span>
       </div>
 
       <!-- Success Toast -->
-      <div v-if="successMessage" class="mx-5 mt-3 p-2.5 rounded-lg bg-emerald-950/70 border border-emerald-700/60 text-emerald-300 text-xs shrink-0 flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-150">
+      <div
+        v-if="successMessage"
+        class="mx-5 mt-3 p-2.5 rounded-xl border text-xs shrink-0 flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-150 backdrop-blur-md"
+        :style="{
+          backgroundColor: 'color-mix(in srgb, var(--color-success, #a6e3a1) 12%, var(--color-bg-card))',
+          borderColor: 'color-mix(in srgb, var(--color-success, #a6e3a1) 40%, var(--color-border))',
+          color: 'var(--color-success, #a6e3a1)'
+        }"
+      >
         <div class="flex items-center space-x-2">
-          <CheckCircle2 class="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{{ successMessage }}</span>
+          <CheckCircle2 class="w-4 h-4 shrink-0" />
+          <span class="font-medium">{{ successMessage }}</span>
         </div>
-        <button type="button" @click="successMessage = null" class="p-0.5 text-emerald-400 hover:text-white transition" title="Dismiss">
+        <button type="button" @click="successMessage = null" class="p-0.5 opacity-70 hover:opacity-100 transition cursor-pointer" title="Dismiss">
           <X class="w-3.5 h-3.5" />
         </button>
       </div>
@@ -1814,17 +1830,27 @@ const handleFormSubmit = () => {
       @click.self="closeDeleteConfirm"
     >
       <div
-        class="w-full max-w-sm border border-rose-500/30 rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-card)' }"
+        class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+        :style="{
+          backgroundColor: 'var(--color-bg-card)',
+          borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 35%, var(--color-border))'
+        }"
       >
         <div class="flex items-start space-x-3">
-          <div class="w-10 h-10 rounded-xl bg-rose-950/60 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0 shadow-inner">
+          <div
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
+            :style="{
+              backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 18%, transparent)',
+              borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 35%, transparent)',
+              color: 'var(--color-danger, #f38ba8)'
+            }"
+          >
             <Trash2 class="w-5 h-5" />
           </div>
           <div class="flex-1 min-w-0">
             <h4 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">Delete Connection Profile?</h4>
             <p class="text-xs mt-1 leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
-              Are you sure you want to remove <span class="font-semibold text-rose-300">"{{ profileToDelete?.name }}"</span>?
+              Are you sure you want to remove <span class="font-semibold" :style="{ color: 'var(--color-danger, #f38ba8)' }">"{{ profileToDelete?.name }}"</span>?
             </p>
           </div>
         </div>
@@ -1852,8 +1878,7 @@ const handleFormSubmit = () => {
             type="button"
             @click="closeDeleteConfirm"
             :disabled="isDeleting"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card cursor-pointer"
           >
             Cancel
           </button>
@@ -1861,9 +1886,9 @@ const handleFormSubmit = () => {
             type="button"
             @click="executeDeleteProfile"
             :disabled="isDeleting"
-            class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 shadow-md shadow-rose-950/50 flex items-center space-x-1.5 transition"
+            class="px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer btn-danger"
           >
-            <span v-if="isDeleting" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+            <span v-if="isDeleting" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
             <Trash2 v-else class="w-3.5 h-3.5" />
             <span>{{ isDeleting ? 'Deleting...' : 'Delete Profile' }}</span>
           </button>

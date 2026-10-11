@@ -122,6 +122,10 @@ export function applyThemeToDom(theme: AppTheme) {
   root.style.setProperty('--color-accent-secondary', theme.ui.accentSecondary)
   root.style.setProperty('--color-terminal-bg', theme.terminal.background)
   root.style.setProperty('--color-terminal-fg', theme.terminal.foreground)
+  root.style.setProperty('--color-danger', theme.terminal?.red || (isLight ? '#d20f39' : '#f38ba8'))
+  root.style.setProperty('--color-success', theme.terminal?.green || (isLight ? '#40a02b' : '#a6e3a1'))
+  root.style.setProperty('--color-warning', theme.terminal?.yellow || (isLight ? '#df8e1d' : '#f9e2af'))
+  root.style.setProperty('--color-info', theme.terminal?.blue || theme.ui.accent || (isLight ? '#1e66f5' : '#89b4fa'))
 }
 
 export const useThemeStore = defineStore('theme', () => {

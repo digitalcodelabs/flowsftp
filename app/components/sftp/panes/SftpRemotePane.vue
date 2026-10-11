@@ -65,6 +65,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-pane'): void
+  (e: 'empty-click', event: MouseEvent): void
   (e: 'update:showHiddenFiles', val: boolean): void
   (e: 'update:searchQuery', val: string): void
   (e: 'update:showFilter', val: boolean): void
@@ -109,6 +110,22 @@ const emit = defineEmits<{
 const sftpStore = useSftpStore()
 const settingsStore = useSettingsStore()
 const sshStore = useSshStore()
+
+const handleContainerClick = (e: MouseEvent) => {
+  const target = e.target as HTMLElement | null
+  if (target?.closest('.file-row, thead, button, input, a, select, textarea, [role="button"]')) {
+    return
+  }
+  emit('empty-click', e)
+}
+
+const handleContainerContextMenu = (e: MouseEvent) => {
+  const target = e.target as HTMLElement | null
+  if (target?.closest('.file-row')) {
+    return
+  }
+  emit('contextmenu', e)
+}
 
 const protocolLabel = computed(() => {
   const sess = sshStore.sessions.find(s => s.sessionId === props.sessionId)
@@ -481,9 +498,10 @@ defineExpose({
     <!-- Remote File List Table -->
     <div
       class="flex-1 overflow-auto"
+      @click="handleContainerClick"
       @dragover="emit('dragover', $event)"
       @drop="emit('drop', $event)"
-      @contextmenu.self="emit('contextmenu', $event)"
+      @contextmenu="handleContainerContextMenu"
     >
       <div v-if="!sessionId" class="flex flex-col items-center justify-center p-12 text-center">
         <div

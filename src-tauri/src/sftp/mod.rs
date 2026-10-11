@@ -10,6 +10,13 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+pub fn now_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SftpFileEntry {
     pub name: String,
@@ -184,47 +191,7 @@ pub async fn remove_remote_dir(sftp: &SftpSession, path: &str) -> Result<(), Str
 }
 
 pub async fn remove_remote_dir_recursive(sftp: &SftpSession, path: &str) -> Result<(), String> {
-    let clean = path.trim().replace('\\', "/");
-    let clean_path = clean.trim_end_matches('/');
-    if clean_path.is_empty() || clean_path == "/" || clean_path == "." || clean_path == ".." {
-        return Err("Cannot delete root or special directory".to_string());
-    }
-
-    // 1. Try direct rmdir first (fast for empty directories)
-    if sftp.remove_dir(clean_path).await.is_ok() {
-        return Ok(());
-    }
-
-    // 2. Read entries inside the directory to delete them recursively
-    let entries = match sftp.read_dir(clean_path).await {
-        Ok(e) => e,
-        Err(e) => {
-            log::warn!("Failed to read remote directory '{}': {}", clean_path, e);
-            return sftp.remove_dir(clean_path).await.map_err(|e2| {
-                format!("Failed to remove remote directory '{}': {} (read error: {})", clean_path, e2, e)
-            });
-        }
-    };
-
-    for entry in entries {
-        let name = entry.file_name();
-        if name == "." || name == ".." {
-            continue;
-        }
-
-        let child_path = format!("{}/{}", clean_path, name);
-
-        if entry.file_type().is_dir() {
-            Box::pin(remove_remote_dir_recursive(sftp, &child_path)).await?;
-        } else if let Err(_) = sftp.remove_file(&child_path).await {
-            Box::pin(remove_remote_dir_recursive(sftp, &child_path)).await?;
-        }
-    }
-
-    // 3. Directory should now be empty; remove it
-    sftp.remove_dir(clean_path)
-        .await
-        .map_err(|e| format!("Failed to remove remote directory '{}': {}", clean_path, e))
+    remove_remote_dir_recursive_with_cancel(sftp, path, &crate::state::AppState::default(), None).await
 }
 
 pub async fn remove_remote_dir_recursive_with_cancel(
@@ -246,18 +213,30 @@ pub async fn remove_remote_dir_recursive_with_cancel(
     }
 
     // 1. Try direct rmdir first (fast for empty directories)
-    if sftp.remove_dir(clean_path).await.is_ok() {
+    if let Ok(Ok(())) = tokio::time::timeout(std::time::Duration::from_secs(5), sftp.remove_dir(clean_path)).await {
         return Ok(());
     }
 
+    if let Some(id) = deletion_id {
+        if state.is_deletion_cancelled(id) {
+            return Err("Deletion cancelled by user".to_string());
+        }
+    }
+
     // 2. Read entries inside the directory to delete them recursively
-    let entries = match sftp.read_dir(clean_path).await {
-        Ok(e) => e,
-        Err(e) => {
+    let entries = match tokio::time::timeout(std::time::Duration::from_secs(10), sftp.read_dir(clean_path)).await {
+        Ok(Ok(e)) => e,
+        Ok(Err(e)) => {
             log::warn!("Failed to read remote directory '{}': {}", clean_path, e);
-            return sftp.remove_dir(clean_path).await.map_err(|e2| {
-                format!("Failed to remove remote directory '{}': {} (read error: {})", clean_path, e2, e)
-            });
+            return tokio::time::timeout(std::time::Duration::from_secs(10), sftp.remove_dir(clean_path))
+                .await
+                .map_err(|_| format!("Timed out removing remote directory '{}'", clean_path))?
+                .map_err(|e2| {
+                    format!("Failed to remove remote directory '{}': {} (read error: {})", clean_path, e2, e)
+                });
+        }
+        Err(_) => {
+            return Err(format!("Timed out reading remote directory '{}'", clean_path));
         }
     };
 
@@ -277,21 +256,33 @@ pub async fn remove_remote_dir_recursive_with_cancel(
 
         if entry.file_type().is_dir() {
             Box::pin(remove_remote_dir_recursive_with_cancel(sftp, &child_path, state, deletion_id)).await?;
-        } else if let Err(_) = sftp.remove_file(&child_path).await {
-            Box::pin(remove_remote_dir_recursive_with_cancel(sftp, &child_path, state, deletion_id)).await?;
+        } else {
+            let res = tokio::time::timeout(std::time::Duration::from_secs(10), sftp.remove_file(&child_path)).await;
+            if res.is_err() || matches!(res, Ok(Err(_))) {
+                Box::pin(remove_remote_dir_recursive_with_cancel(sftp, &child_path, state, deletion_id)).await?;
+            }
+        }
+    }
+
+    if let Some(id) = deletion_id {
+        if state.is_deletion_cancelled(id) {
+            return Err("Deletion cancelled by user".to_string());
         }
     }
 
     // 3. Directory should now be empty; remove it
-    sftp.remove_dir(clean_path)
+    tokio::time::timeout(std::time::Duration::from_secs(10), sftp.remove_dir(clean_path))
         .await
+        .map_err(|_| format!("Timed out removing remote directory '{}'", clean_path))?
         .map_err(|e| format!("Failed to remove remote directory '{}': {}", clean_path, e))
 }
 
 pub async fn remove_remote_file(sftp: &SftpSession, path: &str) -> Result<(), String> {
-    sftp.remove_file(path)
+    let clean = path.trim().replace('\\', "/");
+    tokio::time::timeout(tokio::time::Duration::from_secs(15), sftp.remove_file(&clean))
         .await
-        .map_err(|e| format!("Failed to remove remote file '{}': {}", path, e))
+        .map_err(|_| format!("Timed out after 15s removing remote file '{}'", clean))?
+        .map_err(|e| format!("Failed to remove remote file '{}': {}", clean, e))
 }
 
 pub async fn rename_remote(sftp: &SftpSession, old_path: &str, new_path: &str) -> Result<(), String> {
