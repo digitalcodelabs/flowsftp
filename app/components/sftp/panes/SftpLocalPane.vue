@@ -454,7 +454,7 @@ defineExpose({
           pane="local"
           :active="active"
           :git-status="sftpStore.localGitStatus"
-          placeholder="C:/Users/..."
+          :placeholder="currentPath?.startsWith('/') ? '/home/...' : 'C:/Users/...'"
           @navigate-to="emit('navigate-to', $event)"
           @copy-path="emit('copy-path', $event)"
         />

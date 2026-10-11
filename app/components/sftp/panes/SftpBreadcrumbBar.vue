@@ -67,7 +67,7 @@ const scrollBreadcrumbsToEnd = () => {
 
 // Parse path into segmented interactive breadcrumb items
 const breadcrumbs = computed<BreadcrumbItem[]>(() => {
-  const raw = props.path || (props.pane === 'remote' ? '/' : 'C:/')
+  const raw = props.path || '/'
   let normalized = raw.replace(/\\/g, '/')
 
   // In remote Unix mode, collapse consecutive slashes (e.g. "//root" -> "/root")
@@ -343,7 +343,7 @@ defineExpose({
           @keydown.enter.prevent="submitEdit"
           @keydown.esc.prevent="cancelEdit"
           @blur="submitEdit"
-          :placeholder="placeholder || (pane === 'local' ? 'C:/Users/...' : '/var/www/...')"
+          :placeholder="placeholder || (pane === 'local' ? (props.path?.startsWith('/') ? '/home/...' : 'C:/Users/...') : '/var/www/...')"
           class="flex-1 bg-transparent text-xs font-mono focus:outline-none truncate h-full leading-none py-0 border-0 outline-none"
           :style="{ color: 'var(--color-text-main)' }"
         />

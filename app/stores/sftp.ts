@@ -582,8 +582,15 @@ export const useSftpStore = defineStore('sftp', () => {
     localError.value = null
     try {
       const saved = typeof window !== 'undefined' ? localStorage.getItem('flowsftp_last_local_path') : null
-      const defaultPath = saved || (await invoke<string>('sftp_get_default_local_path'))
-      await fetchLocalDir(defaultPath)
+      let ok = false
+      if (saved) {
+        ok = await fetchLocalDir(saved)
+      }
+      if (!ok) {
+        const defaultPath = await invoke<string>('sftp_get_default_local_path')
+        await fetchLocalDir(defaultPath)
+        localError.value = null
+      }
     } catch (err: any) {
       console.error('Failed to init local directory:', err)
       localError.value = typeof err === 'string' ? err : err?.message || String(err)
@@ -645,7 +652,7 @@ export const useSftpStore = defineStore('sftp', () => {
     localDirCache.value = {}
   }
 
-  async function fetchLocalDir(path?: string, options: FetchDirOptions = {}) {
+  async function fetchLocalDir(path?: string, options: FetchDirOptions = {}): Promise<boolean> {
     const targetPath = path !== undefined ? path : (localPath.value || null)
     const cacheKey = targetPath ? getLocalCacheKey(targetPath) : null
     const cached = cacheKey ? localDirCache.value[cacheKey] : null
@@ -659,7 +666,7 @@ export const useSftpStore = defineStore('sftp', () => {
       selectedLocalPath.value = null
 
       if (isCacheFresh) {
-        return
+        return true
       }
       isBackgroundRefreshingLocal.value = true
     } else if (options.background) {
@@ -692,11 +699,13 @@ export const useSftpStore = defineStore('sftp', () => {
         localDirCache.value[cacheKey] = cacheItem
       }
       localDirCache.value[getLocalCacheKey(canonical)] = cacheItem
+      return true
     } catch (err: any) {
       console.error('Failed to list local directory:', err)
       if (!cached) {
         localError.value = typeof err === 'string' ? err : err?.message || String(err)
       }
+      return false
     } finally {
       isLoadingLocal.value = false
       isBackgroundRefreshingLocal.value = false

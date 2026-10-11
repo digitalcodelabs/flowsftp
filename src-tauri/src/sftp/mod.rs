@@ -1185,40 +1185,174 @@ pub async fn upload_file(
 
 pub fn get_default_local_path() -> String {
     dirs::home_dir()
-        .map(|p| p.to_string_lossy().to_string().replace('\\', "/"))
-        .unwrap_or_else(|| ".".to_string())
+        .map(|p| clean_local_path(&p))
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            { "C:/".to_string() }
+            #[cfg(not(windows))]
+            { "/".to_string() }
+        })
 }
 
 pub fn normalize_to_native_path(raw: &str) -> (PathBuf, String) {
     let trimmed = raw.trim();
-    let mut s = trimmed.replace('/', "\\");
-
-    // Handle UNC prefix if passed manually or via previous buggy display
-    if s.to_uppercase().starts_with("UNC\\") {
-        s = format!(r"\\{}", &s[4..]);
-    } else if trimmed.starts_with("//") {
-        s = format!(r"\\{}", &trimmed[2..].replace('/', "\\"));
+    if trimmed.is_empty() {
+        let default_p = get_default_local_path();
+        return (PathBuf::from(&default_p), default_p);
     }
 
-    // Windows drive root fix: "C:" -> "C:\"
-    if s.len() == 2 && s.ends_with(':') {
-        s.push('\\');
+    // Expand ~ / ~/ to home directory
+    let expanded: String = if trimmed == "~" {
+        dirs::home_dir()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|| trimmed.to_string())
+    } else if trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
+        if let Some(home) = dirs::home_dir() {
+            let sub = &trimmed[2..];
+            let mut h = home.to_string_lossy().to_string();
+            #[cfg(windows)]
+            {
+                if !h.ends_with('\\') && !h.ends_with('/') {
+                    h.push('\\');
+                }
+                h.push_str(&sub.replace('/', "\\"));
+            }
+            #[cfg(not(windows))]
+            {
+                if !h.ends_with('/') {
+                    h.push('/');
+                }
+                h.push_str(&sub.replace('\\', "/"));
+            }
+            h
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        trimmed.to_string()
+    };
+
+    #[cfg(windows)]
+    {
+        let mut s = expanded.replace('/', "\\");
+
+        // If someone pasted a WSL mount path like /mnt/c/Users/... on Windows
+        if s.to_lowercase().starts_with("\\mnt\\") {
+            let parts: Vec<&str> = s.split('\\').filter(|p| !p.is_empty()).collect();
+            // parts[0] == "mnt", parts[1] == drive letter (e.g. "c")
+            if parts.len() >= 2 && parts[1].len() == 1 {
+                let drive_letter = parts[1].to_uppercase();
+                let rest = parts[2..].join("\\");
+                s = if rest.is_empty() {
+                    format!("{}:\\", drive_letter)
+                } else {
+                    format!("{}:\\{}", drive_letter, rest)
+                };
+            }
+        }
+
+        // Handle UNC prefix if passed manually or via previous buggy display
+        if s.to_uppercase().starts_with("UNC\\") {
+            s = format!(r"\\{}", &s[4..]);
+        } else if s.starts_with("//") {
+            s = format!(r"\\{}", &s[2..]);
+        }
+
+        // Windows drive root fix: "C:" -> "C:\"
+        if s.len() == 2 && s.ends_with(':') {
+            s.push('\\');
+        }
+
+        let native = PathBuf::from(&s);
+        (native, s)
     }
 
-    let native = PathBuf::from(&s);
-    (native, s)
+    #[cfg(not(windows))]
+    {
+        let mut s = expanded.replace('\\', "/");
+
+        // Handle Windows drive path entered or persisted in Linux/WSL (e.g. "C:/...", "C:\...", "c:")
+        let is_windows_drive = {
+            let bytes = s.as_bytes();
+            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+        };
+
+        if is_windows_drive {
+            let drive_char = s.chars().next().unwrap().to_ascii_lowercase();
+            let rest = if s.len() > 2 {
+                let r = &s[2..];
+                r.trim_start_matches('/')
+            } else {
+                ""
+            };
+
+            // Check if running under WSL with /mnt/<drive>
+            let wsl_mnt = format!("/mnt/{}", drive_char);
+            if Path::new(&wsl_mnt).exists() {
+                s = if rest.is_empty() {
+                    wsl_mnt
+                } else {
+                    format!("{}/{}", wsl_mnt, rest)
+                };
+            } else {
+                // Not WSL or drive not mounted: if path doesn't exist, fallback to home directory
+                if !Path::new(&s).exists() {
+                    if let Some(home) = dirs::home_dir() {
+                        s = home.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+
+        // Collapse multiple slashes (e.g. "//var///www" -> "/var/www"), but keep "/" for root
+        let mut cleaned = String::with_capacity(s.len());
+        let mut prev_slash = false;
+        for c in s.chars() {
+            if c == '/' {
+                if !prev_slash {
+                    cleaned.push('/');
+                    prev_slash = true;
+                }
+            } else {
+                cleaned.push(c);
+                prev_slash = false;
+            }
+        }
+        if cleaned.len() > 1 && cleaned.ends_with('/') {
+            cleaned.pop();
+        }
+        if cleaned.is_empty() {
+            cleaned.push('/');
+        }
+
+        let native = PathBuf::from(&cleaned);
+        (native, cleaned)
+    }
 }
 
 pub fn clean_local_path(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
-    if let Some(stripped) = s.strip_prefix("//?/UNC/") {
-        format!("//{}", stripped)
-    } else if let Some(stripped) = s.strip_prefix("//?/") {
-        stripped.to_string()
-    } else if let Some(stripped) = s.strip_prefix("UNC/") {
-        format!("//{}", stripped)
-    } else {
-        s
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = s.strip_prefix("//?/UNC/") {
+            format!("//{}", stripped)
+        } else if let Some(stripped) = s.strip_prefix("//?/") {
+            stripped.to_string()
+        } else if let Some(stripped) = s.strip_prefix("UNC/") {
+            format!("//{}", stripped)
+        } else {
+            s
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if s.len() > 1 && s.ends_with('/') {
+            s.trim_end_matches('/').to_string()
+        } else if s.is_empty() {
+            "/".to_string()
+        } else {
+            s
+        }
     }
 }
 
@@ -1227,7 +1361,31 @@ pub async fn list_local_dir(dir_path: Option<String>) -> Result<(String, Vec<Loc
         .filter(|p| !p.trim().is_empty())
         .unwrap_or_else(get_default_local_path);
 
-    let (native_path, display_target) = normalize_to_native_path(&raw_target);
+    let (mut native_path, mut display_target) = normalize_to_native_path(&raw_target);
+
+    // If native_path does not exist, check if we should fallback to default local path
+    if !native_path.exists() {
+        let default_target = get_default_local_path();
+        let (def_native, def_display) = normalize_to_native_path(&default_target);
+        if def_native.exists() && def_native != native_path {
+            #[cfg(not(windows))]
+            {
+                // On non-Windows, if an alien Windows drive path (e.g. C:/) was requested and doesn't exist, fallback
+                if raw_target.contains(':') {
+                    native_path = def_native;
+                    display_target = def_display;
+                }
+            }
+            #[cfg(windows)]
+            {
+                // On Windows, if a Unix-only path like /var/www or /home was requested and doesn't exist, fallback
+                if raw_target.starts_with('/') && !raw_target.starts_with("//") {
+                    native_path = def_native;
+                    display_target = def_display;
+                }
+            }
+        }
+    }
 
     let (target_path_buf, clean_canonical_str) = match fs::canonicalize(&native_path).await {
         Ok(canon) => {
