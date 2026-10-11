@@ -995,6 +995,7 @@ export const useSftpStore = defineStore('sftp', () => {
     targetParent: string
     transferId: string
     targetLocal: string
+    skipConflictCheck?: boolean
   }
 
   interface UploadTask {
@@ -1002,6 +1003,7 @@ export const useSftpStore = defineStore('sftp', () => {
     targetParent: string
     transferId: string
     targetRemote: string
+    skipConflictCheck?: boolean
   }
 
   async function ensureTransferReady() {
@@ -1019,7 +1021,7 @@ export const useSftpStore = defineStore('sftp', () => {
     sessionId: string,
     remoteFile: SftpFileEntry,
     targetLocalParent?: string,
-    options: { skipRefresh?: boolean; preEnqueuedTransferId?: string; exactLocalPath?: string } = {}
+    options: { skipRefresh?: boolean; preEnqueuedTransferId?: string; exactLocalPath?: string; skipConflictCheck?: boolean } = {}
   ) {
     if (remoteFile.is_dir) {
       return startBatchDownload(sessionId, [remoteFile], targetLocalParent)
@@ -1041,12 +1043,14 @@ export const useSftpStore = defineStore('sftp', () => {
     const targetLocal = options.exactLocalPath || `${cleanLocalDir}/${remoteFile.name}`
     const transferId = options.preEnqueuedTransferId || `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
 
-    const conflictAction = await determineConflictAction(
-      'download',
-      remoteFile.name,
-      { size: remoteFile.size, modified: remoteFile.modified, path: remoteFile.path },
-      targetLocal
-    )
+    const conflictAction = options.skipConflictCheck
+      ? 'overwrite'
+      : await determineConflictAction(
+          'download',
+          remoteFile.name,
+          { size: remoteFile.size, modified: remoteFile.modified, path: remoteFile.path },
+          targetLocal
+        )
 
     if (conflictAction === 'skip') {
       let item = transferMap.get(transferId)
@@ -1341,6 +1345,26 @@ export const useSftpStore = defineStore('sftp', () => {
               activeFolderDownload.value.isScanning = false
             }
 
+            // Detect brand-new local folders to skip unnecessary stat calls
+            const brandNewRootFolders = new Set<string>()
+            const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+            await Promise.all(
+              dirItems.map(async (d) => {
+                const rootLocal = cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`
+                try {
+                  const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
+                    path: rootLocal,
+                    isRemote: false,
+                  })
+                  if (!check.exists) {
+                    brandNewRootFolders.add(rootLocal)
+                  }
+                } catch {
+                  brandNewRootFolders.add(rootLocal)
+                }
+              })
+            )
+
             for (let i = 0; i < crawled.length; i++) {
               if (isCancellingAll.value) break
               const c = crawled[i]
@@ -1354,11 +1378,15 @@ export const useSftpStore = defineStore('sftp', () => {
                 modified: 0,
                 permissions: 0o644,
               }
+              const isChildOfBrandNew = Array.from(brandNewRootFolders).some(
+                (rf) => c.local_path === rf || c.local_path.startsWith(rf + '/') || c.local_path.startsWith(rf + '\\')
+              )
               onTaskFound({
                 file: fileEntry,
                 targetParent: targetDir,
                 transferId,
                 targetLocal: c.local_path,
+                skipConflictCheck: isChildOfBrandNew || conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
               })
             }
           } catch (crawlErr) {
@@ -1389,6 +1417,7 @@ export const useSftpStore = defineStore('sftp', () => {
               skipRefresh: true,
               preEnqueuedTransferId: task.transferId,
               exactLocalPath: task.targetLocal,
+              skipConflictCheck: task.skipConflictCheck,
             })
             if (activeFolderDownload.value) {
               activeFolderDownload.value.completedFiles++
@@ -1439,7 +1468,7 @@ export const useSftpStore = defineStore('sftp', () => {
     sessionId: string,
     localFile: LocalFileEntry,
     targetRemoteParent?: string,
-    options: { skipRefresh?: boolean; preEnqueuedTransferId?: string; exactRemotePath?: string } = {}
+    options: { skipRefresh?: boolean; preEnqueuedTransferId?: string; exactRemotePath?: string; skipConflictCheck?: boolean } = {}
   ) {
     if (localFile.is_dir) {
       return startBatchUpload(sessionId, [localFile], targetRemoteParent)
@@ -1452,13 +1481,15 @@ export const useSftpStore = defineStore('sftp', () => {
     const targetRemote = options.exactRemotePath || (cleanRemoteDir === '' ? localFile.name : `${cleanRemoteDir}/${localFile.name}`)
     const transferId = options.preEnqueuedTransferId || `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
 
-    const conflictAction = await determineConflictAction(
-      'upload',
-      localFile.name,
-      { size: localFile.size, modified: localFile.modified, path: localFile.path },
-      targetRemote,
-      sessionId
-    )
+    const conflictAction = options.skipConflictCheck
+      ? 'overwrite'
+      : await determineConflictAction(
+          'upload',
+          localFile.name,
+          { size: localFile.size, modified: localFile.modified, path: localFile.path },
+          targetRemote,
+          sessionId
+        )
 
     if (conflictAction === 'skip') {
       let item = transferMap.get(transferId)
@@ -1760,14 +1791,52 @@ export const useSftpStore = defineStore('sftp', () => {
               activeFolderUpload.value.isScanning = false
             }
 
-            // Step A: Immediately create all remote directories (ensures parent folders like 3005 and empty subfolders exist!)
-            for (const d of dirsList) {
+            // Detect brand-new remote folders (FileZilla-grade optimization):
+            // If the remote folder didn't exist before this upload, 100% of child files are new.
+            // We can skip checking remote conflicts for every single file!
+            const brandNewRootFolders = new Set<string>()
+            const cleanTargetDir = targetDir.replace(/\/+$/, '')
+            await Promise.all(
+              dirItems.map(async (d) => {
+                const rootRemote = cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`
+                try {
+                  const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
+                    sessionId,
+                    path: rootRemote,
+                    isRemote: true,
+                  })
+                  if (!check.exists) {
+                    brandNewRootFolders.add(rootRemote)
+                  }
+                } catch {
+                  brandNewRootFolders.add(rootRemote)
+                }
+              })
+            )
+
+            // Step A: Immediately enqueue all crawled files so upload workers start transferring INSTANTLY!
+            for (let i = 0; i < filesList.length; i++) {
               if (isCancellingAll.value) break
-              try {
-                await invoke('sftp_create_remote_dir', { sessionId, path: d.remote_path })
-              } catch (dirErr) {
-                console.warn(`Failed to create remote directory ${d.remote_path}:`, dirErr)
+              const c = filesList[i]
+              const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
+              const fileEntry: LocalFileEntry = {
+                name: c.file_name,
+                path: c.local_path,
+                is_dir: false,
+                is_symlink: false,
+                size: c.size,
+                modified: 0,
               }
+              const isChildOfBrandNew = Array.from(brandNewRootFolders).some(
+                (rf) => c.remote_path === rf || c.remote_path.startsWith(rf + '/')
+              )
+              onTaskFound({
+                file: fileEntry,
+                targetParent: targetDir,
+                transferId,
+                targetRemote: c.remote_path,
+                skipConflictCheck: isChildOfBrandNew || conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
+              })
             }
 
             // Step B: Record all ignored subfolders/files in the failed/skipped transfers queue so users see them
@@ -1806,24 +1875,14 @@ export const useSftpStore = defineStore('sftp', () => {
               triggerTransferToast(msg)
             }
 
-            // Step C: Enqueue crawled regular files for transfer
-            for (let i = 0; i < filesList.length; i++) {
-              if (isCancellingAll.value) break
-              const c = filesList[i]
-              const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-              const fileEntry: LocalFileEntry = {
-                name: c.file_name,
-                path: c.local_path,
-                is_dir: false,
-                is_symlink: false,
-                size: c.size,
-                modified: 0,
-              }
-              onTaskFound({
-                file: fileEntry,
-                targetParent: targetDir,
-                transferId,
-                targetRemote: c.remote_path,
+            // Step C: Ensure all remote directories and empty subfolders exist asynchronously in the background.
+            // This runs in native Rust in the background so it never blocks active file uploads!
+            if (dirsList.length > 0) {
+              invoke('sftp_batch_create_remote_dirs', {
+                sessionId,
+                paths: dirsList.map((d) => d.remote_path),
+              }).catch((dirErr) => {
+                console.warn('Background remote directory creation warning:', dirErr)
               })
             }
           } catch (crawlErr) {
@@ -1854,6 +1913,7 @@ export const useSftpStore = defineStore('sftp', () => {
               skipRefresh: true,
               preEnqueuedTransferId: task.transferId,
               exactRemotePath: task.targetRemote,
+              skipConflictCheck: task.skipConflictCheck,
             })
             if (activeFolderUpload.value) {
               activeFolderUpload.value.completedFiles++

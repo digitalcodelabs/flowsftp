@@ -247,12 +247,22 @@ pub async fn create_remote_dir(sftp: &SftpSession, path: &str) -> Result<(), Str
 
 pub async fn ensure_remote_dir_recursive(sftp: &SftpSession, path: &str) -> Result<(), String> {
     let clean = path.trim().replace('\\', "/");
-    let segments: Vec<&str> = clean.split('/').filter(|s| !s.is_empty()).collect();
+    let clean_path = clean.trim_end_matches('/');
+    if clean_path.is_empty() || clean_path == "/" {
+        return Ok(());
+    }
+
+    // Fast-path: try creating the target directory directly (1 network roundtrip)
+    if sftp.create_dir(clean_path).await.is_ok() {
+        return Ok(());
+    }
+
+    let segments: Vec<&str> = clean_path.split('/').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
         return Ok(());
     }
 
-    let is_absolute = clean.starts_with('/');
+    let is_absolute = clean_path.starts_with('/');
     let mut current = if is_absolute { String::from("/") } else { String::new() };
 
     for seg in segments {
@@ -266,6 +276,53 @@ pub async fn ensure_remote_dir_recursive(sftp: &SftpSession, path: &str) -> Resu
         }
 
         let _ = sftp.create_dir(&current).await;
+    }
+
+    Ok(())
+}
+
+pub async fn batch_create_remote_dirs(sftp: &SftpSession, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    // Sort paths by length so shallower directories are created before deeper ones
+    let mut sorted_paths = paths;
+    sorted_paths.sort_by_key(|p| p.len());
+
+    let mut created: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for raw_path in sorted_paths {
+        let clean = raw_path.trim().replace('\\', "/");
+        let clean_path = clean.trim_end_matches('/').to_string();
+        if clean_path.is_empty() || clean_path == "/" || created.contains(&clean_path) {
+            continue;
+        }
+
+        // Try direct creation first (fast path: only 1 network roundtrip)
+        if sftp.create_dir(&clean_path).await.is_ok() {
+            created.insert(clean_path);
+            continue;
+        }
+
+        // If direct creation failed (e.g. parent missing), create ancestors
+        let segments: Vec<&str> = clean_path.split('/').filter(|s| !s.is_empty()).collect();
+        let is_absolute = clean_path.starts_with('/');
+        let mut current = if is_absolute { String::from("/") } else { String::new() };
+
+        for seg in segments {
+            if !current.is_empty() && !current.ends_with('/') {
+                current.push('/');
+            }
+            current.push_str(seg);
+
+            if current == "/" || created.contains(&current) {
+                continue;
+            }
+
+            let _ = sftp.create_dir(&current).await;
+            created.insert(current.clone());
+        }
     }
 
     Ok(())

@@ -10,7 +10,7 @@ use crate::sftp::{
     compress_local_archive, compress_remote_archive, extract_local_archive, extract_remote_archive,
     ensure_remote_dir_recursive, get_matching_ignore_pattern,
     CrawlProgressPayload, FileConflictInfo, GitRepoStatus, LocalCrawlDirectory, LocalCrawlIgnored, LocalCrawlResult,
-    LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry,
+    LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry, batch_create_remote_dirs,
 };
 use crate::state::AppState;
 
@@ -69,6 +69,32 @@ pub async fn sftp_create_remote_dir(
 
     let sftp = session.get_sftp().await?;
     ensure_remote_dir_recursive(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_batch_create_remote_dirs(
+    state: State<'_, AppState>,
+    session_id: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        for path in paths {
+            let _ = ftp.create_dir(&path).await;
+        }
+        return Ok(());
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    batch_create_remote_dirs(&sftp, paths).await
 }
 
 #[tauri::command]

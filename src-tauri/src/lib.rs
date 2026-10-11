@@ -34,7 +34,7 @@ use commands::sftp::{
     sftp_cancel_transfer, sftp_cancel_all_transfers, sftp_reset_cancel_transfers,
     sftp_extract_remote_archive, sftp_compress_remote_archive,
     sftp_extract_local_archive, sftp_compress_local_archive,
-    sftp_crawl_local_paths, sftp_crawl_remote_paths, exit_app,
+    sftp_crawl_local_paths, sftp_crawl_remote_paths, sftp_batch_create_remote_dirs, exit_app,
 };
 use commands::ssh::{
     ssh_connect, ssh_disconnect, ssh_get_history, ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
@@ -68,6 +68,7 @@ pub fn run() {
             sftp_list_remote,
             sftp_canonicalize_remote,
             sftp_create_remote_dir,
+            sftp_batch_create_remote_dirs,
             sftp_create_remote_file,
             sftp_remove_remote_dir,
             sftp_remove_remote_file,
