@@ -82,7 +82,14 @@ pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) 
     let norm_path = rel_or_full_path.replace('\\', "/");
     let name_lower = name.to_lowercase();
     let norm_path_lower = norm_path.to_lowercase();
-    let parts: Vec<&str> = norm_path_lower.split('/').collect();
+
+    // Only check relative subpath parts (ignore Windows drive letters or absolute prefixes)
+    let clean_rel = if norm_path_lower.contains(':') {
+        norm_path_lower.split('/').last().unwrap_or("").to_string()
+    } else {
+        norm_path_lower.trim_start_matches('/').to_string()
+    };
+    let parts: Vec<&str> = clean_rel.split('/').filter(|s| !s.is_empty()).collect();
 
     for raw_pat in patterns {
         let pat = raw_pat.trim().trim_start_matches('/').to_lowercase();
@@ -90,16 +97,16 @@ pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) 
             continue;
         }
 
-        // Exact match with name or any segment of the path (e.g. "node_modules", ".git", "dist", "target")
+        // Exact match with name or any segment of the relative path (e.g. "node_modules", ".git")
         if name_lower == pat || parts.iter().any(|&p| p == pat) {
             return true;
         }
 
-        // Match path boundary (e.g. "dist" in "dist/foo" or "foo/dist" or "foo/dist/bar")
-        if norm_path_lower == pat
-            || norm_path_lower.starts_with(&format!("{}/", pat))
-            || norm_path_lower.ends_with(&format!("/{}", pat))
-            || norm_path_lower.contains(&format!("/{}/", pat))
+        // Match path boundary within clean relative path
+        if clean_rel == pat
+            || clean_rel.starts_with(&format!("{}/", pat))
+            || clean_rel.ends_with(&format!("/{}", pat))
+            || clean_rel.contains(&format!("/{}/", pat))
         {
             return true;
         }
@@ -107,17 +114,17 @@ pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) 
         // Wildcard extension match (e.g. "*.log", "*.swp", "*.tmp", "*.bak")
         if pat.starts_with("*.") {
             let ext = &pat[1..];
-            if name_lower.ends_with(ext) || norm_path_lower.ends_with(ext) {
+            if name_lower.ends_with(ext) || clean_rel.ends_with(ext) {
                 return true;
             }
         } else if pat.starts_with('*') {
             let suffix = &pat[1..];
-            if name_lower.ends_with(suffix) || norm_path_lower.ends_with(suffix) {
+            if name_lower.ends_with(suffix) || clean_rel.ends_with(suffix) {
                 return true;
             }
         } else if pat.ends_with('*') {
             let prefix = &pat[..pat.len() - 1];
-            if name_lower.starts_with(prefix) || norm_path_lower.starts_with(prefix) {
+            if name_lower.starts_with(prefix) || clean_rel.starts_with(prefix) {
                 return true;
             }
         }

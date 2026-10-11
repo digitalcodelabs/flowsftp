@@ -1205,7 +1205,7 @@ export const useSftpStore = defineStore('sftp', () => {
     // 1. Immediately enqueue only root-level regular files (skipping ignored files if enabled)
     for (const f of files) {
       if (!f.is_dir) {
-        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
+        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
           continue
         }
         const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -1215,14 +1215,8 @@ export const useSftpStore = defineStore('sftp', () => {
       }
     }
 
-    // 2. Start crawler for directory items concurrently
-    const dirItems = files.filter((f) => {
-      if (!f.is_dir) return false
-      if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
-        return false
-      }
-      return true
-    })
+    // 2. Start crawler for directory items concurrently (nested items will be filtered by crawler)
+    const dirItems = files.filter((f) => f.is_dir)
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
@@ -1512,24 +1506,20 @@ export const useSftpStore = defineStore('sftp', () => {
     // 1. Immediately enqueue only root-level regular files (skipping ignored files if enabled)
     for (const f of files) {
       if (!f.is_dir) {
-        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
+        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
           continue
         }
         const cleanRemoteDir = targetDir.replace(/\/+$/, '')
-        const targetRemote = cleanRemoteDir === '' ? f.name : `${cleanRemoteDir}/${f.name}`
+        const targetRemote = cleanRemoteDir === ''
+          ? (targetDir.startsWith('/') ? `/${f.name}` : f.name)
+          : `${cleanRemoteDir}/${f.name}`
         const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
         onTaskFound({ file: f, targetParent: targetDir, transferId, targetRemote })
       }
     }
 
-    // 2. Start crawler for directory items concurrently
-    const dirItems = files.filter((f) => {
-      if (!f.is_dir) return false
-      if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
-        return false
-      }
-      return true
-    })
+    // 2. Start crawler for directory items concurrently (nested items will be filtered by crawler)
+    const dirItems = files.filter((f) => f.is_dir)
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {

@@ -86,14 +86,8 @@ export const DEFAULT_TRANSFER_IGNORE_PATTERNS: string[] = [
   'node_modules',
   '.vscode',
   '.idea',
-  'dist',
-  'build',
-  '.next',
-  '.nuxt',
-  'target',
   '.cache',
   '.turbo',
-  'vendor',
   '__pycache__',
   '.DS_Store',
   'Thumbs.db',
@@ -271,7 +265,8 @@ export const useSettingsStore = defineStore('settings', () => {
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed
+          const cleaned = parsed.filter((p) => p !== 'dist' && p !== 'build' && p !== 'target')
+          return cleaned.length > 0 ? cleaned : [...DEFAULT_TRANSFER_IGNORE_PATTERNS]
         }
       }
     } catch (e) {
@@ -332,44 +327,52 @@ export const useSettingsStore = defineStore('settings', () => {
     transferIgnorePatterns.value = [...DEFAULT_TRANSFER_IGNORE_PATTERNS]
   }
 
-  function isPatternIgnored(name: string, relOrFullPath?: string): boolean {
+  function isPatternIgnored(name: string, relPath?: string): boolean {
     if (!enableTransferIgnoreFilter.value || transferIgnorePatterns.value.length === 0) {
       return false
     }
     const nameLower = name.trim().toLowerCase()
-    const pathLower = (relOrFullPath || name).replace(/\\/g, '/').toLowerCase()
-    const parts = pathLower.split('/').filter(Boolean)
+
+    // Determine clean relative path segments.
+    // If relPath is an absolute path (contains ':' on Windows or starts with '/'),
+    // we must NOT treat drive letters / parent directories as path parts!
+    let relLower = ''
+    if (relPath) {
+      const norm = relPath.replace(/\\/g, '/')
+      if (!norm.includes(':') && !norm.startsWith('/')) {
+        relLower = norm.toLowerCase()
+      }
+    }
+    const parts = relLower ? relLower.split('/').filter(Boolean) : []
 
     for (const rawPat of transferIgnorePatterns.value) {
       const pat = rawPat.trim().replace(/^\/+/, '').toLowerCase()
       if (!pat) continue
 
-      if (nameLower === pat || parts.includes(pat)) {
+      // Exact folder / file name match (e.g. "node_modules", ".git")
+      if (nameLower === pat) {
         return true
       }
 
-      if (
-        pathLower === pat ||
-        pathLower.startsWith(`${pat}/`) ||
-        pathLower.endsWith(`/${pat}`) ||
-        pathLower.includes(`/${pat}/`)
-      ) {
+      // Segment match in relative subpath (e.g. "foo/node_modules/bar")
+      if (parts.length > 0 && parts.includes(pat)) {
         return true
       }
 
+      // Wildcard extensions (e.g. "*.tmp", "*.log", "*.swp")
       if (pat.startsWith('*.')) {
         const ext = pat.slice(1) // '.log'
-        if (nameLower.endsWith(ext) || pathLower.endsWith(ext)) {
+        if (nameLower.endsWith(ext) || (relLower && relLower.endsWith(ext))) {
           return true
         }
       } else if (pat.startsWith('*')) {
         const suffix = pat.slice(1)
-        if (nameLower.endsWith(suffix) || pathLower.endsWith(suffix)) {
+        if (nameLower.endsWith(suffix) || (relLower && relLower.endsWith(suffix))) {
           return true
         }
       } else if (pat.endsWith('*')) {
         const prefix = pat.slice(0, -1)
-        if (nameLower.startsWith(prefix) || pathLower.startsWith(prefix)) {
+        if (nameLower.startsWith(prefix) || (relLower && relLower.startsWith(prefix))) {
           return true
         }
       }

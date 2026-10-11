@@ -861,11 +861,10 @@ pub async fn sftp_crawl_local_paths(
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "file".to_string());
 
-            if is_path_ignored(&file_name, &p, &patterns) {
-                continue;
-            }
-
             if native_path.is_file() || native_path.is_symlink() {
+                if is_path_ignored(&file_name, &file_name, &patterns) {
+                    continue;
+                }
                 let size = std::fs::metadata(&native_path).map(|m| m.len()).unwrap_or(0);
                 let remote_path = if clean_remote.is_empty() {
                     file_name.clone()
@@ -985,11 +984,6 @@ pub async fn sftp_crawl_remote_paths(
             continue;
         }
 
-        let name = clean_p.split('/').last().unwrap_or("item").to_string();
-        if is_path_ignored(&name, &clean_p, &patterns) {
-            continue;
-        }
-
         match sftp.read_dir(&clean_p).await {
             Ok(_) => {
                 let folder_name = clean_p.split('/').last().unwrap_or("folder");
@@ -1002,6 +996,9 @@ pub async fn sftp_crawl_remote_paths(
             }
             Err(_) => {
                 let file_name = clean_p.split('/').last().unwrap_or("file").to_string();
+                if is_path_ignored(&file_name, &file_name, &patterns) {
+                    continue;
+                }
                 let size = sftp.metadata(&clean_p).await.ok().and_then(|m| m.size).unwrap_or(0);
                 let local_path = if clean_local.is_empty() {
                     file_name.clone()

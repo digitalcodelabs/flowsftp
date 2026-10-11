@@ -252,56 +252,55 @@ macro_rules! crawl_ftp_single_path {
         let stream = $stream;
         let p_str = $clean_p;
         let patterns = $patterns;
-        let file_name = p_str.split('/').last().unwrap_or("item").to_string();
 
-        if !crate::sftp::is_path_ignored(&file_name, p_str, patterns) {
-            if stream.cwd(p_str).is_ok() {
-                let folder_name = p_str.split('/').last().unwrap_or("folder");
-                let local_base = if $target_local.is_empty() {
-                    folder_name.to_string()
-                } else {
-                    format!("{}/{}", $target_local, folder_name)
+        if stream.cwd(p_str).is_ok() {
+            let folder_name = p_str.split('/').last().unwrap_or("folder");
+            let local_base = if $target_local.is_empty() {
+                folder_name.to_string()
+            } else {
+                format!("{}/{}", $target_local, folder_name)
+            };
+
+            let mut dirs_to_visit = vec![p_str.to_string()];
+            while let Some(dir) = dirs_to_visit.pop() {
+                if stream.cwd(&dir).is_err() {
+                    continue;
+                }
+                let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
+                let lines = match stream.list(None) {
+                    Ok(l) => l,
+                    Err(_) => continue,
                 };
 
-                let mut dirs_to_visit = vec![p_str.to_string()];
-                while let Some(dir) = dirs_to_visit.pop() {
-                    if stream.cwd(&dir).is_err() {
-                        continue;
-                    }
-                    let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
-                    let lines = match stream.list(None) {
-                        Ok(l) => l,
-                        Err(_) => continue,
-                    };
-
-                    for line in lines {
-                        if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
-                            if entry.name == "." || entry.name == ".." {
-                                continue;
-                            }
-                            if crate::sftp::is_path_ignored(&entry.name, &entry.path, patterns) {
-                                continue;
-                            }
-                            if entry.is_dir {
-                                dirs_to_visit.push(entry.path);
-                            } else {
-                                let rel = entry.path
-                                    .strip_prefix(p_str)
-                                    .unwrap_or(&entry.path)
-                                    .trim_start_matches('/');
-                                let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
-                                $results.push(RemoteCrawlTask {
-                                    remote_path: entry.path,
-                                    local_path,
-                                    file_name: entry.name,
-                                    size: entry.size,
-                                });
-                            }
+                for line in lines {
+                    if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                        if entry.name == "." || entry.name == ".." {
+                            continue;
+                        }
+                        if crate::sftp::is_path_ignored(&entry.name, &entry.path, patterns) {
+                            continue;
+                        }
+                        if entry.is_dir {
+                            dirs_to_visit.push(entry.path);
+                        } else {
+                            let rel = entry.path
+                                .strip_prefix(p_str)
+                                .unwrap_or(&entry.path)
+                                .trim_start_matches('/');
+                            let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
+                            $results.push(RemoteCrawlTask {
+                                remote_path: entry.path,
+                                local_path,
+                                file_name: entry.name,
+                                size: entry.size,
+                            });
                         }
                     }
                 }
-            } else {
-                let file_name = p_str.split('/').last().unwrap_or("file").to_string();
+            }
+        } else {
+            let file_name = p_str.split('/').last().unwrap_or("file").to_string();
+            if !crate::sftp::is_path_ignored(&file_name, &file_name, patterns) {
                 let size = stream.size(p_str).unwrap_or(0) as u64;
                 let local_path = if $target_local.is_empty() {
                     file_name.clone()
