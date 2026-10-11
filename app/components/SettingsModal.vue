@@ -830,69 +830,7 @@ const browserOtherFonts = computed(() => {
           </div>
         </div>
 
-        <!-- 1. TRANSFERS TAB -->
-        <div v-if="activeTab === 'transfers'" class="space-y-4">
-          <!-- Maximum Simultaneous Transfers -->
-          <div
-            class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
-          >
-            <div class="flex items-center justify-between">
-              <div>
-                <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Maximum Simultaneous Transfers</h4>
-                <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
-                  Controls how many files are downloaded or uploaded in parallel during batch transfers.
-                </p>
-              </div>
-              <div
-                class="px-2.5 py-1 rounded-lg border font-mono font-bold text-xs"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
-              >
-                {{ sftpStore.maxSimultaneousTransfers }} concurrent
-              </div>
-            </div>
 
-            <div class="flex items-center space-x-3 pt-1">
-              <span class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">1</span>
-              <input
-                type="range"
-                v-model.number="sftpStore.maxSimultaneousTransfers"
-                min="1"
-                max="10"
-                class="flex-1 cursor-pointer"
-                :style="{ accentColor: 'var(--color-accent)' }"
-              />
-              <span class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">10</span>
-            </div>
-
-            <div class="flex items-center justify-between text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
-              <span>Conservative (1-2)</span>
-              <span>Recommended (3-5)</span>
-              <span>High Throughput (6-10)</span>
-            </div>
-          </div>
-
-          <!-- Conflict Resolution Default -->
-          <div
-            class="rounded-xl border p-4 space-y-2.5"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
-          >
-            <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Default File Conflict Policy</h4>
-            <p class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
-              Action to take when a file already exists at the transfer destination.
-            </p>
-
-            <select
-              v-model="sftpStore.conflictPolicy"
-              class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
-            >
-              <option value="ask">Prompt (Ask every time a conflict occurs)</option>
-              <option value="overwrite">Overwrite (Always replace existing files)</option>
-              <option value="skip">Skip (Never overwrite existing files)</option>
-            </select>
-          </div>
-        </div>
 
         <!-- 2. FONTS & APPEARANCE TAB -->
         <div v-if="activeTab === 'appearance'" class="space-y-4">
