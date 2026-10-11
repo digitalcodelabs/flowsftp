@@ -53,6 +53,17 @@ export interface LocalCrawlResult {
   ignored: LocalCrawlIgnored[]
 }
 
+export interface ActiveFolderUploadInfo {
+  id: string
+  folderName: string
+  totalFiles: number
+  totalFolders: number
+  completedFiles: number
+  isScanning: boolean
+  isStopping: boolean
+  isComplete?: boolean
+}
+
 export interface RemoteCrawlTask {
   remote_path: string
   local_path: string
@@ -145,6 +156,16 @@ export const useSftpStore = defineStore('sftp', () => {
 
   function triggerTransferToast(message: string, isError = false) {
     transferToast.value = { message, isError, timestamp: Date.now() }
+  }
+
+  const activeFolderUpload = ref<ActiveFolderUploadInfo | null>(null)
+
+  async function stopActiveFolderUpload() {
+    if (!activeFolderUpload.value) return
+    activeFolderUpload.value.isStopping = true
+    await cancelAllTransfers()
+    activeFolderUpload.value = null
+    triggerTransferToast('Folder upload stopped by user', false)
   }
 
   // Local State
@@ -1688,6 +1709,23 @@ export const useSftpStore = defineStore('sftp', () => {
       triggerTransferToast(`Transfer filter: Ignored ${count} item${count > 1 ? 's' : ''} (${sample}${count > 1 ? '…' : ''})`)
     }
 
+    if (dirItems.length > 0) {
+      const folderTitle = dirItems.length > 1
+        ? `${dirItems[0].name} (+${dirItems.length - 1} folders)`
+        : dirItems[0].name
+
+      activeFolderUpload.value = {
+        id: `folder-ul-${Date.now()}`,
+        folderName: folderTitle,
+        totalFiles: 0,
+        totalFolders: dirItems.length,
+        completedFiles: 0,
+        isScanning: true,
+        isStopping: false,
+        isComplete: false,
+      }
+    }
+
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
@@ -1703,6 +1741,12 @@ export const useSftpStore = defineStore('sftp', () => {
             const dirsList: LocalCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
             const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
 
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.totalFiles = filesList.length
+              activeFolderUpload.value.totalFolders = Math.max(dirsList.length, dirItems.length)
+              activeFolderUpload.value.isScanning = false
+            }
+
             // Step A: Immediately create all remote directories (ensures parent folders like 3005 and empty subfolders exist!)
             for (const d of dirsList) {
               if (isCancellingAll.value) break
@@ -1715,6 +1759,7 @@ export const useSftpStore = defineStore('sftp', () => {
 
             // Step B: Record all ignored subfolders/files in the failed/skipped transfers queue so users see them
             for (const ign of ignoredList) {
+              if (isCancellingAll.value) break
               const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
               const ignoredItem: TransferItem = {
                 transfer_id: transferId,
@@ -1771,6 +1816,10 @@ export const useSftpStore = defineStore('sftp', () => {
           } catch (crawlErr) {
             console.warn('Native local crawl failed, falling back to JS crawler:', crawlErr)
             await collectLocalUploadTasks(sessionId, dirItems, targetDir, onTaskFound)
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.totalFiles = taskQueue.length
+              activeFolderUpload.value.isScanning = false
+            }
           }
         }
       } catch (scanErr) {
@@ -1794,6 +1843,9 @@ export const useSftpStore = defineStore('sftp', () => {
               preEnqueuedTransferId: task.transferId,
               exactRemotePath: task.targetRemote,
             })
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.completedFiles++
+            }
           } catch (err) {
             console.error('Upload worker error:', err)
           }
@@ -1816,6 +1868,16 @@ export const useSftpStore = defineStore('sftp', () => {
       flushNewTransfersNow()
       activeWorkersNotifiers.delete(notifyWorkers)
       batchConflictOverride.value = null
+      if (activeFolderUpload.value && !activeFolderUpload.value.isStopping && !isCancellingAll.value) {
+        activeFolderUpload.value.isComplete = true
+        setTimeout(() => {
+          if (activeFolderUpload.value?.isComplete) {
+            activeFolderUpload.value = null
+          }
+        }, 3200)
+      } else {
+        activeFolderUpload.value = null
+      }
     }
 
     // Refresh directory ONCE at the end of the batch (FileZilla style)
@@ -1896,6 +1958,9 @@ export const useSftpStore = defineStore('sftp', () => {
       console.warn('Failed to invoke sftp_cancel_all_transfers:', e)
     }
     activeRunningIds.clear()
+    if (activeFolderUpload.value) {
+      activeFolderUpload.value = null
+    }
     const now = Date.now()
     const cancelledItems: TransferItem[] = []
     for (const t of activeTransfers.value) {
@@ -2328,5 +2393,7 @@ export const useSftpStore = defineStore('sftp', () => {
     compressLocalArchive,
     transferToast,
     triggerTransferToast,
+    activeFolderUpload,
+    stopActiveFolderUpload,
   }
 })

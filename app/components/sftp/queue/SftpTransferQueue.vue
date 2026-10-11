@@ -799,6 +799,7 @@ onUnmounted(() => {
 
 defineExpose({
   closeContextMenu: closeQueueContextMenu,
+  drawerHeight,
 })
 </script>
 

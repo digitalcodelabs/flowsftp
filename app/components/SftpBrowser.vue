@@ -8,6 +8,9 @@ import {
   CheckCircle2,
   RefreshCw,
   WifiOff,
+  Folder,
+  Square,
+  Upload,
 } from 'lucide-vue-next'
 import {
   useSftpStore,
@@ -218,6 +221,12 @@ watch(
 // Transfer drawer state & queue tabs (FileZilla 3-Tab Architecture)
 const showTransferDrawer = ref(true)
 const transferTab = ref<'active' | 'completed' | 'failed'>('active')
+
+const folderUploadBottomOffset = computed(() => {
+  if (!showTransferDrawer.value) return '36px'
+  const h = transferQueueRef.value?.drawerHeight ?? 180
+  return `${h + 14}px`
+})
 
 // File Editor State
 const showEditorModal = ref(false)
@@ -2358,6 +2367,135 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
           <X class="w-3.5 h-3.5" />
           <span>{{ activeDeletion.isCancelling ? 'Cancelling...' : 'Cancel' }}</span>
         </button>
+      </div>
+    </transition>
+
+    <!-- Floating Active Folder Upload Progress Card with Live Stop Action (Left Bottom Corner) -->
+    <transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="transform translate-y-4 opacity-0 scale-95"
+      enter-to-class="transform translate-y-0 opacity-100 scale-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="transform translate-y-0 opacity-100 scale-100"
+      leave-to-class="transform translate-y-4 opacity-0 scale-95"
+    >
+      <div
+        v-if="sftpStore.activeFolderUpload"
+        class="fixed left-6 z-[80] flex items-center space-x-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-xl max-w-lg select-none transition-all duration-200 pointer-events-auto"
+        :style="{
+          bottom: folderUploadBottomOffset,
+          backgroundColor: 'var(--color-bg-card)',
+          borderColor: sftpStore.activeFolderUpload.isComplete
+            ? 'color-mix(in srgb, #16a34a 50%, var(--color-border))'
+            : (sftpStore.activeFolderUpload.isStopping
+                ? 'color-mix(in srgb, #ef4444 50%, var(--color-border))'
+                : 'color-mix(in srgb, var(--color-accent) 45%, var(--color-border))'),
+          color: 'var(--color-text-main)',
+          boxShadow: '0 10px 32px rgba(0, 0, 0, 0.28), 0 0 16px ' + (
+            sftpStore.activeFolderUpload.isComplete
+              ? 'color-mix(in srgb, #16a34a 20%, transparent)'
+              : (sftpStore.activeFolderUpload.isStopping
+                  ? 'color-mix(in srgb, #ef4444 20%, transparent)'
+                  : 'color-mix(in srgb, var(--color-accent) 20%, transparent)')
+          )
+        }"
+      >
+        <div
+          class="relative shrink-0 flex items-center justify-center w-8 h-8 rounded-xl border"
+          :style="{
+            backgroundColor: sftpStore.activeFolderUpload.isComplete
+              ? 'color-mix(in srgb, #16a34a 16%, transparent)'
+              : (sftpStore.activeFolderUpload.isStopping
+                  ? 'color-mix(in srgb, #ef4444 16%, transparent)'
+                  : 'color-mix(in srgb, var(--color-accent) 16%, transparent)'),
+            borderColor: sftpStore.activeFolderUpload.isComplete
+              ? 'color-mix(in srgb, #16a34a 35%, transparent)'
+              : (sftpStore.activeFolderUpload.isStopping
+                  ? 'color-mix(in srgb, #ef4444 35%, transparent)'
+                  : 'color-mix(in srgb, var(--color-accent) 35%, transparent)'),
+            color: sftpStore.activeFolderUpload.isComplete
+              ? '#16a34a'
+              : (sftpStore.activeFolderUpload.isStopping ? '#ef4444' : 'var(--color-accent)')
+          }"
+        >
+          <CheckCircle2 v-if="sftpStore.activeFolderUpload.isComplete" class="w-4 h-4 text-emerald-500" />
+          <span
+            v-else-if="sftpStore.activeFolderUpload.isScanning || sftpStore.activeFolderUpload.isStopping"
+            class="animate-spin w-4 h-4 border-2 rounded-full"
+            :style="{
+              borderColor: 'color-mix(in srgb, currentColor 30%, transparent)',
+              borderTopColor: 'currentColor'
+            }"
+          />
+          <Upload v-else class="w-4 h-4 animate-bounce text-sky-400" />
+        </div>
+
+        <div class="flex flex-col min-w-0 pr-1">
+          <div class="flex items-center space-x-1.5 text-xs font-semibold truncate">
+            <span
+              :style="{
+                color: sftpStore.activeFolderUpload.isComplete
+                  ? '#16a34a'
+                  : (sftpStore.activeFolderUpload.isStopping ? '#ef4444' : 'var(--color-accent)')
+              }"
+            >
+              {{
+                sftpStore.activeFolderUpload.isComplete
+                  ? 'Folder upload complete'
+                  : (sftpStore.activeFolderUpload.isStopping
+                      ? 'Stopping upload...'
+                      : (sftpStore.activeFolderUpload.isScanning ? 'Scanning folder...' : 'Uploading folder'))
+              }}
+            </span>
+            <span class="font-mono truncate max-w-[200px]" :style="{ color: 'var(--color-text-main)' }" :title="sftpStore.activeFolderUpload.folderName">
+              "{{ sftpStore.activeFolderUpload.folderName }}"
+            </span>
+          </div>
+
+          <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
+            <span v-if="sftpStore.activeFolderUpload.isScanning" class="italic">
+              Analyzing files &amp; subfolders...
+            </span>
+            <template v-else>
+              <span class="font-mono font-medium">
+                {{ sftpStore.activeFolderUpload.totalFiles.toLocaleString() }} file{{ sftpStore.activeFolderUpload.totalFiles === 1 ? '' : 's' }},
+                {{ sftpStore.activeFolderUpload.totalFolders.toLocaleString() }} folder{{ sftpStore.activeFolderUpload.totalFolders === 1 ? '' : 's' }}
+              </span>
+              <span v-if="sftpStore.activeFolderUpload.totalFiles > 0 && !sftpStore.activeFolderUpload.isComplete" class="opacity-80">
+                • {{ sftpStore.activeFolderUpload.completedFiles }}/{{ sftpStore.activeFolderUpload.totalFiles }} uploaded
+              </span>
+            </template>
+          </div>
+        </div>
+
+        <template v-if="!sftpStore.activeFolderUpload.isComplete">
+          <button
+            type="button"
+            @click="sftpStore.stopActiveFolderUpload"
+            :disabled="sftpStore.activeFolderUpload.isStopping"
+            class="shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 flex items-center space-x-1.5 cursor-pointer ml-1"
+            :style="{
+              backgroundColor: 'color-mix(in srgb, #dc2626 18%, var(--color-bg-card))',
+              borderColor: 'color-mix(in srgb, #dc2626 45%, var(--color-border))',
+              color: '#ef4444'
+            }"
+            title="Stop folder upload"
+          >
+            <Square class="w-3.5 h-3.5 fill-current" />
+            <span>{{ sftpStore.activeFolderUpload.isStopping ? 'Stopping...' : 'Stop upload' }}</span>
+          </button>
+        </template>
+        <template v-else>
+          <button
+            type="button"
+            @click="sftpStore.activeFolderUpload = null"
+            class="shrink-0 p-1 rounded-lg transition hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer ml-1"
+            :style="{ color: 'var(--color-text-muted)' }"
+            title="Dismiss"
+          >
+            <X class="w-3.5 h-3.5" />
+          </button>
+        </template>
       </div>
     </transition>
 
