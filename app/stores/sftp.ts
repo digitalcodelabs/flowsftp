@@ -53,7 +53,7 @@ export interface LocalCrawlResult {
   ignored: LocalCrawlIgnored[]
 }
 
-export interface ActiveFolderUploadInfo {
+export interface ActiveFolderTransferInfo {
   id: string
   folderName: string
   totalFiles: number
@@ -62,6 +62,15 @@ export interface ActiveFolderUploadInfo {
   isScanning: boolean
   isStopping: boolean
   isComplete?: boolean
+}
+
+export type ActiveFolderUploadInfo = ActiveFolderTransferInfo
+export type ActiveFolderDownloadInfo = ActiveFolderTransferInfo
+
+export interface CrawlProgressPayload {
+  scan_type: 'upload' | 'download'
+  files: number
+  directories: number
 }
 
 export interface RemoteCrawlTask {
@@ -159,13 +168,36 @@ export const useSftpStore = defineStore('sftp', () => {
   }
 
   const activeFolderUpload = ref<ActiveFolderUploadInfo | null>(null)
+  const activeFolderDownload = ref<ActiveFolderDownloadInfo | null>(null)
 
   async function stopActiveFolderUpload() {
     if (!activeFolderUpload.value) return
     activeFolderUpload.value.isStopping = true
     await cancelAllTransfers()
     activeFolderUpload.value = null
-    triggerTransferToast('Folder upload stopped by user', false)
+  }
+
+  async function stopActiveFolderDownload() {
+    if (!activeFolderDownload.value) return
+    activeFolderDownload.value.isStopping = true
+    await cancelAllTransfers()
+    activeFolderDownload.value = null
+  }
+
+  // Set up live crawling progress event listener from native Rust crawler
+  if (typeof window !== 'undefined') {
+    listen<CrawlProgressPayload>('sftp:crawl:progress', (event) => {
+      const { scan_type, files, directories } = event.payload
+      if (scan_type === 'upload' && activeFolderUpload.value && activeFolderUpload.value.isScanning) {
+        activeFolderUpload.value.totalFiles = files
+        activeFolderUpload.value.totalFolders = Math.max(activeFolderUpload.value.totalFolders, directories)
+      } else if (scan_type === 'download' && activeFolderDownload.value && activeFolderDownload.value.isScanning) {
+        activeFolderDownload.value.totalFiles = files
+        activeFolderDownload.value.totalFolders = Math.max(activeFolderDownload.value.totalFolders, directories)
+      }
+    }).catch((err) => {
+      console.warn('Failed to attach crawl progress listener:', err)
+    })
   }
 
   // Local State
@@ -1274,17 +1306,41 @@ export const useSftpStore = defineStore('sftp', () => {
       const sample = ignoredDirectDownloads[0].name
       triggerTransferToast(`Transfer filter: Ignored ${count} item${count > 1 ? 's' : ''} (${sample}${count > 1 ? '…' : ''})`)
     }
+
+    if (dirItems.length > 0) {
+      const folderTitle = dirItems.length > 1
+        ? `${dirItems[0].name} (+${dirItems.length - 1} folders)`
+        : dirItems[0].name
+
+      activeFolderDownload.value = {
+        id: `folder-dl-${Date.now()}`,
+        folderName: folderTitle,
+        totalFiles: 0,
+        totalFolders: dirItems.length,
+        completedFiles: 0,
+        isScanning: true,
+        isStopping: false,
+        isComplete: false,
+      }
+    }
+
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
           try {
-            // Fast Native Remote Crawler: walks remote SFTP tree in Rust
+            // Fast Native Remote Crawler: walks remote tree in Rust
             const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
               sessionId,
               paths: dirItems.map((d) => d.path),
               targetLocalDir: targetDir,
               ignorePatterns,
             })
+
+            if (activeFolderDownload.value) {
+              activeFolderDownload.value.totalFiles = crawled.length
+              activeFolderDownload.value.isScanning = false
+            }
+
             for (let i = 0; i < crawled.length; i++) {
               if (isCancellingAll.value) break
               const c = crawled[i]
@@ -1307,6 +1363,10 @@ export const useSftpStore = defineStore('sftp', () => {
             }
           } catch (crawlErr) {
             console.error('Native Rust remote crawl error:', crawlErr)
+            if (activeFolderDownload.value) {
+              activeFolderDownload.value.totalFiles = 0
+              activeFolderDownload.value.isScanning = false
+            }
           }
         }
       } catch (scanErr) {
@@ -1330,6 +1390,9 @@ export const useSftpStore = defineStore('sftp', () => {
               preEnqueuedTransferId: task.transferId,
               exactLocalPath: task.targetLocal,
             })
+            if (activeFolderDownload.value) {
+              activeFolderDownload.value.completedFiles++
+            }
           } catch (err) {
             console.error('Download worker error:', err)
           }
@@ -1352,6 +1415,16 @@ export const useSftpStore = defineStore('sftp', () => {
       flushNewTransfersNow()
       activeWorkersNotifiers.delete(notifyWorkers)
       batchConflictOverride.value = null
+      if (activeFolderDownload.value && !activeFolderDownload.value.isStopping && !isCancellingAll.value) {
+        activeFolderDownload.value.isComplete = true
+        setTimeout(() => {
+          if (activeFolderDownload.value?.isComplete) {
+            activeFolderDownload.value = null
+          }
+        }, 3200)
+      } else {
+        activeFolderDownload.value = null
+      }
     }
 
     // Refresh directory ONCE at the end of the batch (FileZilla style)
@@ -1900,6 +1973,9 @@ export const useSftpStore = defineStore('sftp', () => {
     if (activeFolderUpload.value) {
       activeFolderUpload.value = null
     }
+    if (activeFolderDownload.value) {
+      activeFolderDownload.value = null
+    }
     const now = Date.now()
     const cancelledItems: TransferItem[] = []
     for (const t of activeTransfers.value) {
@@ -2334,5 +2410,7 @@ export const useSftpStore = defineStore('sftp', () => {
     triggerTransferToast,
     activeFolderUpload,
     stopActiveFolderUpload,
+    activeFolderDownload,
+    stopActiveFolderDownload,
   }
 })

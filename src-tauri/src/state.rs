@@ -74,6 +74,14 @@ impl AppState {
         }
     }
 
+    pub fn cancel_token(&self) -> Arc<AtomicBool> {
+        self.cancel_all_transfers.clone()
+    }
+
+    pub fn is_cancel_all(&self) -> bool {
+        self.cancel_all_transfers.load(Ordering::SeqCst)
+    }
+
     pub fn is_transfer_cancelled(&self, transfer_id: &str) -> bool {
         // Deletion operations use 'del-' prefix and must never be aborted by global transfer cancel-all
         if !transfer_id.starts_with("del-") && self.cancel_all_transfers.load(Ordering::SeqCst) {

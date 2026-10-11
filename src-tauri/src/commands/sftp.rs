@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use crate::sftp::{
     canonicalize_remote, copy_local_paths, create_local_dir, create_local_file,
     create_remote_file, download_file, get_default_local_path,
@@ -9,7 +9,7 @@ use crate::sftp::{
     set_remote_permissions, upload_file, write_local_file_text, write_remote_file_text,
     compress_local_archive, compress_remote_archive, extract_local_archive, extract_remote_archive,
     ensure_remote_dir_recursive, get_matching_ignore_pattern,
-    FileConflictInfo, GitRepoStatus, LocalCrawlDirectory, LocalCrawlIgnored, LocalCrawlResult,
+    CrawlProgressPayload, FileConflictInfo, GitRepoStatus, LocalCrawlDirectory, LocalCrawlIgnored, LocalCrawlResult,
     LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry,
 };
 use crate::state::AppState;
@@ -843,10 +843,15 @@ pub async fn sftp_compress_local_archive(
 
 #[tauri::command]
 pub async fn sftp_crawl_local_paths(
+    app: AppHandle,
+    state: State<'_, AppState>,
     paths: Vec<String>,
     target_remote_dir: String,
     ignore_patterns: Option<Vec<String>>,
 ) -> Result<LocalCrawlResult, String> {
+    let cancel_token = state.cancel_token();
+    let app_handle = app.clone();
+
     tokio::task::spawn_blocking(move || {
         let mut files = Vec::new();
         let mut directories = Vec::new();
@@ -854,7 +859,24 @@ pub async fn sftp_crawl_local_paths(
         let clean_remote = target_remote_dir.trim().trim_end_matches('/').to_string();
         let patterns = ignore_patterns.unwrap_or_default();
 
+        let mut last_emit = std::time::Instant::now();
+        let mut last_count = 0usize;
+
+        // Emit initial 0 count
+        let _ = app_handle.emit(
+            "sftp:crawl:progress",
+            CrawlProgressPayload {
+                scan_type: "upload".to_string(),
+                files: 0,
+                directories: 0,
+            },
+        );
+
         for p in paths {
+            if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Upload crawl cancelled by user".to_string());
+            }
+
             let (native_path, _) = normalize_to_native_path(&p);
             if !native_path.exists() {
                 continue;
@@ -890,6 +912,20 @@ pub async fn sftp_crawl_local_paths(
                     file_name,
                     size,
                 });
+
+                let total = files.len() + directories.len();
+                if total.saturating_sub(last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                    last_count = total;
+                    last_emit = std::time::Instant::now();
+                    let _ = app_handle.emit(
+                        "sftp:crawl:progress",
+                        CrawlProgressPayload {
+                            scan_type: "upload".to_string(),
+                            files: files.len(),
+                            directories: directories.len(),
+                        },
+                    );
+                }
             } else if native_path.is_dir() {
                 let root_folder_name = native_path
                     .file_name()
@@ -920,7 +956,25 @@ pub async fn sftp_crawl_local_paths(
                     dir_name: root_folder_name,
                 });
 
+                let total = files.len() + directories.len();
+                if total.saturating_sub(last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                    last_count = total;
+                    last_emit = std::time::Instant::now();
+                    let _ = app_handle.emit(
+                        "sftp:crawl:progress",
+                        CrawlProgressPayload {
+                            scan_type: "upload".to_string(),
+                            files: files.len(),
+                            directories: directories.len(),
+                        },
+                    );
+                }
+
                 crawl_local_dir_recursive(
+                    &app_handle,
+                    &cancel_token,
+                    &mut last_emit,
+                    &mut last_count,
                     &native_path,
                     &native_path,
                     &remote_base,
@@ -928,8 +982,22 @@ pub async fn sftp_crawl_local_paths(
                     &mut files,
                     &mut directories,
                     &mut ignored,
-                );
+                )?;
             }
+        }
+
+        // Final progress emit
+        let _ = app_handle.emit(
+            "sftp:crawl:progress",
+            CrawlProgressPayload {
+                scan_type: "upload".to_string(),
+                files: files.len(),
+                directories: directories.len(),
+            },
+        );
+
+        if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Upload crawl cancelled by user".to_string());
         }
 
         Ok(LocalCrawlResult {
@@ -943,6 +1011,10 @@ pub async fn sftp_crawl_local_paths(
 }
 
 fn crawl_local_dir_recursive(
+    app: &AppHandle,
+    cancel_token: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    last_emit: &mut std::time::Instant,
+    last_count: &mut usize,
     root: &std::path::Path,
     current: &std::path::Path,
     remote_base: &str,
@@ -950,16 +1022,24 @@ fn crawl_local_dir_recursive(
     files: &mut Vec<LocalCrawlTask>,
     directories: &mut Vec<LocalCrawlDirectory>,
     ignored: &mut Vec<LocalCrawlIgnored>,
-) {
+) -> Result<(), String> {
+    if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Upload crawl cancelled by user".to_string());
+    }
+
     let read_dir = match std::fs::read_dir(current) {
         Ok(rd) => rd,
         Err(e) => {
             log::warn!("Failed to read directory {:?}: {}", current, e);
-            return;
+            return Ok(());
         }
     };
 
     for entry_res in read_dir {
+        if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Upload crawl cancelled by user".to_string());
+        }
+
         let entry = match entry_res {
             Ok(e) => e,
             Err(_) => continue,
@@ -1000,7 +1080,34 @@ fn crawl_local_dir_recursive(
                 remote_path: remote_item_path,
                 dir_name: file_name,
             });
-            crawl_local_dir_recursive(root, &path, remote_base, patterns, files, directories, ignored);
+
+            let total = files.len() + directories.len();
+            if total.saturating_sub(*last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                *last_count = total;
+                *last_emit = std::time::Instant::now();
+                let _ = app.emit(
+                    "sftp:crawl:progress",
+                    CrawlProgressPayload {
+                        scan_type: "upload".to_string(),
+                        files: files.len(),
+                        directories: directories.len(),
+                    },
+                );
+            }
+
+            crawl_local_dir_recursive(
+                app,
+                cancel_token,
+                last_emit,
+                last_count,
+                root,
+                &path,
+                remote_base,
+                patterns,
+                files,
+                directories,
+                ignored,
+            )?;
         } else if file_type.is_file() || file_type.is_symlink() {
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
@@ -1010,12 +1117,29 @@ fn crawl_local_dir_recursive(
                 file_name,
                 size,
             });
+
+            let total = files.len() + directories.len();
+            if total.saturating_sub(*last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                *last_count = total;
+                *last_emit = std::time::Instant::now();
+                let _ = app.emit(
+                    "sftp:crawl:progress",
+                    CrawlProgressPayload {
+                        scan_type: "upload".to_string(),
+                        files: files.len(),
+                        directories: directories.len(),
+                    },
+                );
+            }
         }
     }
+
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn sftp_crawl_remote_paths(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     paths: Vec<String>,
@@ -1023,8 +1147,10 @@ pub async fn sftp_crawl_remote_paths(
     ignore_patterns: Option<Vec<String>>,
 ) -> Result<Vec<RemoteCrawlTask>, String> {
     let patterns = ignore_patterns.unwrap_or_default();
+    let cancel_token = state.cancel_token();
+
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        return ftp.crawl_remote_paths(paths, target_local_dir, Some(patterns)).await;
+        return ftp.crawl_remote_paths(app, cancel_token, paths, target_local_dir, Some(patterns)).await;
     }
 
     let session = state
@@ -1034,9 +1160,27 @@ pub async fn sftp_crawl_remote_paths(
 
     let sftp = session.get_sftp().await?;
     let mut results = Vec::new();
+    let mut dirs_count = 0usize;
     let clean_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
 
+    let mut last_emit = std::time::Instant::now();
+    let mut last_count = 0usize;
+
+    // Initial 0 emit
+    let _ = app.emit(
+        "sftp:crawl:progress",
+        CrawlProgressPayload {
+            scan_type: "download".to_string(),
+            files: 0,
+            directories: 0,
+        },
+    );
+
     for p in paths {
+        if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Download crawl cancelled by user".to_string());
+        }
+
         let clean_p = p.trim().trim_end_matches('/').to_string();
         if clean_p.is_empty() {
             continue;
@@ -1044,13 +1188,26 @@ pub async fn sftp_crawl_remote_paths(
 
         match sftp.read_dir(&clean_p).await {
             Ok(_) => {
+                dirs_count += 1;
                 let folder_name = clean_p.split('/').last().unwrap_or("folder");
                 let local_base = if clean_local.is_empty() {
                     folder_name.to_string()
                 } else {
                     format!("{}/{}", clean_local, folder_name)
                 };
-                crawl_remote_dir_recursive(&sftp, &clean_p, &clean_p, &local_base, &patterns, &mut results).await?;
+                crawl_remote_dir_recursive(
+                    &app,
+                    &cancel_token,
+                    &mut last_emit,
+                    &mut last_count,
+                    &sftp,
+                    &clean_p,
+                    &clean_p,
+                    &local_base,
+                    &patterns,
+                    &mut results,
+                    &mut dirs_count,
+                ).await?;
             }
             Err(_) => {
                 let file_name = clean_p.split('/').last().unwrap_or("file").to_string();
@@ -1069,22 +1226,59 @@ pub async fn sftp_crawl_remote_paths(
                     file_name,
                     size,
                 });
+
+                let total = results.len() + dirs_count;
+                if total.saturating_sub(last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                    last_count = total;
+                    last_emit = std::time::Instant::now();
+                    let _ = app.emit(
+                        "sftp:crawl:progress",
+                        CrawlProgressPayload {
+                            scan_type: "download".to_string(),
+                            files: results.len(),
+                            directories: dirs_count,
+                        },
+                    );
+                }
             }
         }
+    }
+
+    // Final progress emit
+    let _ = app.emit(
+        "sftp:crawl:progress",
+        CrawlProgressPayload {
+            scan_type: "download".to_string(),
+            files: results.len(),
+            directories: dirs_count,
+        },
+    );
+
+    if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Download crawl cancelled by user".to_string());
     }
 
     Ok(results)
 }
 
 fn crawl_remote_dir_recursive<'a>(
+    app: &'a AppHandle,
+    cancel_token: &'a std::sync::Arc<std::sync::atomic::AtomicBool>,
+    last_emit: &'a mut std::time::Instant,
+    last_count: &'a mut usize,
     sftp: &'a russh_sftp::client::SftpSession,
     root: &'a str,
     current: &'a str,
     local_base: &'a str,
     patterns: &'a [String],
     results: &'a mut Vec<RemoteCrawlTask>,
+    dirs_count: &'a mut usize,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
+        if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Download crawl cancelled by user".to_string());
+        }
+
         let entries = match sftp.read_dir(current).await {
             Ok(e) => e,
             Err(err) => {
@@ -1094,6 +1288,10 @@ fn crawl_remote_dir_recursive<'a>(
         };
 
         for entry in entries {
+            if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Download crawl cancelled by user".to_string());
+            }
+
             let name = entry.file_name();
             if name == "." || name == ".." {
                 continue;
@@ -1116,7 +1314,34 @@ fn crawl_remote_dir_recursive<'a>(
 
             let file_type = entry.file_type();
             if file_type.is_dir() {
-                crawl_remote_dir_recursive(sftp, root, &child_remote, local_base, patterns, results).await?;
+                *dirs_count += 1;
+                let total = results.len() + *dirs_count;
+                if total.saturating_sub(*last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                    *last_count = total;
+                    *last_emit = std::time::Instant::now();
+                    let _ = app.emit(
+                        "sftp:crawl:progress",
+                        CrawlProgressPayload {
+                            scan_type: "download".to_string(),
+                            files: results.len(),
+                            directories: *dirs_count,
+                        },
+                    );
+                }
+
+                crawl_remote_dir_recursive(
+                    app,
+                    cancel_token,
+                    last_emit,
+                    last_count,
+                    sftp,
+                    root,
+                    &child_remote,
+                    local_base,
+                    patterns,
+                    results,
+                    dirs_count,
+                ).await?;
             } else {
                 let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
                 let size = entry.metadata().size.unwrap_or(0);
@@ -1127,6 +1352,20 @@ fn crawl_remote_dir_recursive<'a>(
                     file_name: name,
                     size,
                 });
+
+                let total = results.len() + *dirs_count;
+                if total.saturating_sub(*last_count) >= 20 || last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                    *last_count = total;
+                    *last_emit = std::time::Instant::now();
+                    let _ = app.emit(
+                        "sftp:crawl:progress",
+                        CrawlProgressPayload {
+                            scan_type: "download".to_string(),
+                            files: results.len(),
+                            directories: *dirs_count,
+                        },
+                    );
+                }
             }
         }
 

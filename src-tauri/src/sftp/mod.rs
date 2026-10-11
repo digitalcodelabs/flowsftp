@@ -98,6 +98,13 @@ pub struct RemoteCrawlTask {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlProgressPayload {
+    pub scan_type: String,
+    pub files: usize,
+    pub directories: usize,
+}
+
 pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns: &[String]) -> Option<String> {
     if patterns.is_empty() {
         return None;

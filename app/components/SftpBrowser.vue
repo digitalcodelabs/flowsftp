@@ -209,11 +209,38 @@ const showArchiveToast = (message: string, isError = false, isLoading = false, d
   }, effectiveDuration)
 }
 
+const dismissTransferToasts = () => {
+  if (archiveToast.value && !archiveToast.value.isError) {
+    if (archiveToastTimer) {
+      clearTimeout(archiveToastTimer)
+      archiveToastTimer = null
+    }
+    archiveToast.value = null
+  }
+  if (sftpStore.transferToast) {
+    sftpStore.transferToast = null
+  }
+}
+
 watch(
   () => sftpStore.transferToast,
   (t) => {
     if (t) {
       showArchiveToast(t.message, t.isError ?? false, false, 4500)
+    }
+  }
+)
+
+// When upload or download starts, automatically dismiss small notification toasts
+watch(
+  [
+    () => sftpStore.activeFolderUpload,
+    () => sftpStore.activeFolderDownload,
+    () => sftpStore.activeTransfers.length,
+  ],
+  ([ul, dl, count]) => {
+    if (ul || dl || count > 0) {
+      dismissTransferToasts()
     }
   }
 )
@@ -226,6 +253,19 @@ const folderUploadBottomOffset = computed(() => {
   if (!showTransferDrawer.value) return '36px'
   const h = transferQueueRef.value?.drawerHeight ?? 180
   return `${h + 14}px`
+})
+
+const activeDeletionBottomOffset = computed(() => {
+  return folderUploadBottomOffset.value
+})
+
+const folderDownloadBottomOffset = computed(() => {
+  const base = folderUploadBottomOffset.value
+  if (activeDeletion.value) {
+    const basePx = parseInt(base) || 194
+    return `${basePx + 56}px`
+  }
+  return base
 })
 
 // File Editor State
@@ -1627,6 +1667,7 @@ const handleBatchUpload = async (files?: LocalFileEntry[], destinationDir?: stri
   const targetFiles = (Array.isArray(files) && files.length > 0) ? files : selectedLocalFiles.value
   if (!props.sessionId || targetFiles.length === 0) return
   closeContextMenu()
+  dismissTransferToasts()
   showTransferDrawer.value = true
   transferTab.value = 'active'
   try {
@@ -1640,6 +1681,7 @@ const handleBatchDownload = async (files?: SftpFileEntry[], destinationDir?: str
   const targetFiles = (Array.isArray(files) && files.length > 0) ? files : selectedRemoteFiles.value
   if (!props.sessionId || targetFiles.length === 0) return
   closeContextMenu()
+  dismissTransferToasts()
   showTransferDrawer.value = true
   transferTab.value = 'active'
   try {
@@ -2312,8 +2354,9 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     >
       <div
         v-if="activeDeletion"
-        class="fixed bottom-6 right-6 z-[80] flex items-center space-x-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-xl max-w-md select-none transition-all duration-200 pointer-events-auto"
+        class="fixed right-6 z-[80] flex items-center space-x-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-xl max-w-md select-none transition-all duration-200 pointer-events-auto"
         :style="{
+          bottom: activeDeletionBottomOffset,
           backgroundColor: 'var(--color-bg-card)',
           borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 45%, var(--color-border))',
           color: 'var(--color-text-main)',
@@ -2453,18 +2496,16 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
           </div>
 
           <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
-            <span v-if="sftpStore.activeFolderUpload.isScanning" class="italic">
-              Analyzing files &amp; subfolders...
+            <span class="font-mono font-medium">
+              {{ sftpStore.activeFolderUpload.totalFiles.toLocaleString() }} file{{ sftpStore.activeFolderUpload.totalFiles === 1 ? '' : 's' }},
+              {{ sftpStore.activeFolderUpload.totalFolders.toLocaleString() }} folder{{ sftpStore.activeFolderUpload.totalFolders === 1 ? '' : 's' }}
             </span>
-            <template v-else>
-              <span class="font-mono font-medium">
-                {{ sftpStore.activeFolderUpload.totalFiles.toLocaleString() }} file{{ sftpStore.activeFolderUpload.totalFiles === 1 ? '' : 's' }},
-                {{ sftpStore.activeFolderUpload.totalFolders.toLocaleString() }} folder{{ sftpStore.activeFolderUpload.totalFolders === 1 ? '' : 's' }}
-              </span>
-              <span v-if="sftpStore.activeFolderUpload.totalFiles > 0 && !sftpStore.activeFolderUpload.isComplete" class="opacity-80">
-                • {{ sftpStore.activeFolderUpload.completedFiles }}/{{ sftpStore.activeFolderUpload.totalFiles }} uploaded
-              </span>
-            </template>
+            <span v-if="sftpStore.activeFolderUpload.isScanning" class="italic opacity-85 font-medium animate-pulse text-amber-500/90 dark:text-amber-400/90">
+              (Counting...)
+            </span>
+            <span v-else-if="sftpStore.activeFolderUpload.totalFiles > 0 && !sftpStore.activeFolderUpload.isComplete" class="opacity-80">
+              • {{ sftpStore.activeFolderUpload.completedFiles }}/{{ sftpStore.activeFolderUpload.totalFiles }} uploaded
+            </span>
           </div>
         </div>
 
@@ -2489,6 +2530,133 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
           <button
             type="button"
             @click="sftpStore.activeFolderUpload = null"
+            class="shrink-0 p-1 rounded-lg transition hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer ml-1"
+            :style="{ color: 'var(--color-text-muted)' }"
+            title="Dismiss"
+          >
+            <X class="w-3.5 h-3.5" />
+          </button>
+        </template>
+      </div>
+    </transition>
+
+    <!-- Floating Active Folder Download Progress Card with Live Stop Action (Right Bottom Corner) -->
+    <transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="transform translate-y-4 opacity-0 scale-95"
+      enter-to-class="transform translate-y-0 opacity-100 scale-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="transform translate-y-0 opacity-100 scale-100"
+      leave-to-class="transform translate-y-4 opacity-0 scale-95"
+    >
+      <div
+        v-if="sftpStore.activeFolderDownload"
+        class="fixed right-6 z-[80] flex items-center space-x-3 px-4 py-2.5 rounded-2xl border shadow-2xl backdrop-blur-xl max-w-lg select-none transition-all duration-200 pointer-events-auto"
+        :style="{
+          bottom: folderDownloadBottomOffset,
+          backgroundColor: 'var(--color-bg-card)',
+          borderColor: sftpStore.activeFolderDownload.isComplete
+            ? 'color-mix(in srgb, #16a34a 50%, var(--color-border))'
+            : (sftpStore.activeFolderDownload.isStopping
+                ? 'color-mix(in srgb, #ef4444 50%, var(--color-border))'
+                : 'color-mix(in srgb, #06b6d4 45%, var(--color-border))'),
+          color: 'var(--color-text-main)',
+          boxShadow: '0 10px 32px rgba(0, 0, 0, 0.28), 0 0 16px ' + (
+            sftpStore.activeFolderDownload.isComplete
+              ? 'color-mix(in srgb, #16a34a 20%, transparent)'
+              : (sftpStore.activeFolderDownload.isStopping
+                  ? 'color-mix(in srgb, #ef4444 20%, transparent)'
+                  : 'color-mix(in srgb, #06b6d4 20%, transparent)')
+          )
+        }"
+      >
+        <div
+          class="relative shrink-0 flex items-center justify-center w-8 h-8 rounded-xl border"
+          :style="{
+            backgroundColor: sftpStore.activeFolderDownload.isComplete
+              ? 'color-mix(in srgb, #16a34a 16%, transparent)'
+              : (sftpStore.activeFolderDownload.isStopping
+                  ? 'color-mix(in srgb, #ef4444 16%, transparent)'
+                  : 'color-mix(in srgb, #06b6d4 16%, transparent)'),
+            borderColor: sftpStore.activeFolderDownload.isComplete
+              ? 'color-mix(in srgb, #16a34a 35%, transparent)'
+              : (sftpStore.activeFolderDownload.isStopping
+                  ? 'color-mix(in srgb, #ef4444 35%, transparent)'
+                  : 'color-mix(in srgb, #06b6d4 35%, transparent)'),
+            color: sftpStore.activeFolderDownload.isComplete
+              ? '#16a34a'
+              : (sftpStore.activeFolderDownload.isStopping ? '#ef4444' : '#06b6d4')
+          }"
+        >
+          <CheckCircle2 v-if="sftpStore.activeFolderDownload.isComplete" class="w-4 h-4 text-emerald-500" />
+          <span
+            v-else-if="sftpStore.activeFolderDownload.isScanning || sftpStore.activeFolderDownload.isStopping"
+            class="animate-spin w-4 h-4 border-2 rounded-full"
+            :style="{
+              borderColor: 'color-mix(in srgb, currentColor 30%, transparent)',
+              borderTopColor: 'currentColor'
+            }"
+          />
+          <Download v-else class="w-4 h-4 animate-bounce text-cyan-400" />
+        </div>
+
+        <div class="flex flex-col min-w-0 pr-1">
+          <div class="flex items-center space-x-1.5 text-xs font-semibold truncate">
+            <span
+              :style="{
+                color: sftpStore.activeFolderDownload.isComplete
+                  ? '#16a34a'
+                  : (sftpStore.activeFolderDownload.isStopping ? '#ef4444' : '#06b6d4')
+              }"
+            >
+              {{
+                sftpStore.activeFolderDownload.isComplete
+                  ? 'Folder download complete'
+                  : (sftpStore.activeFolderDownload.isStopping
+                      ? 'Stopping download...'
+                      : (sftpStore.activeFolderDownload.isScanning ? 'Scanning remote folder...' : 'Downloading folder'))
+              }}
+            </span>
+            <span class="font-mono truncate max-w-[200px]" :style="{ color: 'var(--color-text-main)' }" :title="sftpStore.activeFolderDownload.folderName">
+              "{{ sftpStore.activeFolderDownload.folderName }}"
+            </span>
+          </div>
+
+          <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
+            <span class="font-mono font-medium">
+              {{ sftpStore.activeFolderDownload.totalFiles.toLocaleString() }} file{{ sftpStore.activeFolderDownload.totalFiles === 1 ? '' : 's' }},
+              {{ sftpStore.activeFolderDownload.totalFolders.toLocaleString() }} folder{{ sftpStore.activeFolderDownload.totalFolders === 1 ? '' : 's' }}
+            </span>
+            <span v-if="sftpStore.activeFolderDownload.isScanning" class="italic opacity-85 font-medium animate-pulse text-amber-500/90 dark:text-amber-400/90">
+              (Counting...)
+            </span>
+            <span v-else-if="sftpStore.activeFolderDownload.totalFiles > 0 && !sftpStore.activeFolderDownload.isComplete" class="opacity-80">
+              • {{ sftpStore.activeFolderDownload.completedFiles }}/{{ sftpStore.activeFolderDownload.totalFiles }} downloaded
+            </span>
+          </div>
+        </div>
+
+        <template v-if="!sftpStore.activeFolderDownload.isComplete">
+          <button
+            type="button"
+            @click="sftpStore.stopActiveFolderDownload"
+            :disabled="sftpStore.activeFolderDownload.isStopping"
+            class="shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold border transition disabled:opacity-50 flex items-center space-x-1.5 cursor-pointer ml-1"
+            :style="{
+              backgroundColor: 'color-mix(in srgb, #dc2626 18%, var(--color-bg-card))',
+              borderColor: 'color-mix(in srgb, #dc2626 45%, var(--color-border))',
+              color: '#ef4444'
+            }"
+            title="Stop folder download"
+          >
+            <Square class="w-3.5 h-3.5 fill-current" />
+            <span>{{ sftpStore.activeFolderDownload.isStopping ? 'Stopping...' : 'Stop download' }}</span>
+          </button>
+        </template>
+        <template v-else>
+          <button
+            type="button"
+            @click="sftpStore.activeFolderDownload = null"
             class="shrink-0 p-1 rounded-lg transition hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer ml-1"
             :style="{ color: 'var(--color-text-muted)' }"
             title="Dismiss"

@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use std::time::Instant;
 use suppaftp::{FtpStream, RustlsConnector, RustlsFtpStream};
 use tauri::{AppHandle, Emitter, Manager};
@@ -248,7 +248,7 @@ macro_rules! ensure_ftp_dir_recursive {
 }
 
 macro_rules! crawl_ftp_single_path {
-    ($stream:expr, $clean_p:expr, $target_local:expr, $patterns:expr, $results:expr) => {{
+    ($stream:expr, $clean_p:expr, $target_local:expr, $patterns:expr, $results:expr, $dirs_count:expr, $app:expr, $cancel_token:expr, $last_emit:expr, $last_count:expr) => {{
         let stream = $stream;
         let p_str = $clean_p;
         let patterns = $patterns;
@@ -262,7 +262,11 @@ macro_rules! crawl_ftp_single_path {
             };
 
             let mut dirs_to_visit = vec![p_str.to_string()];
+            $dirs_count += 1;
             while let Some(dir) = dirs_to_visit.pop() {
+                if $cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
                 if stream.cwd(&dir).is_err() {
                     continue;
                 }
@@ -273,6 +277,9 @@ macro_rules! crawl_ftp_single_path {
                 };
 
                 for line in lines {
+                    if $cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
                     if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
                         if entry.name == "." || entry.name == ".." {
                             continue;
@@ -281,6 +288,7 @@ macro_rules! crawl_ftp_single_path {
                             continue;
                         }
                         if entry.is_dir {
+                            $dirs_count += 1;
                             dirs_to_visit.push(entry.path);
                         } else {
                             let rel = entry.path
@@ -294,6 +302,20 @@ macro_rules! crawl_ftp_single_path {
                                 file_name: entry.name,
                                 size: entry.size,
                             });
+                        }
+
+                        let total = $results.len() + $dirs_count;
+                        if total.saturating_sub($last_count) >= 20 || $last_emit.elapsed() >= std::time::Duration::from_millis(35) {
+                            $last_count = total;
+                            $last_emit = std::time::Instant::now();
+                            let _ = $app.emit(
+                                "sftp:crawl:progress",
+                                crate::sftp::CrawlProgressPayload {
+                                    scan_type: "download".to_string(),
+                                    files: $results.len(),
+                                    directories: $dirs_count,
+                                },
+                            );
                         }
                     }
                 }
@@ -864,6 +886,8 @@ impl ActiveFtpSession {
 
     pub async fn crawl_remote_paths(
         &self,
+        app: AppHandle,
+        cancel_token: Arc<AtomicBool>,
         paths: Vec<String>,
         target_local_dir: String,
         ignore_patterns: Option<Vec<String>>,
@@ -875,6 +899,19 @@ impl ActiveFtpSession {
         tokio::task::spawn_blocking(move || -> Result<Vec<RemoteCrawlTask>, String> {
             let mut guard = client_arc.blocking_lock();
             let mut results = Vec::new();
+            let mut dirs_count = 0usize;
+            let mut last_emit = std::time::Instant::now();
+            let mut last_count = 0usize;
+
+            // Emit initial 0 count
+            let _ = app.emit(
+                "sftp:crawl:progress",
+                crate::sftp::CrawlProgressPayload {
+                    scan_type: "download".to_string(),
+                    files: 0,
+                    directories: 0,
+                },
+            );
 
             let initial_pwd = match &mut *guard {
                 FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
@@ -882,6 +919,9 @@ impl ActiveFtpSession {
             };
 
             for p in paths {
+                if cancel_token.load(Ordering::SeqCst) {
+                    break;
+                }
                 let clean_p = p.trim().trim_end_matches('/').to_string();
                 if clean_p.is_empty() {
                     continue;
@@ -889,10 +929,10 @@ impl ActiveFtpSession {
 
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
-                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results);
+                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results, dirs_count, app, cancel_token, last_emit, last_count);
                     }
                     FtpClientStream::Secure(s) => {
-                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results);
+                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results, dirs_count, app, cancel_token, last_emit, last_count);
                     }
                 }
             }
@@ -901,6 +941,20 @@ impl ActiveFtpSession {
             match &mut *guard {
                 FtpClientStream::Plain(s) => { let _ = s.cwd(&initial_pwd); }
                 FtpClientStream::Secure(s) => { let _ = s.cwd(&initial_pwd); }
+            }
+
+            // Emit final progress
+            let _ = app.emit(
+                "sftp:crawl:progress",
+                crate::sftp::CrawlProgressPayload {
+                    scan_type: "download".to_string(),
+                    files: results.len(),
+                    directories: dirs_count,
+                },
+            );
+
+            if cancel_token.load(Ordering::SeqCst) {
+                return Err("Download crawl cancelled by user".to_string());
             }
 
             Ok(results)
