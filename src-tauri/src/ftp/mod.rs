@@ -248,65 +248,73 @@ macro_rules! ensure_ftp_dir_recursive {
 }
 
 macro_rules! crawl_ftp_single_path {
-    ($stream:expr, $clean_p:expr, $target_local:expr, $results:expr) => {{
+    ($stream:expr, $clean_p:expr, $target_local:expr, $patterns:expr, $results:expr) => {{
         let stream = $stream;
         let p_str = $clean_p;
-        if stream.cwd(p_str).is_ok() {
-            let folder_name = p_str.split('/').last().unwrap_or("folder");
-            let local_base = if $target_local.is_empty() {
-                folder_name.to_string()
-            } else {
-                format!("{}/{}", $target_local, folder_name)
-            };
+        let patterns = $patterns;
+        let file_name = p_str.split('/').last().unwrap_or("item").to_string();
 
-            let mut dirs_to_visit = vec![p_str.to_string()];
-            while let Some(dir) = dirs_to_visit.pop() {
-                if stream.cwd(&dir).is_err() {
-                    continue;
-                }
-                let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
-                let lines = match stream.list(None) {
-                    Ok(l) => l,
-                    Err(_) => continue,
+        if !crate::sftp::is_path_ignored(&file_name, p_str, patterns) {
+            if stream.cwd(p_str).is_ok() {
+                let folder_name = p_str.split('/').last().unwrap_or("folder");
+                let local_base = if $target_local.is_empty() {
+                    folder_name.to_string()
+                } else {
+                    format!("{}/{}", $target_local, folder_name)
                 };
 
-                for line in lines {
-                    if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
-                        if entry.name == "." || entry.name == ".." {
-                            continue;
-                        }
-                        if entry.is_dir {
-                            dirs_to_visit.push(entry.path);
-                        } else {
-                            let rel = entry.path
-                                .strip_prefix(p_str)
-                                .unwrap_or(&entry.path)
-                                .trim_start_matches('/');
-                            let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
-                            $results.push(RemoteCrawlTask {
-                                remote_path: entry.path,
-                                local_path,
-                                file_name: entry.name,
-                                size: entry.size,
-                            });
+                let mut dirs_to_visit = vec![p_str.to_string()];
+                while let Some(dir) = dirs_to_visit.pop() {
+                    if stream.cwd(&dir).is_err() {
+                        continue;
+                    }
+                    let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
+                    let lines = match stream.list(None) {
+                        Ok(l) => l,
+                        Err(_) => continue,
+                    };
+
+                    for line in lines {
+                        if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                            if entry.name == "." || entry.name == ".." {
+                                continue;
+                            }
+                            if crate::sftp::is_path_ignored(&entry.name, &entry.path, patterns) {
+                                continue;
+                            }
+                            if entry.is_dir {
+                                dirs_to_visit.push(entry.path);
+                            } else {
+                                let rel = entry.path
+                                    .strip_prefix(p_str)
+                                    .unwrap_or(&entry.path)
+                                    .trim_start_matches('/');
+                                let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
+                                $results.push(RemoteCrawlTask {
+                                    remote_path: entry.path,
+                                    local_path,
+                                    file_name: entry.name,
+                                    size: entry.size,
+                                });
+                            }
                         }
                     }
                 }
-            }
-        } else {
-            let file_name = p_str.split('/').last().unwrap_or("file").to_string();
-            let size = stream.size(p_str).unwrap_or(0) as u64;
-            let local_path = if $target_local.is_empty() {
-                file_name.clone()
             } else {
-                format!("{}/{}", $target_local, file_name)
-            };
-            $results.push(RemoteCrawlTask {
-                remote_path: p_str.to_string(),
-                local_path,
-                file_name,
-                size,
-            });
+                let file_name = p_str.split('/').last().unwrap_or("file").to_string();
+                let size = stream.size(p_str).unwrap_or(0) as u64;
+                let local_path = if $target_local.is_empty() {
+                    file_name.clone()
+                } else {
+                    format!("{}/{}", $target_local, file_name)
+                };
+                $results.push(RemoteCrawlTask {
+                    remote_path: p_str.to_string(),
+                    local_path,
+                    file_name,
+                    size,
+                });
+            }
         }
     }};
 }
@@ -859,9 +867,11 @@ impl ActiveFtpSession {
         &self,
         paths: Vec<String>,
         target_local_dir: String,
+        ignore_patterns: Option<Vec<String>>,
     ) -> Result<Vec<RemoteCrawlTask>, String> {
         let client_arc = self.client.clone();
         let target_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
+        let patterns = ignore_patterns.unwrap_or_default();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RemoteCrawlTask>, String> {
             let mut guard = client_arc.blocking_lock();
@@ -880,10 +890,10 @@ impl ActiveFtpSession {
 
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
-                        crawl_ftp_single_path!(s, &clean_p, &target_local, &mut results);
+                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results);
                     }
                     FtpClientStream::Secure(s) => {
-                        crawl_ftp_single_path!(s, &clean_p, &target_local, &mut results);
+                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results);
                     }
                 }
             }

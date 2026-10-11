@@ -47,50 +47,26 @@ pub use super::now_epoch_secs;
 
 pub fn should_ignore_file(rel_path: &Path, ignore_patterns: &[String]) -> bool {
     let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-    let parts: Vec<&str> = rel_str.split('/').collect();
+    let file_name = rel_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
 
-    // Check default ignored files and folders
-    for part in &parts {
-        if *part == ".git"
-            || *part == "node_modules"
-            || *part == ".vscode"
-            || *part == ".idea"
-            || *part == ".DS_Store"
-            || *part == "Thumbs.db"
-            || *part == ".flowsftp"
-            || part.ends_with('~')
-            || part.ends_with(".swp")
-            || part.ends_with(".tmp")
-            || part.starts_with(".#")
-            || part.starts_with(".goutputstream-")
-        {
-            return true;
-        }
+    // 1. Check user-configured patterns
+    if crate::sftp::is_path_ignored(&file_name, &rel_str, ignore_patterns) {
+        return true;
     }
 
-    // Check user-configured ignore patterns
-    for pat in ignore_patterns {
-        let clean_pat = pat.trim().trim_start_matches('/');
-        if clean_pat.is_empty() {
-            continue;
-        }
-        if rel_str == clean_pat
-            || rel_str.starts_with(&format!("{}/", clean_pat))
-            || rel_str.contains(&format!("/{}/", clean_pat))
-            || rel_str.ends_with(&format!("/{}", clean_pat))
-            || parts.iter().any(|p| *p == clean_pat)
-        {
-            return true;
-        }
-        if clean_pat.starts_with("*.") {
-            let ext = &clean_pat[1..];
-            if rel_str.ends_with(ext) {
-                return true;
-            }
-        }
-    }
+    // 2. Default ignored build directories, caches, and temp files
+    const DEFAULT_IGNORED: &[&str] = &[
+        ".git", "node_modules", ".vscode", ".idea", "dist", "build",
+        ".next", ".nuxt", "target", ".cache", ".turbo", "vendor",
+        "__pycache__", ".DS_Store", "Thumbs.db", ".flowsftp",
+        "*.swp", "*.tmp", "*.log", "*~", ".#*", ".goutputstream-*",
+    ];
 
-    false
+    let default_pats: Vec<String> = DEFAULT_IGNORED.iter().map(|&s| s.to_string()).collect();
+    crate::sftp::is_path_ignored(&file_name, &rel_str, &default_pats)
 }
 
 pub fn start_directory_watcher(

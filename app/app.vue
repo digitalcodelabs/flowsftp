@@ -46,6 +46,16 @@ const showSettingsModal = ref(false)
 const settingsInitialTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>('keymap')
 const tabsContainerRef = ref<HTMLDivElement | null>(null)
 
+watch(
+  () => settingsStore.isSettingsModalOpen,
+  (isOpen) => {
+    if (isOpen) {
+      settingsInitialTab.value = settingsStore.settingsModalTab as any
+      showSettingsModal.value = true
+    }
+  }
+)
+
 // Terminal status
 const terminalDimensions = ref({ cols: 80, rows: 24 })
 
@@ -669,7 +679,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
     <SettingsModal
       v-if="showSettingsModal"
       :initial-tab="settingsInitialTab"
-      @close="showSettingsModal = false"
+      @close="showSettingsModal = false; settingsStore.closeSettings()"
     />
 
     <!-- Master Password Modal (Global Prompt) -->

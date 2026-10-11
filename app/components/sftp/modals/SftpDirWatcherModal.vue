@@ -15,6 +15,7 @@ import {
   Plus,
 } from 'lucide-vue-next'
 import { useDirWatcherStore, type DirWatcherPairing } from '../../../stores/dirWatcher'
+import { useSettingsStore } from '../../../stores/settings'
 import { useModalEscape } from '../composables/useModalEscape'
 
 const props = defineProps<{
@@ -30,10 +31,11 @@ const emit = defineEmits<{
 }>()
 
 const dirWatcherStore = useDirWatcherStore()
+const settingsStore = useSettingsStore()
 
 const localDirInput = ref('')
 const remoteDirInput = ref('')
-const ignorePatternsInput = ref('.git, node_modules, .vscode, .idea, dist, build, target, *.log')
+const ignorePatternsInput = ref(settingsStore.transferIgnorePatterns.join(', '))
 const isStarting = ref(false)
 const errorMessage = ref<string | null>(null)
 
@@ -46,6 +48,7 @@ watch(
       localDirInput.value = local || ''
       remoteDirInput.value = remote || ''
       errorMessage.value = null
+      ignorePatternsInput.value = settingsStore.transferIgnorePatterns.join(', ')
       if (props.sessionId) {
         dirWatcherStore.loadPairings(props.sessionId)
       }

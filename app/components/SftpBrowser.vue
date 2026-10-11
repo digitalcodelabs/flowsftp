@@ -68,6 +68,16 @@ const externalEditStore = useExternalEditStore()
 const dirWatcherStore = useDirWatcherStore()
 const showSettingsModal = ref(false)
 const settingsInitialTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>('keymap')
+
+watch(
+  () => settingsStore.isSettingsModalOpen,
+  (isOpen) => {
+    if (isOpen) {
+      settingsInitialTab.value = settingsStore.settingsModalTab as any
+      showSettingsModal.value = true
+    }
+  }
+)
 const showDirWatcherModal = ref(false)
 const dirWatcherLocalDir = ref('')
 const dirWatcherRemoteDir = ref('')
@@ -2627,7 +2637,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
   <SettingsModal
     :show="showSettingsModal"
     :initial-tab="settingsInitialTab"
-    @close="showSettingsModal = false"
+    @close="showSettingsModal = false; settingsStore.closeSettings()"
   />
 
   <!-- Live Directory Watcher Modal -->

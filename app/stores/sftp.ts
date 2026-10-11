@@ -3,6 +3,7 @@ import { ref, shallowRef, triggerRef, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useSshStore } from './ssh'
+import { useSettingsStore } from './settings'
 
 export interface SftpFileEntry {
   name: string
@@ -1197,9 +1198,16 @@ export const useSftpStore = defineStore('sftp', () => {
       notifyWorkers()
     }
 
-    // 1. Immediately enqueue only root-level regular files (0ms latency, directories are never queued as dummy files)
+    const settingsStore = useSettingsStore()
+    const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
+    const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
+
+    // 1. Immediately enqueue only root-level regular files (skipping ignored files if enabled)
     for (const f of files) {
       if (!f.is_dir) {
+        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
+          continue
+        }
         const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
         const targetLocal = `${cleanLocalDir}/${f.name}`
         const transferId = `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
@@ -1208,7 +1216,13 @@ export const useSftpStore = defineStore('sftp', () => {
     }
 
     // 2. Start crawler for directory items concurrently
-    const dirItems = files.filter((f) => f.is_dir)
+    const dirItems = files.filter((f) => {
+      if (!f.is_dir) return false
+      if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
+        return false
+      }
+      return true
+    })
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
@@ -1218,6 +1232,7 @@ export const useSftpStore = defineStore('sftp', () => {
               sessionId,
               paths: dirItems.map((d) => d.path),
               targetLocalDir: targetDir,
+              ignorePatterns,
             })
             for (let i = 0; i < crawled.length; i++) {
               if (isCancellingAll.value) break
@@ -1490,9 +1505,16 @@ export const useSftpStore = defineStore('sftp', () => {
       notifyWorkers()
     }
 
-    // 1. Immediately enqueue only root-level regular files (0ms latency, directories are never queued as dummy files)
+    const settingsStore = useSettingsStore()
+    const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
+    const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
+
+    // 1. Immediately enqueue only root-level regular files (skipping ignored files if enabled)
     for (const f of files) {
       if (!f.is_dir) {
+        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
+          continue
+        }
         const cleanRemoteDir = targetDir.replace(/\/+$/, '')
         const targetRemote = cleanRemoteDir === '' ? f.name : `${cleanRemoteDir}/${f.name}`
         const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
@@ -1501,7 +1523,13 @@ export const useSftpStore = defineStore('sftp', () => {
     }
 
     // 2. Start crawler for directory items concurrently
-    const dirItems = files.filter((f) => f.is_dir)
+    const dirItems = files.filter((f) => {
+      if (!f.is_dir) return false
+      if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name, f.path)) {
+        return false
+      }
+      return true
+    })
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
@@ -1510,6 +1538,7 @@ export const useSftpStore = defineStore('sftp', () => {
             const crawled = await invoke<LocalCrawlTask[]>('sftp_crawl_local_paths', {
               paths: dirItems.map((d) => d.path),
               targetRemoteDir: targetDir,
+              ignorePatterns,
             })
             for (let i = 0; i < crawled.length; i++) {
               if (isCancellingAll.value) break

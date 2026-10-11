@@ -13,6 +13,9 @@ import {
   Type,
   Terminal,
   FolderSync,
+  Folder,
+  Filter,
+  Plus,
   RotateCcw,
   Keyboard,
   Layers,
@@ -86,6 +89,54 @@ watch(
     }
   }
 )
+
+watch(
+  () => settingsStore.settingsModalTab,
+  (newTab) => {
+    if (newTab) {
+      activeTab.value = newTab
+    }
+  }
+)
+
+// Ignore Filter state & presets
+const newIgnorePatternInput = ref('')
+const ignorePatternError = ref<string | null>(null)
+
+const handleAddIgnorePattern = () => {
+  const val = newIgnorePatternInput.value.trim()
+  if (!val) return
+  ignorePatternError.value = null
+  const added = settingsStore.addIgnorePattern(val)
+  if (added) {
+    newIgnorePatternInput.value = ''
+  } else {
+    ignorePatternError.value = `Pattern "${val}" is already in the list.`
+    setTimeout(() => {
+      ignorePatternError.value = null
+    }, 3000)
+  }
+}
+
+const COMMON_IGNORE_PRESETS = [
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  'target',
+  'vendor',
+  '__pycache__',
+  '.venv',
+  '.turbo',
+  '.cache',
+  'coverage',
+  '*.log',
+  '*.tmp',
+  '*.bak',
+  '*.swp',
+]
 
 // Theme Import / Export state
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -1634,6 +1685,272 @@ const browserOtherFonts = computed(() => {
                   </template>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. TRANSFERS & INTELLIGENT IGNORE FILTER TAB -->
+        <div v-if="activeTab === 'transfers'" class="space-y-5">
+          <!-- Top Card: Transfer Queue & Concurrency Controls -->
+          <div
+            class="rounded-xl border p-4 space-y-4 transition-colors"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div class="flex items-center space-x-2">
+              <div
+                class="w-6 h-6 rounded-lg border flex items-center justify-center"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+              >
+                <Zap class="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Queue Concurrency &amp; Conflict Policy</h4>
+                <p class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">Manage parallel connections, transfer throughput, and collision behavior.</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+              <!-- Concurrency Slider -->
+              <div
+                class="p-3 rounded-lg border space-y-2"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+              >
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium" :style="{ color: 'var(--color-text-main)' }">Simultaneous Transfers</span>
+                  <span
+                    class="px-2 py-0.5 rounded text-xs font-mono font-bold border"
+                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                  >
+                    {{ sftpStore.maxSimultaneousTransfers }} connection{{ sftpStore.maxSimultaneousTransfers > 1 ? 's' : '' }}
+                  </span>
+                </div>
+                <input
+                  v-model.number="sftpStore.maxSimultaneousTransfers"
+                  type="range"
+                  min="1"
+                  max="10"
+                  step="1"
+                  class="w-full accent-[var(--color-accent)] cursor-pointer"
+                />
+                <div class="flex justify-between text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
+                  <span>1 (Sequential)</span>
+                  <span>5 (Balanced)</span>
+                  <span>10 (High Bandwidth)</span>
+                </div>
+              </div>
+
+              <!-- Conflict Resolution Policy -->
+              <div
+                class="p-3 rounded-lg border space-y-2"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+              >
+                <span class="text-xs font-medium block" :style="{ color: 'var(--color-text-main)' }">Default File Conflict Action</span>
+                <select
+                  v-model="sftpStore.conflictPolicy"
+                  class="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none input-theme font-medium cursor-pointer"
+                  :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                >
+                  <option value="ask">Ask / Prompt Dialog (Compare size &amp; date)</option>
+                  <option value="overwrite">Overwrite Destination File</option>
+                  <option value="skip">Skip Transfer (Leave destination untouched)</option>
+                </select>
+                <p class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
+                  Triggered when an uploading or downloading file already exists at the destination.
+                </p>
+              </div>
+            </div>
+
+            <!-- Auto-remove completed toggle -->
+            <div
+              class="flex items-center justify-between pt-2 border-t"
+              :style="{ borderColor: 'var(--color-border)' }"
+            >
+              <div>
+                <span class="text-xs font-medium block" :style="{ color: 'var(--color-text-main)' }">Auto-remove Successful Transfers from Queue</span>
+                <span class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">Clean up completed items automatically from the transfer queue drawer.</span>
+              </div>
+              <button
+                type="button"
+                @click="sftpStore.autoRemoveSuccessful = !sftpStore.autoRemoveSuccessful"
+                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                :style="{ backgroundColor: sftpStore.autoRemoveSuccessful ? 'var(--color-accent)' : 'var(--color-border)' }"
+              >
+                <span
+                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"
+                  :class="sftpStore.autoRemoveSuccessful ? 'translate-x-4' : 'translate-x-0'"
+                />
+              </button>
+            </div>
+          </div>
+
+          <!-- Bottom Card: Intelligent Ignore Filter (Upload & Download) -->
+          <div
+            class="rounded-xl border p-4 space-y-4 transition-colors"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <!-- Card Header with Master Toggle -->
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-start space-x-2.5">
+                <div
+                  class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 mt-0.5"
+                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                >
+                  <Filter class="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <div class="flex items-center space-x-2">
+                    <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">
+                      Intelligent Ignore Filtering (Upload &amp; Download)
+                    </h4>
+                    <span
+                      class="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold uppercase tracking-wider"
+                      :style="settingsStore.enableTransferIgnoreFilter
+                        ? { backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)' }
+                        : { backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }"
+                    >
+                      {{ settingsStore.enableTransferIgnoreFilter ? 'Active' : 'Disabled' }}
+                    </span>
+                  </div>
+                  <p class="text-[11px] mt-0.5 leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
+                    Automatically skip bulky build directories, dependencies, and temporary files when uploading, downloading, or recursively crawling folders. You can add any custom folder names or glob patterns.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Master Toggle Switch -->
+              <div class="shrink-0 flex items-center space-x-2">
+                <button
+                  type="button"
+                  @click="settingsStore.enableTransferIgnoreFilter = !settingsStore.enableTransferIgnoreFilter"
+                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                  :style="{ backgroundColor: settingsStore.enableTransferIgnoreFilter ? 'var(--color-accent)' : 'var(--color-border)' }"
+                >
+                  <span
+                    class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"
+                    :class="settingsStore.enableTransferIgnoreFilter ? 'translate-x-4' : 'translate-x-0'"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <!-- Ignore Rules Content (Shown when filter is enabled) -->
+            <div v-if="settingsStore.enableTransferIgnoreFilter" class="space-y-3.5 pt-1">
+              <!-- Add Rule Form -->
+              <div class="space-y-1.5">
+                <label class="text-[11px] font-medium block" :style="{ color: 'var(--color-text-main)' }">
+                  Add Folder to Ignore or Wildcard Pattern:
+                </label>
+                <div class="flex items-center space-x-2">
+                  <div class="relative flex-1">
+                    <input
+                      v-model="newIgnorePatternInput"
+                      type="text"
+                      placeholder="e.g. vendor, __pycache__, .env.*, custom-cache, *.bak"
+                      @keydown.enter.prevent="handleAddIgnorePattern"
+                      class="w-full pl-8 pr-3 py-1.5 rounded-lg border font-mono text-xs focus:outline-none input-theme"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    />
+                    <Folder class="w-3.5 h-3.5 absolute left-2.5 top-2.5 opacity-40 pointer-events-none" />
+                  </div>
+                  <button
+                    type="button"
+                    @click="handleAddIgnorePattern"
+                    :disabled="!newIgnorePatternInput.trim()"
+                    class="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center space-x-1.5 btn-accent disabled:opacity-40 disabled:cursor-not-allowed shadow-sm shrink-0"
+                  >
+                    <Plus class="w-3.5 h-3.5" />
+                    <span>Add Pattern</span>
+                  </button>
+                </div>
+                <!-- Inline Error Toast -->
+                <p v-if="ignorePatternError" class="text-[11px] text-amber-400 mt-1 flex items-center space-x-1">
+                  <AlertTriangle class="w-3 h-3 shrink-0" />
+                  <span>{{ ignorePatternError }}</span>
+                </p>
+              </div>
+
+              <!-- Active Ignore Rules Badges Grid -->
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between text-[11px]">
+                  <span class="font-medium" :style="{ color: 'var(--color-text-main)' }">
+                    Active Ignore Patterns ({{ settingsStore.transferIgnorePatterns.length }}):
+                  </span>
+                  <button
+                    type="button"
+                    @click="settingsStore.resetIgnorePatterns()"
+                    class="text-[10px] opacity-70 hover:opacity-100 transition flex items-center space-x-1 cursor-pointer"
+                    :style="{ color: 'var(--color-text-muted)' }"
+                    title="Restore default ignore rules"
+                  >
+                    <RotateCcw class="w-3 h-3" />
+                    <span>Reset to Defaults</span>
+                  </button>
+                </div>
+
+                <div
+                  class="p-2.5 rounded-lg border min-h-[70px] max-h-[160px] overflow-y-auto flex flex-wrap gap-1.5 items-start"
+                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                >
+                  <span
+                    v-for="pat in settingsStore.transferIgnorePatterns"
+                    :key="pat"
+                    class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md font-mono text-[11px] border transition group hover:border-red-400/50"
+                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  >
+                    <Folder v-if="!pat.includes('*')" class="w-3 h-3 opacity-50 shrink-0" />
+                    <FileCode v-else class="w-3 h-3 opacity-50 shrink-0" />
+                    <span class="font-semibold">{{ pat }}</span>
+                    <button
+                      type="button"
+                      @click="settingsStore.removeIgnorePattern(pat)"
+                      class="ml-0.5 p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 opacity-60 hover:opacity-100 transition cursor-pointer"
+                      title="Remove this ignore rule"
+                    >
+                      <X class="w-3 h-3" />
+                    </button>
+                  </span>
+                </div>
+              </div>
+
+              <!-- Quick Suggestion Presets -->
+              <div class="space-y-1.5 pt-1">
+                <span class="text-[10px] font-medium uppercase tracking-wider block" :style="{ color: 'var(--color-text-muted)' }">
+                  Quick Add Common Presets:
+                </span>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="preset in COMMON_IGNORE_PRESETS.filter((p) => !settingsStore.transferIgnorePatterns.some((cur) => cur.toLowerCase() === p.toLowerCase()))"
+                    :key="preset"
+                    type="button"
+                    @click="settingsStore.addIgnorePattern(preset)"
+                    class="px-2 py-0.5 rounded border text-[10px] font-mono transition flex items-center space-x-1 opacity-75 hover:opacity-100 cursor-pointer btn-theme-card"
+                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    :title="`Add ${preset} to ignore patterns`"
+                  >
+                    <Plus class="w-2.5 h-2.5 opacity-50" />
+                    <span>{{ preset }}</span>
+                  </button>
+                  <span
+                    v-if="COMMON_IGNORE_PRESETS.every((p) => settingsStore.transferIgnorePatterns.some((cur) => cur.toLowerCase() === p.toLowerCase()))"
+                    class="text-[10px] italic opacity-50"
+                    :style="{ color: 'var(--color-text-muted)' }"
+                  >
+                    All common presets are currently active.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Disabled Warning State -->
+            <div
+              v-else
+              class="p-3 rounded-lg border text-xs flex items-center space-x-2.5"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            >
+              <AlertTriangle class="w-4 h-4 text-amber-500 shrink-0" />
+              <span>
+                Ignore filtering is disabled. All files and subdirectories (including <code class="font-mono text-amber-400">node_modules</code> and <code class="font-mono text-amber-400">.git</code>) will be uploaded and downloaded.
+              </span>
             </div>
           </div>
         </div>

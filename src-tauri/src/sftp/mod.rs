@@ -75,6 +75,57 @@ pub struct RemoteCrawlTask {
     pub size: u64,
 }
 
+pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let norm_path = rel_or_full_path.replace('\\', "/");
+    let name_lower = name.to_lowercase();
+    let norm_path_lower = norm_path.to_lowercase();
+    let parts: Vec<&str> = norm_path_lower.split('/').collect();
+
+    for raw_pat in patterns {
+        let pat = raw_pat.trim().trim_start_matches('/').to_lowercase();
+        if pat.is_empty() {
+            continue;
+        }
+
+        // Exact match with name or any segment of the path (e.g. "node_modules", ".git", "dist", "target")
+        if name_lower == pat || parts.iter().any(|&p| p == pat) {
+            return true;
+        }
+
+        // Match path boundary (e.g. "dist" in "dist/foo" or "foo/dist" or "foo/dist/bar")
+        if norm_path_lower == pat
+            || norm_path_lower.starts_with(&format!("{}/", pat))
+            || norm_path_lower.ends_with(&format!("/{}", pat))
+            || norm_path_lower.contains(&format!("/{}/", pat))
+        {
+            return true;
+        }
+
+        // Wildcard extension match (e.g. "*.log", "*.swp", "*.tmp", "*.bak")
+        if pat.starts_with("*.") {
+            let ext = &pat[1..];
+            if name_lower.ends_with(ext) || norm_path_lower.ends_with(ext) {
+                return true;
+            }
+        } else if pat.starts_with('*') {
+            let suffix = &pat[1..];
+            if name_lower.ends_with(suffix) || norm_path_lower.ends_with(suffix) {
+                return true;
+            }
+        } else if pat.ends_with('*') {
+            let prefix = &pat[..pat.len() - 1];
+            if name_lower.starts_with(prefix) || norm_path_lower.starts_with(prefix) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 // -------------------------------------------------------------
 // Remote SFTP Operations
 // -------------------------------------------------------------

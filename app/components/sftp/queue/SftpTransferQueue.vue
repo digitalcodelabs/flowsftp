@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Server,
   FileText,
+  Filter,
 } from 'lucide-vue-next'
 import {
   useSftpStore,
@@ -21,6 +22,7 @@ import {
   type ConflictPolicy,
 } from '../../../stores/sftp'
 import { useSshStore } from '../../../stores/ssh'
+import { useSettingsStore } from '../../../stores/settings'
 import { formatBytes } from '../../../utils/formatters'
 import SftpFileExistsModal from '../modals/SftpFileExistsModal.vue'
 
@@ -44,6 +46,11 @@ const emit = defineEmits<{
 
 const sftpStore = useSftpStore()
 const sshStore = useSshStore()
+const settingsStore = useSettingsStore()
+
+const openIgnoreSettings = () => {
+  settingsStore.openSettings('transfers')
+}
 
 const showTransferDrawer = computed({
   get: () => props.show,
@@ -1292,6 +1299,22 @@ defineExpose({
           <span v-else-if="queueCompletionAction === 'disconnect'">🔌 Disconnect on complete</span>
           <span v-else-if="queueCompletionAction === 'close'">🚪 Close on complete</span>
         </div>
+
+        <!-- Intelligent Ignore Filter Pill Button -->
+        <button
+          type="button"
+          @click="openIgnoreSettings"
+          class="hidden sm:flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-mono border transition cursor-pointer"
+          :style="settingsStore.enableTransferIgnoreFilter
+            ? { backgroundColor: 'rgba(16, 185, 129, 0.12)', color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)' }
+            : { backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', borderColor: 'var(--color-border)' }"
+          :title="settingsStore.enableTransferIgnoreFilter
+            ? `Ignore Filter: Active (${settingsStore.transferIgnorePatterns.length} rules). Click to edit ignore folders.`
+            : 'Ignore Filter: Disabled. Click to configure and enable.'"
+        >
+          <Filter class="w-3 h-3" />
+          <span>Ignore: {{ settingsStore.enableTransferIgnoreFilter ? `${settingsStore.transferIgnorePatterns.length} rules` : 'Off' }}</span>
+        </button>
 
         <!-- Two Connection Status Dots (Green / Idle) -->
         <div class="flex items-center space-x-1" title="SFTP Connection & Queue Worker State">

@@ -81,6 +81,27 @@ export const BROWSER_FONTS: BrowserFontOption[] = [
   },
 ]
 
+export const DEFAULT_TRANSFER_IGNORE_PATTERNS: string[] = [
+  '.git',
+  'node_modules',
+  '.vscode',
+  '.idea',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  'target',
+  '.cache',
+  '.turbo',
+  'vendor',
+  '__pycache__',
+  '.DS_Store',
+  'Thumbs.db',
+  '*.swp',
+  '*.tmp',
+  '*.log',
+]
+
 export const useSettingsStore = defineStore('settings', () => {
   // Terminal Font Settings
   const terminalFontFamily = ref<string>(
@@ -227,6 +248,126 @@ export const useSettingsStore = defineStore('settings', () => {
     )
   }
 
+  // Intelligent Ignore Filtering for Transfers & Directory Crawling
+  const enableTransferIgnoreFilter = ref<boolean>(
+    typeof window !== 'undefined'
+      ? localStorage.getItem('flowsftp_enable_transfer_ignore') !== 'false'
+      : true
+  )
+
+  const loadSavedIgnorePatterns = (): string[] => {
+    if (typeof window === 'undefined') return [...DEFAULT_TRANSFER_IGNORE_PATTERNS]
+    try {
+      const saved = localStorage.getItem('flowsftp_transfer_ignore_patterns')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse saved transfer ignore patterns:', e)
+    }
+    return [...DEFAULT_TRANSFER_IGNORE_PATTERNS]
+  }
+
+  const transferIgnorePatterns = ref<string[]>(loadSavedIgnorePatterns())
+
+  // Global Settings Modal Open State
+  const isSettingsModalOpen = ref<boolean>(false)
+  const settingsModalTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer' | 'about'>('transfers')
+
+  if (typeof window !== 'undefined') {
+    watch(enableTransferIgnoreFilter, (val) => {
+      localStorage.setItem('flowsftp_enable_transfer_ignore', val ? 'true' : 'false')
+    })
+    watch(
+      transferIgnorePatterns,
+      (val) => {
+        localStorage.setItem('flowsftp_transfer_ignore_patterns', JSON.stringify(val))
+      },
+      { deep: true }
+    )
+  }
+
+  function openSettings(tab?: 'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer' | 'about') {
+    if (tab) {
+      settingsModalTab.value = tab
+    }
+    isSettingsModalOpen.value = true
+  }
+
+  function closeSettings() {
+    isSettingsModalOpen.value = false
+  }
+
+  function addIgnorePattern(pattern: string): boolean {
+    const clean = pattern.trim()
+    if (!clean) return false
+    const lower = clean.toLowerCase()
+    if (!transferIgnorePatterns.value.some((p) => p.toLowerCase() === lower)) {
+      transferIgnorePatterns.value = [...transferIgnorePatterns.value, clean]
+      return true
+    }
+    return false
+  }
+
+  function removeIgnorePattern(pattern: string) {
+    const lower = pattern.trim().toLowerCase()
+    transferIgnorePatterns.value = transferIgnorePatterns.value.filter(
+      (p) => p.toLowerCase() !== lower
+    )
+  }
+
+  function resetIgnorePatterns() {
+    transferIgnorePatterns.value = [...DEFAULT_TRANSFER_IGNORE_PATTERNS]
+  }
+
+  function isPatternIgnored(name: string, relOrFullPath?: string): boolean {
+    if (!enableTransferIgnoreFilter.value || transferIgnorePatterns.value.length === 0) {
+      return false
+    }
+    const nameLower = name.trim().toLowerCase()
+    const pathLower = (relOrFullPath || name).replace(/\\/g, '/').toLowerCase()
+    const parts = pathLower.split('/').filter(Boolean)
+
+    for (const rawPat of transferIgnorePatterns.value) {
+      const pat = rawPat.trim().replace(/^\/+/, '').toLowerCase()
+      if (!pat) continue
+
+      if (nameLower === pat || parts.includes(pat)) {
+        return true
+      }
+
+      if (
+        pathLower === pat ||
+        pathLower.startsWith(`${pat}/`) ||
+        pathLower.endsWith(`/${pat}`) ||
+        pathLower.includes(`/${pat}/`)
+      ) {
+        return true
+      }
+
+      if (pat.startsWith('*.')) {
+        const ext = pat.slice(1) // '.log'
+        if (nameLower.endsWith(ext) || pathLower.endsWith(ext)) {
+          return true
+        }
+      } else if (pat.startsWith('*')) {
+        const suffix = pat.slice(1)
+        if (nameLower.endsWith(suffix) || pathLower.endsWith(suffix)) {
+          return true
+        }
+      } else if (pat.endsWith('*')) {
+        const prefix = pat.slice(0, -1)
+        if (nameLower.startsWith(prefix) || pathLower.startsWith(prefix)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
   function resetTerminalDefaults() {
     terminalFontFamily.value = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
     terminalFontSize.value = 13
@@ -285,5 +426,15 @@ export const useSettingsStore = defineStore('settings', () => {
     loadSystemFonts,
     resetTerminalDefaults,
     resetBrowserDefaults,
+    enableTransferIgnoreFilter,
+    transferIgnorePatterns,
+    addIgnorePattern,
+    removeIgnorePattern,
+    resetIgnorePatterns,
+    isPatternIgnored,
+    isSettingsModalOpen,
+    settingsModalTab,
+    openSettings,
+    closeSettings,
   }
 })

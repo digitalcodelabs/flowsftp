@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 use crate::sftp::{
     canonicalize_remote, copy_local_paths, create_local_dir, create_local_file,
     create_remote_dir, create_remote_file, download_file, get_default_local_path,
-    get_git_status, get_wsl_distributions, list_local_dir, list_remote_dir,
+    get_git_status, get_wsl_distributions, is_path_ignored, list_local_dir, list_remote_dir,
     normalize_to_native_path, open_in_default_app, read_local_file_binary,
     read_local_file_text, read_remote_file_binary, read_remote_file_text, remove_local_item,
     remove_remote_dir_recursive_with_cancel, remove_remote_file, rename_local, rename_remote,
@@ -843,10 +843,12 @@ pub async fn sftp_compress_local_archive(
 pub async fn sftp_crawl_local_paths(
     paths: Vec<String>,
     target_remote_dir: String,
+    ignore_patterns: Option<Vec<String>>,
 ) -> Result<Vec<LocalCrawlTask>, String> {
     tokio::task::spawn_blocking(move || {
         let mut results = Vec::new();
         let clean_remote = target_remote_dir.trim().trim_end_matches('/').to_string();
+        let patterns = ignore_patterns.unwrap_or_default();
 
         for p in paths {
             let (native_path, _) = normalize_to_native_path(&p);
@@ -854,11 +856,16 @@ pub async fn sftp_crawl_local_paths(
                 continue;
             }
 
+            let file_name = native_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".to_string());
+
+            if is_path_ignored(&file_name, &p, &patterns) {
+                continue;
+            }
+
             if native_path.is_file() || native_path.is_symlink() {
-                let file_name = native_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "file".to_string());
                 let size = std::fs::metadata(&native_path).map(|m| m.len()).unwrap_or(0);
                 let remote_path = if clean_remote.is_empty() {
                     file_name.clone()
@@ -883,7 +890,7 @@ pub async fn sftp_crawl_local_paths(
                     format!("{}/{}", clean_remote, root_folder_name)
                 };
 
-                crawl_local_dir_recursive(&native_path, &native_path, &remote_base, &mut results);
+                crawl_local_dir_recursive(&native_path, &native_path, &remote_base, &patterns, &mut results);
             }
         }
 
@@ -897,6 +904,7 @@ fn crawl_local_dir_recursive(
     root: &std::path::Path,
     current: &std::path::Path,
     remote_base: &str,
+    patterns: &[String],
     results: &mut Vec<LocalCrawlTask>,
 ) {
     let read_dir = match std::fs::read_dir(current) {
@@ -919,19 +927,23 @@ fn crawl_local_dir_recursive(
             Err(_) => continue,
         };
 
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+
+        let rel_path = match path.strip_prefix(root) {
+            Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+
+        if is_path_ignored(&file_name, &rel_path, patterns) {
+            continue;
+        }
+
         if file_type.is_dir() {
-            crawl_local_dir_recursive(root, &path, remote_base, results);
+            crawl_local_dir_recursive(root, &path, remote_base, patterns, results);
         } else if file_type.is_file() || file_type.is_symlink() {
-            let rel_path = match path.strip_prefix(root) {
-                Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
-                Err(_) => continue,
-            };
-
-            let file_name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "file".to_string());
-
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             let remote_path = format!("{}/{}", remote_base, rel_path.trim_start_matches('/'));
 
@@ -951,9 +963,11 @@ pub async fn sftp_crawl_remote_paths(
     session_id: String,
     paths: Vec<String>,
     target_local_dir: String,
+    ignore_patterns: Option<Vec<String>>,
 ) -> Result<Vec<RemoteCrawlTask>, String> {
+    let patterns = ignore_patterns.unwrap_or_default();
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        return ftp.crawl_remote_paths(paths, target_local_dir).await;
+        return ftp.crawl_remote_paths(paths, target_local_dir, Some(patterns)).await;
     }
 
     let session = state
@@ -971,6 +985,11 @@ pub async fn sftp_crawl_remote_paths(
             continue;
         }
 
+        let name = clean_p.split('/').last().unwrap_or("item").to_string();
+        if is_path_ignored(&name, &clean_p, &patterns) {
+            continue;
+        }
+
         match sftp.read_dir(&clean_p).await {
             Ok(_) => {
                 let folder_name = clean_p.split('/').last().unwrap_or("folder");
@@ -979,7 +998,7 @@ pub async fn sftp_crawl_remote_paths(
                 } else {
                     format!("{}/{}", clean_local, folder_name)
                 };
-                crawl_remote_dir_recursive(&sftp, &clean_p, &clean_p, &local_base, &mut results).await?;
+                crawl_remote_dir_recursive(&sftp, &clean_p, &clean_p, &local_base, &patterns, &mut results).await?;
             }
             Err(_) => {
                 let file_name = clean_p.split('/').last().unwrap_or("file").to_string();
@@ -1007,6 +1026,7 @@ fn crawl_remote_dir_recursive<'a>(
     root: &'a str,
     current: &'a str,
     local_base: &'a str,
+    patterns: &'a [String],
     results: &'a mut Vec<RemoteCrawlTask>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
@@ -1030,15 +1050,19 @@ fn crawl_remote_dir_recursive<'a>(
                 format!("{}/{}", current.trim_end_matches('/'), name)
             };
 
+            let rel = child_remote
+                .strip_prefix(root)
+                .unwrap_or(&child_remote)
+                .trim_start_matches('/');
+
+            if is_path_ignored(&name, rel, patterns) {
+                continue;
+            }
+
             let file_type = entry.file_type();
             if file_type.is_dir() {
-                crawl_remote_dir_recursive(sftp, root, &child_remote, local_base, results).await?;
+                crawl_remote_dir_recursive(sftp, root, &child_remote, local_base, patterns, results).await?;
             } else {
-                let rel = child_remote
-                    .strip_prefix(root)
-                    .unwrap_or(&child_remote)
-                    .trim_start_matches('/');
-
                 let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
                 let size = entry.metadata().size.unwrap_or(0);
 
