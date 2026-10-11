@@ -206,6 +206,15 @@ const showArchiveToast = (message: string, isError = false, isLoading = false, d
   }, effectiveDuration)
 }
 
+watch(
+  () => sftpStore.transferToast,
+  (t) => {
+    if (t) {
+      showArchiveToast(t.message, t.isError ?? false, false, 4500)
+    }
+  }
+)
+
 // Transfer drawer state & queue tabs (FileZilla 3-Tab Architecture)
 const showTransferDrawer = ref(true)
 const transferTab = ref<'active' | 'completed' | 'failed'>('active')

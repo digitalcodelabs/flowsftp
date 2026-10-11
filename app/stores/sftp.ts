@@ -33,6 +33,26 @@ export interface LocalCrawlTask {
   size: number
 }
 
+export interface LocalCrawlDirectory {
+  local_path: string
+  remote_path: string
+  dir_name: string
+}
+
+export interface LocalCrawlIgnored {
+  local_path: string
+  remote_path: string
+  item_name: string
+  is_dir: boolean
+  matched_pattern: string
+}
+
+export interface LocalCrawlResult {
+  files: LocalCrawlTask[]
+  directories: LocalCrawlDirectory[]
+  ignored: LocalCrawlIgnored[]
+}
+
 export interface RemoteCrawlTask {
   remote_path: string
   local_path: string
@@ -50,6 +70,7 @@ export interface TransferItem {
   total_bytes: number
   speed_bytes_per_sec: number
   is_complete: boolean
+  is_dir?: boolean
   error?: string
   local_path?: string
   remote_path?: string
@@ -119,6 +140,12 @@ export const useSftpStore = defineStore('sftp', () => {
   const selectedRemotePath = ref<string | null>(null)
   const isLoadingRemote = ref(false)
   const remoteError = ref<string | null>(null)
+
+  const transferToast = ref<{ message: string; isError?: boolean; timestamp: number } | null>(null)
+
+  function triggerTransferToast(message: string, isError = false) {
+    transferToast.value = { message, isError, timestamp: Date.now() }
+  }
 
   // Local State
   const localPath = ref<string>('')
@@ -1202,10 +1229,37 @@ export const useSftpStore = defineStore('sftp', () => {
     const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
     const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
 
-    // 1. Immediately enqueue only root-level regular files (skipping ignored files if enabled)
+    // 1. Immediately enqueue only root-level regular files (recording ignored files if enabled)
+    const ignoredDirectDownloads: { name: string; is_dir: boolean; pattern: string }[] = []
     for (const f of files) {
       if (!f.is_dir) {
         if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
+          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
+          const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+          const targetLocal = `${cleanLocalDir}/${f.name}`
+          const transferId = `ign-dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+          const ignoredItem: TransferItem = {
+            transfer_id: transferId,
+            file_name: f.name,
+            direction: 'download',
+            bytes_transferred: 0,
+            total_bytes: f.size || 0,
+            speed_bytes_per_sec: 0,
+            is_complete: true,
+            is_dir: false,
+            error: `Ignored (filter rule: ${matchedPat})`,
+            local_path: targetLocal,
+            remote_path: f.path,
+            session_id: sessionId,
+            server_url: getServerUrlForSession(sessionId),
+            priority: 'Normal',
+            started_at: Date.now(),
+            completed_at: Date.now(),
+            status: 'failed',
+          }
+          transferMap.set(transferId, ignoredItem)
+          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
+          ignoredDirectDownloads.push({ name: f.name, is_dir: false, pattern: matchedPat })
           continue
         }
         const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -1215,8 +1269,49 @@ export const useSftpStore = defineStore('sftp', () => {
       }
     }
 
-    // 2. Start crawler for directory items concurrently (nested items will be filtered by crawler)
-    const dirItems = files.filter((f) => f.is_dir)
+    // 2. Filter directories: if a root directory itself is ignored, record it as ignored
+    const dirItems: SftpFileEntry[] = []
+    for (const f of files) {
+      if (f.is_dir) {
+        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
+          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
+          const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+          const targetLocal = `${cleanLocalDir}/${f.name}`
+          const transferId = `ign-dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+          const ignoredItem: TransferItem = {
+            transfer_id: transferId,
+            file_name: f.name,
+            direction: 'download',
+            bytes_transferred: 0,
+            total_bytes: 0,
+            speed_bytes_per_sec: 0,
+            is_complete: true,
+            is_dir: true,
+            error: `Ignored (filter rule: ${matchedPat})`,
+            local_path: targetLocal,
+            remote_path: f.path,
+            session_id: sessionId,
+            server_url: getServerUrlForSession(sessionId),
+            priority: 'Normal',
+            started_at: Date.now(),
+            completed_at: Date.now(),
+            status: 'failed',
+          }
+          transferMap.set(transferId, ignoredItem)
+          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
+          ignoredDirectDownloads.push({ name: f.name, is_dir: true, pattern: matchedPat })
+          continue
+        }
+        dirItems.push(f)
+      }
+    }
+
+    if (ignoredDirectDownloads.length > 0) {
+      const folders = ignoredDirectDownloads.filter((i) => i.is_dir)
+      const count = ignoredDirectDownloads.length
+      const sample = ignoredDirectDownloads[0].name
+      triggerTransferToast(`Transfer filter: Ignored ${count} item${count > 1 ? 's' : ''} (${sample}${count > 1 ? '…' : ''})`)
+    }
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
@@ -1503,10 +1598,39 @@ export const useSftpStore = defineStore('sftp', () => {
     const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
     const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
 
-    // 1. Immediately enqueue only root-level regular files (skipping ignored files if enabled)
+    // 1. Immediately enqueue only root-level regular files (recording ignored files if enabled)
+    const ignoredDirectUploads: { name: string; is_dir: boolean; pattern: string }[] = []
     for (const f of files) {
       if (!f.is_dir) {
         if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
+          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
+          const cleanRemoteDir = targetDir.replace(/\/+$/, '')
+          const targetRemote = cleanRemoteDir === ''
+            ? (targetDir.startsWith('/') ? `/${f.name}` : f.name)
+            : `${cleanRemoteDir}/${f.name}`
+          const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+          const ignoredItem: TransferItem = {
+            transfer_id: transferId,
+            file_name: f.name,
+            direction: 'upload',
+            bytes_transferred: 0,
+            total_bytes: f.size || 0,
+            speed_bytes_per_sec: 0,
+            is_complete: true,
+            is_dir: false,
+            error: `Ignored (filter rule: ${matchedPat})`,
+            local_path: f.path,
+            remote_path: targetRemote,
+            session_id: sessionId,
+            server_url: getServerUrlForSession(sessionId),
+            priority: 'Normal',
+            started_at: Date.now(),
+            completed_at: Date.now(),
+            status: 'failed',
+          }
+          transferMap.set(transferId, ignoredItem)
+          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
+          ignoredDirectUploads.push({ name: f.name, is_dir: false, pattern: matchedPat })
           continue
         }
         const cleanRemoteDir = targetDir.replace(/\/+$/, '')
@@ -1518,21 +1642,116 @@ export const useSftpStore = defineStore('sftp', () => {
       }
     }
 
-    // 2. Start crawler for directory items concurrently (nested items will be filtered by crawler)
-    const dirItems = files.filter((f) => f.is_dir)
+    // 2. Filter directories: if a root directory itself is ignored (e.g. node_modules), record it as ignored
+    const dirItems: LocalFileEntry[] = []
+    for (const f of files) {
+      if (f.is_dir) {
+        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
+          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
+          const cleanRemoteDir = targetDir.replace(/\/+$/, '')
+          const targetRemote = cleanRemoteDir === ''
+            ? (targetDir.startsWith('/') ? `/${f.name}` : f.name)
+            : `${cleanRemoteDir}/${f.name}`
+          const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+          const ignoredItem: TransferItem = {
+            transfer_id: transferId,
+            file_name: f.name,
+            direction: 'upload',
+            bytes_transferred: 0,
+            total_bytes: 0,
+            speed_bytes_per_sec: 0,
+            is_complete: true,
+            is_dir: true,
+            error: `Ignored (filter rule: ${matchedPat})`,
+            local_path: f.path,
+            remote_path: targetRemote,
+            session_id: sessionId,
+            server_url: getServerUrlForSession(sessionId),
+            priority: 'Normal',
+            started_at: Date.now(),
+            completed_at: Date.now(),
+            status: 'failed',
+          }
+          transferMap.set(transferId, ignoredItem)
+          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
+          ignoredDirectUploads.push({ name: f.name, is_dir: true, pattern: matchedPat })
+          continue
+        }
+        dirItems.push(f)
+      }
+    }
+
+    if (ignoredDirectUploads.length > 0) {
+      const folders = ignoredDirectUploads.filter((i) => i.is_dir)
+      const count = ignoredDirectUploads.length
+      const sample = ignoredDirectUploads[0].name
+      triggerTransferToast(`Transfer filter: Ignored ${count} item${count > 1 ? 's' : ''} (${sample}${count > 1 ? '…' : ''})`)
+    }
+
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
           try {
             // Fast Native Crawler: scans 10k+ files in ~20ms in parallel on local disk
-            const crawled = await invoke<LocalCrawlTask[]>('sftp_crawl_local_paths', {
+            const crawled = await invoke<LocalCrawlResult | LocalCrawlTask[]>('sftp_crawl_local_paths', {
               paths: dirItems.map((d) => d.path),
               targetRemoteDir: targetDir,
               ignorePatterns,
             })
-            for (let i = 0; i < crawled.length; i++) {
+
+            const filesList: LocalCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
+            const dirsList: LocalCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
+            const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
+
+            // Step A: Immediately create all remote directories (ensures parent folders like 3005 and empty subfolders exist!)
+            for (const d of dirsList) {
               if (isCancellingAll.value) break
-              const c = crawled[i]
+              try {
+                await invoke('sftp_create_remote_dir', { sessionId, path: d.remote_path })
+              } catch (dirErr) {
+                console.warn(`Failed to create remote directory ${d.remote_path}:`, dirErr)
+              }
+            }
+
+            // Step B: Record all ignored subfolders/files in the failed/skipped transfers queue so users see them
+            for (const ign of ignoredList) {
+              const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+              const ignoredItem: TransferItem = {
+                transfer_id: transferId,
+                file_name: ign.item_name,
+                direction: 'upload',
+                bytes_transferred: 0,
+                total_bytes: 0,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                is_dir: ign.is_dir,
+                error: `Ignored (filter rule: ${ign.matched_pattern})`,
+                local_path: ign.local_path,
+                remote_path: ign.remote_path,
+                session_id: sessionId,
+                server_url: getServerUrlForSession(sessionId),
+                priority: 'Normal',
+                started_at: Date.now(),
+                completed_at: Date.now(),
+                status: 'failed',
+              }
+              transferMap.set(transferId, ignoredItem)
+              failedTransfers.value = [ignoredItem, ...failedTransfers.value]
+            }
+
+            if (ignoredList.length > 0) {
+              const folders = ignoredList.filter((i) => i.is_dir)
+              const sampleFolder = folders.length > 0 ? folders[0].item_name : ''
+              const msg = folders.length > 0
+                ? `Transfer filter: Ignored ${folders.length} folder${folders.length > 1 ? 's' : ''} (${sampleFolder}${folders.length > 1 ? '…' : ''}) in upload`
+                : `Transfer filter: Ignored ${ignoredList.length} item(s) matching ignore rules`
+              triggerTransferToast(msg)
+            }
+
+            // Step C: Enqueue crawled regular files for transfer
+            for (let i = 0; i < filesList.length; i++) {
+              if (isCancellingAll.value) break
+              const c = filesList[i]
               const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
               const fileEntry: LocalFileEntry = {
                 name: c.file_name,
@@ -2107,5 +2326,7 @@ export const useSftpStore = defineStore('sftp', () => {
     compressRemoteArchive,
     extractLocalArchive,
     compressLocalArchive,
+    transferToast,
+    triggerTransferToast,
   }
 })

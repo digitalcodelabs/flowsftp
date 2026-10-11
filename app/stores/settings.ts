@@ -327,15 +327,12 @@ export const useSettingsStore = defineStore('settings', () => {
     transferIgnorePatterns.value = [...DEFAULT_TRANSFER_IGNORE_PATTERNS]
   }
 
-  function isPatternIgnored(name: string, relPath?: string): boolean {
+  function getMatchedIgnorePattern(name: string, relPath?: string): string | null {
     if (!enableTransferIgnoreFilter.value || transferIgnorePatterns.value.length === 0) {
-      return false
+      return null
     }
     const nameLower = name.trim().toLowerCase()
 
-    // Determine clean relative path segments.
-    // If relPath is an absolute path (contains ':' on Windows or starts with '/'),
-    // we must NOT treat drive letters / parent directories as path parts!
     let relLower = ''
     if (relPath) {
       const norm = relPath.replace(/\\/g, '/')
@@ -351,33 +348,37 @@ export const useSettingsStore = defineStore('settings', () => {
 
       // Exact folder / file name match (e.g. "node_modules", ".git")
       if (nameLower === pat) {
-        return true
+        return rawPat
       }
 
       // Segment match in relative subpath (e.g. "foo/node_modules/bar")
       if (parts.length > 0 && parts.includes(pat)) {
-        return true
+        return rawPat
       }
 
       // Wildcard extensions (e.g. "*.tmp", "*.log", "*.swp")
       if (pat.startsWith('*.')) {
         const ext = pat.slice(1) // '.log'
         if (nameLower.endsWith(ext) || (relLower && relLower.endsWith(ext))) {
-          return true
+          return rawPat
         }
       } else if (pat.startsWith('*')) {
         const suffix = pat.slice(1)
         if (nameLower.endsWith(suffix) || (relLower && relLower.endsWith(suffix))) {
-          return true
+          return rawPat
         }
       } else if (pat.endsWith('*')) {
         const prefix = pat.slice(0, -1)
         if (nameLower.startsWith(prefix) || (relLower && relLower.startsWith(prefix))) {
-          return true
+          return rawPat
         }
       }
     }
-    return false
+    return null
+  }
+
+  function isPatternIgnored(name: string, relPath?: string): boolean {
+    return getMatchedIgnorePattern(name, relPath) !== null
   }
 
   function resetTerminalDefaults() {
@@ -443,6 +444,7 @@ export const useSettingsStore = defineStore('settings', () => {
     addIgnorePattern,
     removeIgnorePattern,
     resetIgnorePatterns,
+    getMatchedIgnorePattern,
     isPatternIgnored,
     isSettingsModalOpen,
     settingsModalTab,

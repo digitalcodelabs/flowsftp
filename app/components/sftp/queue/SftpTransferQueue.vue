@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Server,
   FileText,
+  Folder,
   Filter,
 } from 'lucide-vue-next'
 import {
@@ -60,6 +61,14 @@ const showTransferDrawer = computed({
 const transferTab = computed({
   get: () => props.tab,
   set: (val: 'active' | 'completed' | 'failed') => emit('update:tab', val),
+})
+
+const failedTabColor = computed(() => {
+  if (sftpStore.failedTransfers.length === 0) return '#dc2626'
+  const hasActualFailure = sftpStore.failedTransfers.some(
+    (t) => !t.error || (!t.error.startsWith('Ignored') && !t.error.startsWith('Skipped'))
+  )
+  return hasActualFailure ? '#dc2626' : '#d97706'
 })
 
 // -------------------------------------------------------------
@@ -1040,7 +1049,7 @@ defineExpose({
           <tr v-if="sftpStore.failedTransfers.length === 0">
             <td colspan="7" class="py-8 text-center text-xs" :style="{ color: 'var(--color-text-muted)' }">
               <CheckCircle2 class="w-6 h-6 mx-auto mb-1.5 opacity-30 text-emerald-400" />
-              <span>No failed transfers</span>
+              <span>No failed or skipped transfers</span>
             </td>
           </tr>
           <template v-else>
@@ -1073,7 +1082,8 @@ defineExpose({
               >
                 <td class="px-2 py-0.5 truncate pl-6">
                   <div class="flex items-center space-x-1.5 truncate">
-                    <FileText class="w-3.5 h-3.5 flex-shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
+                    <Folder v-if="row.item.is_dir" class="w-3.5 h-3.5 flex-shrink-0 text-amber-500 dark:text-amber-400" />
+                    <FileText v-else class="w-3.5 h-3.5 flex-shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
                     <span class="truncate font-mono text-[11px] font-medium" :style="{ color: 'var(--color-text-main)' }" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
                   </div>
                 </td>
@@ -1094,7 +1104,11 @@ defineExpose({
                 <td class="px-2 py-0.5 truncate text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
                   {{ formatTransferTime(row.item.completed_at || row.item.started_at) }}
                 </td>
-                <td class="px-2 py-0.5 truncate text-red-600 dark:text-red-400 font-semibold" :title="row.item.error">
+                <td
+                  class="px-2 py-0.5 truncate font-semibold"
+                  :class="row.item.error && (row.item.error.startsWith('Ignored') || row.item.error.startsWith('Skipped')) ? 'text-amber-500 dark:text-amber-400' : 'text-red-600 dark:text-red-400'"
+                  :title="row.item.error"
+                >
                   {{ row.item.error || 'Transfer failed' }}
                 </td>
               </tr>
@@ -1245,11 +1259,11 @@ defineExpose({
           @click="transferTab = 'failed'; showTransferDrawer = true"
           class="px-2.5 py-0.5 rounded border text-[11px] transition cursor-pointer flex items-center space-x-1"
           :style="transferTab === 'failed' && showTransferDrawer
-            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: '#dc2626', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }
+            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: failedTabColor, fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }
             : { backgroundColor: 'transparent', borderColor: 'transparent', color: 'var(--color-text-muted)' }"
           :class="transferTab === 'failed' && showTransferDrawer ? '' : 'hover:bg-black/5 dark:hover:bg-white/5 hover:text-[var(--color-text-main)]'"
         >
-          <span>Failed transfers{{ sftpStore.failedTransfers.length > 0 ? ` (${sftpStore.failedTransfers.length})` : '' }}</span>
+          <span>Failed / Skipped transfers{{ sftpStore.failedTransfers.length > 0 ? ` (${sftpStore.failedTransfers.length})` : '' }}</span>
         </button>
 
         <button

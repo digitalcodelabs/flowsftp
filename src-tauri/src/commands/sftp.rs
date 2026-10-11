@@ -1,14 +1,16 @@
 use tauri::{AppHandle, State};
 use crate::sftp::{
     canonicalize_remote, copy_local_paths, create_local_dir, create_local_file,
-    create_remote_dir, create_remote_file, download_file, get_default_local_path,
+    create_remote_file, download_file, get_default_local_path,
     get_git_status, get_wsl_distributions, is_path_ignored, list_local_dir, list_remote_dir,
     normalize_to_native_path, open_in_default_app, read_local_file_binary,
     read_local_file_text, read_remote_file_binary, read_remote_file_text, remove_local_item,
     remove_remote_dir_recursive_with_cancel, remove_remote_file, rename_local, rename_remote,
     set_remote_permissions, upload_file, write_local_file_text, write_remote_file_text,
     compress_local_archive, compress_remote_archive, extract_local_archive, extract_remote_archive,
-    FileConflictInfo, GitRepoStatus, LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry,
+    ensure_remote_dir_recursive, get_matching_ignore_pattern,
+    FileConflictInfo, GitRepoStatus, LocalCrawlDirectory, LocalCrawlIgnored, LocalCrawlResult,
+    LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry,
 };
 use crate::state::AppState;
 
@@ -66,7 +68,7 @@ pub async fn sftp_create_remote_dir(
         .ok_or_else(|| format!("Session '{}' not found", session_id))?;
 
     let sftp = session.get_sftp().await?;
-    create_remote_dir(&sftp, &path).await
+    ensure_remote_dir_recursive(&sftp, &path).await
 }
 
 #[tauri::command]
@@ -844,9 +846,11 @@ pub async fn sftp_crawl_local_paths(
     paths: Vec<String>,
     target_remote_dir: String,
     ignore_patterns: Option<Vec<String>>,
-) -> Result<Vec<LocalCrawlTask>, String> {
+) -> Result<LocalCrawlResult, String> {
     tokio::task::spawn_blocking(move || {
-        let mut results = Vec::new();
+        let mut files = Vec::new();
+        let mut directories = Vec::new();
+        let mut ignored = Vec::new();
         let clean_remote = target_remote_dir.trim().trim_end_matches('/').to_string();
         let patterns = ignore_patterns.unwrap_or_default();
 
@@ -862,17 +866,25 @@ pub async fn sftp_crawl_local_paths(
                 .unwrap_or_else(|| "file".to_string());
 
             if native_path.is_file() || native_path.is_symlink() {
-                if is_path_ignored(&file_name, &file_name, &patterns) {
-                    continue;
-                }
-                let size = std::fs::metadata(&native_path).map(|m| m.len()).unwrap_or(0);
                 let remote_path = if clean_remote.is_empty() {
                     file_name.clone()
                 } else {
                     format!("{}/{}", clean_remote, file_name)
                 };
 
-                results.push(LocalCrawlTask {
+                if let Some(matched_pat) = get_matching_ignore_pattern(&file_name, &file_name, &patterns) {
+                    ignored.push(LocalCrawlIgnored {
+                        local_path: native_path.to_string_lossy().to_string(),
+                        remote_path,
+                        item_name: file_name,
+                        is_dir: false,
+                        matched_pattern: matched_pat,
+                    });
+                    continue;
+                }
+
+                let size = std::fs::metadata(&native_path).map(|m| m.len()).unwrap_or(0);
+                files.push(LocalCrawlTask {
                     local_path: native_path.to_string_lossy().to_string(),
                     remote_path,
                     file_name,
@@ -883,17 +895,48 @@ pub async fn sftp_crawl_local_paths(
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "folder".to_string());
+
                 let remote_base = if clean_remote.is_empty() {
-                    root_folder_name
+                    root_folder_name.clone()
                 } else {
                     format!("{}/{}", clean_remote, root_folder_name)
                 };
 
-                crawl_local_dir_recursive(&native_path, &native_path, &remote_base, &patterns, &mut results);
+                if let Some(matched_pat) = get_matching_ignore_pattern(&root_folder_name, &root_folder_name, &patterns) {
+                    ignored.push(LocalCrawlIgnored {
+                        local_path: native_path.to_string_lossy().to_string(),
+                        remote_path: remote_base,
+                        item_name: root_folder_name,
+                        is_dir: true,
+                        matched_pattern: matched_pat,
+                    });
+                    continue;
+                }
+
+                // Explicitly record root folder so it will be created on remote even if empty or all contents ignored
+                directories.push(LocalCrawlDirectory {
+                    local_path: native_path.to_string_lossy().to_string(),
+                    remote_path: remote_base.clone(),
+                    dir_name: root_folder_name,
+                });
+
+                crawl_local_dir_recursive(
+                    &native_path,
+                    &native_path,
+                    &remote_base,
+                    &patterns,
+                    &mut files,
+                    &mut directories,
+                    &mut ignored,
+                );
             }
         }
 
-        Ok(results)
+        Ok(LocalCrawlResult {
+            files,
+            directories,
+            ignored,
+        })
     })
     .await
     .map_err(|e| format!("Local crawler failed: {}", e))?
@@ -904,7 +947,9 @@ fn crawl_local_dir_recursive(
     current: &std::path::Path,
     remote_base: &str,
     patterns: &[String],
-    results: &mut Vec<LocalCrawlTask>,
+    files: &mut Vec<LocalCrawlTask>,
+    directories: &mut Vec<LocalCrawlDirectory>,
+    ignored: &mut Vec<LocalCrawlIgnored>,
 ) {
     let read_dir = match std::fs::read_dir(current) {
         Ok(rd) => rd,
@@ -936,19 +981,32 @@ fn crawl_local_dir_recursive(
             Err(_) => continue,
         };
 
-        if is_path_ignored(&file_name, &rel_path, patterns) {
+        let remote_item_path = format!("{}/{}", remote_base, rel_path.trim_start_matches('/'));
+
+        if let Some(matched_pat) = get_matching_ignore_pattern(&file_name, &rel_path, patterns) {
+            ignored.push(LocalCrawlIgnored {
+                local_path: path.to_string_lossy().to_string(),
+                remote_path: remote_item_path,
+                item_name: file_name,
+                is_dir: file_type.is_dir(),
+                matched_pattern: matched_pat,
+            });
             continue;
         }
 
         if file_type.is_dir() {
-            crawl_local_dir_recursive(root, &path, remote_base, patterns, results);
+            directories.push(LocalCrawlDirectory {
+                local_path: path.to_string_lossy().to_string(),
+                remote_path: remote_item_path,
+                dir_name: file_name,
+            });
+            crawl_local_dir_recursive(root, &path, remote_base, patterns, files, directories, ignored);
         } else if file_type.is_file() || file_type.is_symlink() {
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let remote_path = format!("{}/{}", remote_base, rel_path.trim_start_matches('/'));
 
-            results.push(LocalCrawlTask {
+            files.push(LocalCrawlTask {
                 local_path: path.to_string_lossy().to_string(),
-                remote_path,
+                remote_path: remote_item_path,
                 file_name,
                 size,
             });

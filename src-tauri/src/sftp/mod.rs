@@ -68,6 +68,29 @@ pub struct LocalCrawlTask {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalCrawlDirectory {
+    pub local_path: String,
+    pub remote_path: String,
+    pub dir_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalCrawlIgnored {
+    pub local_path: String,
+    pub remote_path: String,
+    pub item_name: String,
+    pub is_dir: bool,
+    pub matched_pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalCrawlResult {
+    pub files: Vec<LocalCrawlTask>,
+    pub directories: Vec<LocalCrawlDirectory>,
+    pub ignored: Vec<LocalCrawlIgnored>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteCrawlTask {
     pub remote_path: String,
     pub local_path: String,
@@ -75,9 +98,9 @@ pub struct RemoteCrawlTask {
     pub size: u64,
 }
 
-pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) -> bool {
+pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns: &[String]) -> Option<String> {
     if patterns.is_empty() {
-        return false;
+        return None;
     }
     let norm_path = rel_or_full_path.replace('\\', "/");
     let name_lower = name.to_lowercase();
@@ -99,7 +122,7 @@ pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) 
 
         // Exact match with name or any segment of the relative path (e.g. "node_modules", ".git")
         if name_lower == pat || parts.iter().any(|&p| p == pat) {
-            return true;
+            return Some(raw_pat.clone());
         }
 
         // Match path boundary within clean relative path
@@ -108,29 +131,33 @@ pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) 
             || clean_rel.ends_with(&format!("/{}", pat))
             || clean_rel.contains(&format!("/{}/", pat))
         {
-            return true;
+            return Some(raw_pat.clone());
         }
 
         // Wildcard extension match (e.g. "*.log", "*.swp", "*.tmp", "*.bak")
         if pat.starts_with("*.") {
             let ext = &pat[1..];
             if name_lower.ends_with(ext) || clean_rel.ends_with(ext) {
-                return true;
+                return Some(raw_pat.clone());
             }
         } else if pat.starts_with('*') {
             let suffix = &pat[1..];
             if name_lower.ends_with(suffix) || clean_rel.ends_with(suffix) {
-                return true;
+                return Some(raw_pat.clone());
             }
         } else if pat.ends_with('*') {
             let prefix = &pat[..pat.len() - 1];
             if name_lower.starts_with(prefix) || clean_rel.starts_with(prefix) {
-                return true;
+                return Some(raw_pat.clone());
             }
         }
     }
 
-    false
+    None
+}
+
+pub fn is_path_ignored(name: &str, rel_or_full_path: &str, patterns: &[String]) -> bool {
+    get_matching_ignore_pattern(name, rel_or_full_path, patterns).is_some()
 }
 
 // -------------------------------------------------------------
