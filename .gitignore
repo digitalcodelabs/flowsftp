@@ -53,6 +53,10 @@ tauri.key
 *~
 .history/
 
+# Local Tooling & IDE Agents
+.antigravitycli/
+.antigravity*
+
 # Operating System files
 .DS_Store
 ._*
