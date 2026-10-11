@@ -361,13 +361,13 @@ export const useSftpStore = defineStore('sftp', () => {
   // Transfer Settings
   const maxSimultaneousTransfers = ref<number>(
     typeof window !== 'undefined'
-      ? Number(localStorage.getItem('termsftp_max_transfers')) || 3
+      ? Number(localStorage.getItem('flowsftp_max_transfers')) || 3
       : 3
   )
 
   if (typeof window !== 'undefined') {
     watch(maxSimultaneousTransfers, (val) => {
-      localStorage.setItem('termsftp_max_transfers', String(val))
+      localStorage.setItem('flowsftp_max_transfers', String(val))
     })
   }
 
@@ -375,13 +375,13 @@ export const useSftpStore = defineStore('sftp', () => {
   const isQueueProcessing = ref<boolean>(true)
   const autoRemoveSuccessful = ref<boolean>(
     typeof window !== 'undefined'
-      ? localStorage.getItem('termsftp_auto_remove_successful') === 'true'
+      ? localStorage.getItem('flowsftp_auto_remove_successful') === 'true'
       : false
   )
 
   if (typeof window !== 'undefined') {
     watch(autoRemoveSuccessful, (val) => {
-      localStorage.setItem('termsftp_auto_remove_successful', String(val))
+      localStorage.setItem('flowsftp_auto_remove_successful', String(val))
     })
   }
 
@@ -500,7 +500,7 @@ export const useSftpStore = defineStore('sftp', () => {
     isLoadingLocal.value = true
     localError.value = null
     try {
-      const saved = typeof window !== 'undefined' ? localStorage.getItem('termsftp_last_local_path') : null
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('flowsftp_last_local_path') : null
       const defaultPath = saved || (await invoke<string>('sftp_get_default_local_path'))
       await fetchLocalDir(defaultPath)
     } catch (err: any) {
@@ -598,7 +598,7 @@ export const useSftpStore = defineStore('sftp', () => {
       selectedLocalPath.value = null
 
       if (typeof window !== 'undefined') {
-        localStorage.setItem('termsftp_last_local_path', canonical)
+        localStorage.setItem('flowsftp_last_local_path', canonical)
       }
       fetchLocalGitStatus(canonical)
 
@@ -647,7 +647,7 @@ export const useSftpStore = defineStore('sftp', () => {
       fetchRemoteGitStatus(sessionId, remotePath.value)
       fetchRemoteDir(sessionId, remotePath.value)
     } else {
-      const saved = typeof window !== 'undefined' ? localStorage.getItem(`termsftp_last_remote_path_${sessionId}`) : null
+      const saved = typeof window !== 'undefined' ? localStorage.getItem(`flowsftp_last_remote_path_${sessionId}`) : null
       const initialPath = saved || '.'
       remotePath.value = initialPath
       remoteFiles.value = []
@@ -714,7 +714,7 @@ export const useSftpStore = defineStore('sftp', () => {
       sessionRemoteFiles.value[sessionId] = entries
 
       if (typeof window !== 'undefined') {
-        localStorage.setItem(`termsftp_last_remote_path_${sessionId}`, canonical)
+        localStorage.setItem(`flowsftp_last_remote_path_${sessionId}`, canonical)
       }
 
       const cacheItem: CacheEntry<SftpFileEntry> = {

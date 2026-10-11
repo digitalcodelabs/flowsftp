@@ -98,18 +98,18 @@ pub async fn sftp_remove_remote_dir(
 ) -> Result<(), String> {
     let clean = path.trim().replace('\\', "/");
     let clean_path = clean.trim_end_matches('/');
-    eprintln!("[TERMSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}", session_id, path, clean_path, use_fast_rm);
+    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}", session_id, path, clean_path, use_fast_rm);
 
     if clean_path.is_empty() || clean_path == "/" || clean_path == "." || clean_path == ".." {
         let err = "Cannot delete root or empty directory".to_string();
-        eprintln!("[TERMSFTP_BACKEND] Error: {}", err);
+        eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
         return Err(err);
     }
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        eprintln!("[TERMSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
+        eprintln!("[FLOWSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
         let res = ftp.remove_dir(clean_path).await;
-        eprintln!("[TERMSFTP_BACKEND] FTP remove_dir result: {:?}", res);
+        eprintln!("[FLOWSFTP_BACKEND] FTP remove_dir result: {:?}", res);
         return res;
     }
 
@@ -118,13 +118,13 @@ pub async fn sftp_remove_remote_dir(
         .await
         .ok_or_else(|| {
             let err = format!("Session '{}' not found", session_id);
-            eprintln!("[TERMSFTP_BACKEND] Error: {}", err);
+            eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
             err
         })?;
 
     if let Some(ref del_id) = deletion_id {
         if state.is_deletion_cancelled(del_id) {
-            eprintln!("[TERMSFTP_BACKEND] Deletion was cancelled by user: {}", del_id);
+            eprintln!("[FLOWSFTP_BACKEND] Deletion was cancelled by user: {}", del_id);
             return Err("Deletion cancelled by user".to_string());
         }
     }
@@ -133,7 +133,7 @@ pub async fn sftp_remove_remote_dir(
 
     if use_fast_rm.unwrap_or(false) {
         log::info!("Attempting fast rm -rf for remote directory '{}'", clean_path);
-        eprintln!("[TERMSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
+        eprintln!("[FLOWSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
         let escaped_path = clean_path.replace('\'', "'\\''");
         let cmd = format!("rm -rf -- '{}'", escaped_path);
 
@@ -166,19 +166,19 @@ pub async fn sftp_remove_remote_dir(
             // Verify if the directory was deleted
             if sftp.metadata(clean_path).await.is_err() {
                 log::info!("Fast rm -rf succeeded for '{}'", clean_path);
-                eprintln!("[TERMSFTP_BACKEND] Fast rm -rf verified succeeded for '{}'", clean_path);
+                eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf verified succeeded for '{}'", clean_path);
                 return Ok(());
             }
             log::warn!("rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
-            eprintln!("[TERMSFTP_BACKEND] rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
+            eprintln!("[FLOWSFTP_BACKEND] rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
         } else {
             log::warn!("Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
-            eprintln!("[TERMSFTP_BACKEND] Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
+            eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
         }
     }
 
     let res = remove_remote_dir_recursive_with_cancel(&sftp, clean_path, &state, deletion_id.as_deref()).await;
-    eprintln!("[TERMSFTP_BACKEND] remove_remote_dir_recursive_with_cancel result for '{}': {:?}", clean_path, res);
+    eprintln!("[FLOWSFTP_BACKEND] remove_remote_dir_recursive_with_cancel result for '{}': {:?}", clean_path, res);
     res
 }
 
@@ -189,17 +189,17 @@ pub async fn sftp_remove_remote_file(
     path: String,
     deletion_id: Option<String>,
 ) -> Result<(), String> {
-    eprintln!("[TERMSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}'", session_id, path);
+    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}'", session_id, path);
     if let Some(ref del_id) = deletion_id {
         if state.is_deletion_cancelled(del_id) {
-            eprintln!("[TERMSFTP_BACKEND] File deletion cancelled by user: {}", del_id);
+            eprintln!("[FLOWSFTP_BACKEND] File deletion cancelled by user: {}", del_id);
             return Err("Deletion cancelled by user".to_string());
         }
     }
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
         let res = ftp.remove_file(&path).await;
-        eprintln!("[TERMSFTP_BACKEND] FTP remove_file result: {:?}", res);
+        eprintln!("[FLOWSFTP_BACKEND] FTP remove_file result: {:?}", res);
         return res;
     }
 
@@ -208,13 +208,13 @@ pub async fn sftp_remove_remote_file(
         .await
         .ok_or_else(|| {
             let err = format!("Session '{}' not found", session_id);
-            eprintln!("[TERMSFTP_BACKEND] Error: {}", err);
+            eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
             err
         })?;
 
     let sftp = session.get_sftp().await?;
     let res = remove_remote_file(&sftp, &path).await;
-    eprintln!("[TERMSFTP_BACKEND] SFTP remove_file result: {:?}", res);
+    eprintln!("[FLOWSFTP_BACKEND] SFTP remove_file result: {:?}", res);
     res
 }
 
@@ -375,9 +375,9 @@ pub async fn sftp_create_local_file(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn sftp_remove_local(path: String) -> Result<(), String> {
-    eprintln!("[TERMSFTP_BACKEND] sftp_remove_local: path='{}'", path);
+    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_local: path='{}'", path);
     let res = remove_local_item(&path).await;
-    eprintln!("[TERMSFTP_BACKEND] sftp_remove_local result: {:?}", res);
+    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_local result: {:?}", res);
     res
 }
 
@@ -581,7 +581,7 @@ pub async fn sftp_get_remote_git_status(
     };
 
     let cmd = format!(
-        "cd '{}' 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && git branch --show-current 2>/dev/null && echo '---TERMSFTP_GIT_SEPARATOR---' && git status --porcelain=v1 -uall 2>/dev/null",
+        "cd '{}' 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && git branch --show-current 2>/dev/null && echo '---FLOWSFTP_GIT_SEPARATOR---' && git status --porcelain=v1 -uall 2>/dev/null",
         path.replace('\'', "'\\''")
     );
     if channel.exec(true, cmd).await.is_err() {
@@ -598,11 +598,11 @@ pub async fn sftp_get_remote_git_status(
     .await;
 
     let text = String::from_utf8_lossy(&output_bytes);
-    if !text.contains("---TERMSFTP_GIT_SEPARATOR---") {
+    if !text.contains("---FLOWSFTP_GIT_SEPARATOR---") {
         return Ok(GitRepoStatus::default());
     }
 
-    let parts: Vec<&str> = text.split("---TERMSFTP_GIT_SEPARATOR---").collect();
+    let parts: Vec<&str> = text.split("---FLOWSFTP_GIT_SEPARATOR---").collect();
     let header_part = parts[0].trim();
     let status_part = if parts.len() > 1 { parts[1] } else { "" };
 
@@ -950,7 +950,7 @@ fn crawl_remote_dir_recursive<'a>(
 
 #[tauri::command]
 pub fn exit_app(app: AppHandle) {
-    eprintln!("[TERMSFTP_BACKEND] exit_app invoked. Exiting application.");
+    eprintln!("[FLOWSFTP_BACKEND] exit_app invoked. Exiting application.");
     app.exit(0);
 }
 

@@ -141,3 +141,244 @@ html, body, #__nuxt {
   outline: none;
 }
 
+/* ==========================================================================
+   Catppuccin Latte & Light Theme Contrast & Icon Enhancement
+   Maps Mocha dark-theme pastel strokes/fills to high-contrast Latte equivalents
+   ========================================================================== */
+
+/* Latte Card & Button Tweaks */
+html.light .btn-theme-card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+html.light .btn-theme-card:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Text color adaptations for light theme */
+html.light .text-amber-300 {
+  color: #b45309 !important; /* amber-700 */
+}
+html.light .text-red-300 {
+  color: #dc2626 !important; /* red-600 */
+}
+html.light .text-yellow-300 {
+  color: #ca8a04 !important; /* yellow-600 */
+}
+html.light .text-emerald-300 {
+  color: #059669 !important; /* emerald-600 */
+}
+html.light .text-sky-300 {
+  color: #0284c7 !important; /* sky-600 */
+}
+html.light .text-indigo-300 {
+  color: #4f46e5 !important; /* indigo-600 */
+}
+
+/* Background & border adaptations for dark-tinted badge utilities */
+html.light .bg-amber-950\/70,
+html.light .bg-amber-950\/80,
+html.light .bg-amber-950\/60,
+html.light .bg-amber-950\/40,
+html.light .bg-amber-950\/30 {
+  background-color: rgba(245, 158, 11, 0.12) !important;
+}
+html.light .border-amber-800\/60,
+html.light .border-amber-700\/60,
+html.light .border-amber-700\/40,
+html.light .border-amber-600\/70,
+html.light .border-amber-500\/30,
+html.light .border-amber-500\/60 {
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+html.light .bg-red-950\/40,
+html.light .bg-red-950\/50,
+html.light .bg-red-950\/60,
+html.light .bg-red-950\/80 {
+  background-color: rgba(239, 68, 68, 0.1) !important;
+}
+html.light .border-red-800\/60,
+html.light .border-red-800\/50 {
+  border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Catppuccin SVG Icon Remapping for Light Themes
+   -------------------------------------------------------------------------- */
+
+/* Mocha Text / Foreground / Lavender-white -> Latte Text (#4c4f69) */
+html.light svg [stroke="#cad3f5" i],
+html.light svg[stroke="#cad3f5" i],
+html.light svg [stroke="#cdd6f4" i],
+html.light svg[stroke="#cdd6f4" i],
+html.light svg [stroke="#bac2de" i],
+html.light svg[stroke="#bac2de" i],
+html.light svg [stroke="#a6adc8" i],
+html.light svg[stroke="#a6adc8" i] {
+  stroke: #4c4f69 !important;
+}
+html.light svg [fill="#cad3f5" i],
+html.light svg[fill="#cad3f5" i],
+html.light svg [fill="#cdd6f4" i],
+html.light svg[fill="#cdd6f4" i],
+html.light svg [fill="#bac2de" i],
+html.light svg[fill="#bac2de" i],
+html.light svg [fill="#a6adc8" i],
+html.light svg[fill="#a6adc8" i] {
+  fill: #4c4f69 !important;
+}
+
+/* Mocha Overlays / Subtexts -> Latte Subtext (#5c5f77) */
+html.light svg [stroke="#9399b2" i],
+html.light svg[stroke="#9399b2" i],
+html.light svg [stroke="#7f849c" i],
+html.light svg[stroke="#7f849c" i],
+html.light svg [stroke="#6c7086" i],
+html.light svg[stroke="#6c7086" i],
+html.light svg [stroke="#8087a2" i],
+html.light svg[stroke="#8087a2" i] {
+  stroke: #5c5f77 !important;
+}
+html.light svg [fill="#9399b2" i],
+html.light svg[fill="#9399b2" i],
+html.light svg [fill="#7f849c" i],
+html.light svg[fill="#7f849c" i],
+html.light svg [fill="#6c7086" i],
+html.light svg[fill="#6c7086" i],
+html.light svg [fill="#8087a2" i],
+html.light svg[fill="#8087a2" i] {
+  fill: #5c5f77 !important;
+}
+
+/* Mocha Green (#a6da95) -> Latte Green (#40a02b) */
+html.light svg [stroke="#a6da95" i],
+html.light svg[stroke="#a6da95" i] {
+  stroke: #40a02b !important;
+}
+html.light svg [fill="#a6da95" i],
+html.light svg[fill="#a6da95" i] {
+  fill: #40a02b !important;
+}
+
+/* Mocha Teal (#8bd5ca) -> Latte Teal (#179299) */
+html.light svg [stroke="#8bd5ca" i],
+html.light svg[stroke="#8bd5ca" i] {
+  stroke: #179299 !important;
+}
+html.light svg [fill="#8bd5ca" i],
+html.light svg[fill="#8bd5ca" i] {
+  fill: #179299 !important;
+}
+
+/* Mocha Sky (#91d7e3, #7dc4e4) -> Latte Sapphire/Sky (#209fb5) */
+html.light svg [stroke="#91d7e3" i],
+html.light svg[stroke="#91d7e3" i],
+html.light svg [stroke="#7dc4e4" i],
+html.light svg[stroke="#7dc4e4" i] {
+  stroke: #209fb5 !important;
+}
+html.light svg [fill="#91d7e3" i],
+html.light svg[fill="#91d7e3" i],
+html.light svg [fill="#7dc4e4" i],
+html.light svg[fill="#7dc4e4" i] {
+  fill: #209fb5 !important;
+}
+
+/* Mocha Blue (#8aadf4) -> Latte Blue (#1e66f5) */
+html.light svg [stroke="#8aadf4" i],
+html.light svg[stroke="#8aadf4" i] {
+  stroke: #1e66f5 !important;
+}
+html.light svg [fill="#8aadf4" i],
+html.light svg[fill="#8aadf4" i] {
+  fill: #1e66f5 !important;
+}
+
+/* Mocha Lavender (#b4befe, #b7bdf8) -> Latte Lavender (#7287fd) */
+html.light svg [stroke="#b4befe" i],
+html.light svg[stroke="#b4befe" i],
+html.light svg [stroke="#b7bdf8" i],
+html.light svg[stroke="#b7bdf8" i] {
+  stroke: #7287fd !important;
+}
+html.light svg [fill="#b4befe" i],
+html.light svg[fill="#b4befe" i],
+html.light svg [fill="#b7bdf8" i],
+html.light svg[fill="#b7bdf8" i] {
+  fill: #7287fd !important;
+}
+
+/* Mocha Mauve (#c6a0f6) -> Latte Mauve (#8839ef) */
+html.light svg [stroke="#c6a0f6" i],
+html.light svg[stroke="#c6a0f6" i] {
+  stroke: #8839ef !important;
+}
+html.light svg [fill="#c6a0f6" i],
+html.light svg[fill="#c6a0f6" i] {
+  fill: #8839ef !important;
+}
+
+/* Mocha Red (#ed8796) -> Latte Red (#d20f39) */
+html.light svg [stroke="#ed8796" i],
+html.light svg[stroke="#ed8796" i] {
+  stroke: #d20f39 !important;
+}
+html.light svg [fill="#ed8796" i],
+html.light svg[fill="#ed8796" i] {
+  fill: #d20f39 !important;
+}
+
+/* Mocha Maroon (#ee99a0) -> Latte Maroon (#e64553) */
+html.light svg [stroke="#ee99a0" i],
+html.light svg[stroke="#ee99a0" i] {
+  stroke: #e64553 !important;
+}
+html.light svg [fill="#ee99a0" i],
+html.light svg[fill="#ee99a0" i] {
+  fill: #e64553 !important;
+}
+
+/* Mocha Peach (#f5a97f) -> Latte Peach (#fe640b) */
+html.light svg [stroke="#f5a97f" i],
+html.light svg[stroke="#f5a97f" i] {
+  stroke: #fe640b !important;
+}
+html.light svg [fill="#f5a97f" i],
+html.light svg[fill="#f5a97f" i] {
+  fill: #fe640b !important;
+}
+
+/* Mocha Yellow (#eed49f) -> Latte Yellow (#df8e1d) */
+html.light svg [stroke="#eed49f" i],
+html.light svg[stroke="#eed49f" i] {
+  stroke: #df8e1d !important;
+}
+html.light svg [fill="#eed49f" i],
+html.light svg[fill="#eed49f" i] {
+  fill: #df8e1d !important;
+}
+
+/* Mocha Pink (#f5bde6) -> Latte Pink (#ea76cb) */
+html.light svg [stroke="#f5bde6" i],
+html.light svg[stroke="#f5bde6" i] {
+  stroke: #ea76cb !important;
+}
+html.light svg [fill="#f5bde6" i],
+html.light svg[fill="#f5bde6" i] {
+  fill: #ea76cb !important;
+}
+
+/* Mocha Flamingo & Rosewater (#f4dbd6, #f0c6c6) -> Latte Flamingo (#dd7878) */
+html.light svg [stroke="#f4dbd6" i],
+html.light svg[stroke="#f4dbd6" i],
+html.light svg [stroke="#f0c6c6" i],
+html.light svg[stroke="#f0c6c6" i] {
+  stroke: #dd7878 !important;
+}
+html.light svg [fill="#f4dbd6" i],
+html.light svg[fill="#f4dbd6" i],
+html.light svg [fill="#f0c6c6" i],
+html.light svg[fill="#f0c6c6" i] {
+  fill: #dd7878 !important;
+}
+
+

@@ -1,8 +1,8 @@
 {
   "id": "default",
-  "name": "TermSFTP Cyber Navy (Default)",
+  "name": "FlowSFTP Cyber Navy (Default)",
   "description": "Default deep cyber-navy aesthetic with high-contrast cyan and emerald highlights.",
-  "author": "TermSFTP",
+  "author": "FlowSFTP",
   "ui": {
     "bgApp": "#0b0f19",
     "bgHeader": "#090d16",

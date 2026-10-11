@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "termsftp",
+  "productName": "flowsftp",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.flowsftp.app",
   "build": {
     "frontendDist": "../.output/public",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "TermSFTP",
+        "title": "FlowSFTP",
         "width": 1440,
         "height": 900,
         "minWidth": 950,
@@ -21,7 +21,9 @@
         "resizable": true,
         "fullscreen": false,
         "center": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "decorations": false,
+        "shadow": true
       }
     ],
     "security": {

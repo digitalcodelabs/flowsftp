@@ -6,6 +6,15 @@ pub mod ssh;
 pub mod state;
 
 use commands::dialog::{pick_and_read_file, save_file_dialog};
+use commands::dir_watcher::{
+    sftp_list_dir_watchers, sftp_start_dir_watcher, sftp_stop_dir_watcher,
+    sftp_toggle_dir_watcher,
+};
+use commands::external_edit::{
+    sftp_list_active_external_edits, sftp_retry_external_edit_upload, sftp_start_external_edit,
+    sftp_stop_external_edit,
+};
+use commands::search::{sftp_cancel_search, sftp_search_remote};
 use commands::ftp::ftp_connect;
 use commands::keychain::{
     keychain_delete_profile, keychain_get_secret, keychain_list_profiles,
@@ -94,6 +103,19 @@ pub fn run() {
             sftp_compress_local_archive,
             sftp_crawl_local_paths,
             sftp_crawl_remote_paths,
+            // External Editor & Live Auto-Sync Commands
+            sftp_start_external_edit,
+            sftp_stop_external_edit,
+            sftp_list_active_external_edits,
+            sftp_retry_external_edit_upload,
+            // Directory Watcher & Folder Pairing Commands
+            sftp_start_dir_watcher,
+            sftp_stop_dir_watcher,
+            sftp_list_dir_watchers,
+            sftp_toggle_dir_watcher,
+            // Recursive Remote Search & Grep Commands
+            sftp_search_remote,
+            sftp_cancel_search,
             // Keychain & Saved Profiles Commands
             keychain_save_profile,
             keychain_rename_group,

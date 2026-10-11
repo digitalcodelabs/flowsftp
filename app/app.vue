@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Terminal,
   FolderSync,
+  Folder,
   Settings,
   KeyRound,
   LogOut,
@@ -18,7 +19,9 @@ import { useThemeStore } from './stores/theme'
 import {
   getKeymapAction,
   onKeymapAction,
+  matchesShortcut,
   isNormalEditable,
+  isFileManagerAction,
   type KeymapAction,
 } from './utils/keymap'
 import SshTerminal from './components/SshTerminal.vue'
@@ -27,6 +30,7 @@ import ConnectionManagerModal from './components/ConnectionManagerModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import MasterPasswordModal from './components/MasterPasswordModal.vue'
 import CatppuccinIcon from './components/CatppuccinIcon.vue'
+import WindowControls from './components/WindowControls.vue'
 
 const sshStore = useSshStore()
 const vaultStore = useVaultStore()
@@ -38,6 +42,7 @@ const themeStore = useThemeStore()
 const currentTab = ref<'terminal' | 'sftp'>('terminal')
 const showConnectModal = ref(false)
 const showSettingsModal = ref(false)
+const settingsInitialTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>('keymap')
 const tabsContainerRef = ref<HTMLDivElement | null>(null)
 
 // Terminal status
@@ -170,6 +175,10 @@ const executeKeyAction = (action: KeymapAction) => {
   lastActionType = action
 
   switch (action) {
+    case 'openKeymap':
+      settingsInitialTab.value = 'keymap'
+      showSettingsModal.value = !showSettingsModal.value
+      break
     case 'toggleView':
       toggleView()
       break
@@ -189,7 +198,19 @@ const executeKeyAction = (action: KeymapAction) => {
 }
 
 const handleGlobalKeyDown = (e: KeyboardEvent) => {
-  // Do not navigate if modals are open (unless recording shortcut, which is handled inside modal)
+  // Ctrl+, / Cmd+,: Open Keymap & Settings immediately from anywhere
+  if (
+    (settingsStore.keymaps.openKeymap && matchesShortcut(e, settingsStore.keymaps.openKeymap)) ||
+    ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma'))
+  ) {
+    e.preventDefault()
+    e.stopPropagation()
+    settingsInitialTab.value = 'keymap'
+    showSettingsModal.value = !showSettingsModal.value
+    return
+  }
+
+  // Do not navigate if other modals are open (unless recording shortcut, which is handled inside modal)
   if (showConnectModal.value || showSettingsModal.value || vaultStore.showModal) {
     return
   }
@@ -201,13 +222,19 @@ const handleGlobalKeyDown = (e: KeyboardEvent) => {
     }
   }
 
-  // If we are in the SFTP browser view, do not intercept plain F2 (reserved for file rename)
-  if (e.key === 'F2' && currentTab.value === 'sftp') {
-    return
+  // If we are in the SFTP browser view, do not intercept file manager actions or plain F2
+  if (currentTab.value === 'sftp') {
+    if (e.key === 'F2') return
+    if (e.key === 'Tab' && !e.ctrlKey) return
   }
 
   const action = getKeymapAction(e, settingsStore.keymaps)
   if (action) {
+    if (isFileManagerAction(action)) {
+      // Let SftpBrowser / useSftpKeyboardNav handle file manager actions
+      return
+    }
+
     e.preventDefault()
     e.stopPropagation()
     executeKeyAction(action)
@@ -215,11 +242,17 @@ const handleGlobalKeyDown = (e: KeyboardEvent) => {
 }
 
 const handleGlobalContextMenu = (e: MouseEvent) => {
+  const target = e.target as HTMLElement | null
+  // The code editor has its own custom themed right-click context menu; suppress the default browser menu
+  if (target?.closest('.cm-editor')) {
+    e.preventDefault()
+    return
+  }
   // If the user right-clicks on a normal editable input (e.g. search, settings input, or rename input),
   // allow the standard text context menu (Cut, Copy, Paste).
   // Everywhere else (top navigation header, tabs, buttons, empty canvas, terminal, toolbars),
   // suppress the default browser/webview context menu (Back, Refresh, Save as, Print, Inspect).
-  if (isNormalEditable(e.target)) {
+  if (isNormalEditable(target)) {
     return
   }
   e.preventDefault()
@@ -244,13 +277,26 @@ onMounted(async () => {
   if (sshStore.activeSessionId) {
     sftpStore.switchSession(sshStore.activeSessionId)
   }
-  const savedTab = localStorage.getItem('termsftp_active_tab') as 'terminal' | 'sftp' | null
+  const savedTab = localStorage.getItem('flowsftp_active_tab') as 'terminal' | 'sftp' | null
   if (savedTab) {
     currentTab.value = savedTab
   }
   const sess = sshStore.activeSession
   if (sess && (sess.protocol === 'ftp' || sess.protocol === 'ftps')) {
     currentTab.value = 'sftp'
+  }
+
+  if (typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)) {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const win = getCurrentWindow()
+      isWindowMaximized.value = await win.isMaximized()
+      win.listen('tauri://resize', async () => {
+        isWindowMaximized.value = await win.isMaximized()
+      })
+    } catch (err) {
+      console.warn('Failed to listen to window resize:', err)
+    }
   }
 })
 
@@ -264,7 +310,7 @@ onBeforeUnmount(() => {
 })
 
 watch(currentTab, (tab) => {
-  localStorage.setItem('termsftp_active_tab', tab)
+  localStorage.setItem('flowsftp_active_tab', tab)
 })
 
 watch(
@@ -273,56 +319,140 @@ watch(
     sftpStore.switchSession(newSessionId || '')
   }
 )
+
+const isWindowMaximized = ref(false)
+
+const handleResizeStart = (
+  direction: 'North' | 'South' | 'East' | 'West' | 'NorthEast' | 'NorthWest' | 'SouthEast' | 'SouthWest',
+  e: MouseEvent
+) => {
+  e.preventDefault()
+  if (typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)) {
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      getCurrentWindow().startResizeDragging(direction).catch(() => {})
+    })
+  }
+}
+
+const handleHeaderDblClick = async (e: MouseEvent) => {
+  const target = e.target as HTMLElement | null
+  if (target?.closest('button, input, a, [role="button"]')) {
+    return
+  }
+  if (typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)) {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      await getCurrentWindow().toggleMaximize()
+    } catch (err) {
+      console.warn('Failed to toggle maximize on header dblclick:', err)
+    }
+  }
+}
 </script>
 
 <template>
   <div
-    class="flex flex-col h-screen w-screen select-none overflow-hidden font-sans transition-colors duration-150"
+    class="flex flex-col h-screen w-screen select-none overflow-hidden font-sans transition-colors duration-150 relative"
     :style="{ backgroundColor: currentTab === 'terminal' ? 'var(--color-terminal-bg)' : 'var(--color-bg-app)', color: 'var(--color-text-main)' }"
   >
-    <!-- Top Navigation Header with Overflow Guard and Responsive Layout -->
+    <!-- Invisible Window Edge Resize Grips (Frameless Custom Window) -->
+    <template v-if="!isWindowMaximized">
+      <div @mousedown="handleResizeStart('North', $event)" class="fixed top-0 left-2 right-2 h-1 cursor-n-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('South', $event)" class="fixed bottom-0 left-2 right-2 h-1 cursor-s-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('West', $event)" class="fixed top-2 bottom-2 left-0 w-1 cursor-w-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('East', $event)" class="fixed top-2 bottom-2 right-0 w-1 cursor-e-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('NorthWest', $event)" class="fixed top-0 left-0 w-2.5 h-2.5 cursor-nwse-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('NorthEast', $event)" class="fixed top-0 right-0 w-2.5 h-2.5 cursor-nesw-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('SouthWest', $event)" class="fixed bottom-0 left-0 w-2.5 h-2.5 cursor-nesw-resize z-50 pointer-events-auto" />
+      <div @mousedown="handleResizeStart('SouthEast', $event)" class="fixed bottom-0 right-0 w-2.5 h-2.5 cursor-nwse-resize z-50 pointer-events-auto" />
+    </template>
+
+    <!-- Top Navigation Header with Custom Integrated Window Titlebar & Drag Region -->
     <header
       @contextmenu.prevent
-      class="flex items-center justify-between px-3 h-12 border-b gap-2 transition-colors duration-150"
+      data-tauri-drag-region
+      @dblclick="handleHeaderDblClick"
+      class="flex items-center justify-between pl-3 pr-0 h-10 border-b gap-2 transition-colors duration-150 select-none relative z-40"
       :style="{
         backgroundColor: currentTab === 'terminal' ? 'var(--color-terminal-bg)' : 'var(--color-bg-header)',
         borderColor: 'var(--color-border)'
       }"
     >
       <!-- Left: View Switcher -->
-      <div class="flex items-center shrink-0">
+      <div class="flex items-center shrink-0" data-tauri-drag-region="false">
         <!-- View Switcher Tabs -->
         <div
-          class="flex items-center space-x-0.5 p-0.5 rounded-lg border shrink-0 transition-colors"
+          class="flex items-center space-x-1 p-0.5 rounded-lg border shrink-0 transition-colors"
           :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
         >
           <button
             @click="currentTab = 'terminal'"
-            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5"
+            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5 cursor-pointer border"
             :style="currentTab === 'terminal'
-              ? { backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-accent)' }
-              : { color: 'var(--color-text-muted)' }"
+              ? {
+                  backgroundColor: 'var(--color-bg-hover)',
+                  color: 'var(--color-accent)',
+                  borderColor: 'var(--color-border)',
+                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)'
+                }
+              : {
+                  color: 'var(--color-text-muted)',
+                  borderColor: 'transparent'
+                }"
+            :class="[
+              currentTab === 'terminal'
+                ? 'font-semibold'
+                : 'hover:text-[var(--color-text-main)] hover:bg-black/5 dark:hover:bg-white/5'
+            ]"
             :title="`SSH Terminal (${settingsStore.keymaps.switchToTerminal} or ${settingsStore.keymaps.toggleView})`"
           >
-            <CatppuccinIcon name="bash" :size="14" />
+            <Terminal class="w-3.5 h-3.5 shrink-0" />
             <span class="hidden sm:inline">Terminal</span>
           </button>
           <button
             @click="currentTab = 'sftp'"
-            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5"
+            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5 cursor-pointer border"
             :style="currentTab === 'sftp'
-              ? { backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-accent-secondary)' }
-              : { color: 'var(--color-text-muted)' }"
+              ? {
+                  backgroundColor: 'var(--color-bg-hover)',
+                  color: 'var(--color-accent-secondary)',
+                  borderColor: 'var(--color-border)',
+                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)'
+                }
+              : {
+                  color: 'var(--color-text-muted)',
+                  borderColor: 'transparent'
+                }"
+            :class="[
+              currentTab === 'sftp'
+                ? 'font-semibold'
+                : 'hover:text-[var(--color-text-main)] hover:bg-black/5 dark:hover:bg-white/5'
+            ]"
             :title="`SFTP / FTP Browser (${settingsStore.keymaps.switchToFiles} or ${settingsStore.keymaps.toggleView})`"
           >
-            <CatppuccinIcon name="folder" :size="14" />
+            <Folder class="w-3.5 h-3.5 shrink-0" />
             <span class="hidden sm:inline">Files</span>
           </button>
         </div>
       </div>
 
+      <!-- Middle: Centered Draggable FlowSFTP Title when no active sessions -->
+      <div
+        v-if="sshStore.sessions.length === 0"
+        data-tauri-drag-region
+        class="flex-1 flex items-center justify-center min-w-0 pointer-events-none select-none"
+      >
+        <!-- <span class="text-xs font-semibold tracking-wider opacity-40 font-mono" :style="{ color: 'var(--color-text-main)' }">
+          FlowSFTP
+        </span> -->
+      </div>
+
       <!-- Middle: Active Sessions Tabs (Scrollable + Overflow Menu) -->
-      <div v-if="sshStore.sessions.length > 0" class="flex-1 min-w-0 flex items-center space-x-1.5 overflow-hidden">
+      <div
+        v-if="sshStore.sessions.length > 0"
+        data-tauri-drag-region
+        class="flex-1 min-w-0 flex items-center space-x-1.5 overflow-hidden"
+      >
         <!-- Scrollable tab strip with wheel navigation -->
         <div
           ref="tabsContainerRef"
@@ -343,14 +473,14 @@ watch(
             <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="sess.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" />
             <span
               v-if="sess.protocol === 'ftp' || sess.protocol === 'ftps'"
-              class="px-1 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold bg-amber-950/70 text-amber-300 border border-amber-800/60 shrink-0"
+              class="px-1 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold bg-amber-500/15 text-amber-700 border border-amber-500/30 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60 shrink-0"
             >
               {{ sess.protocol.toUpperCase() }}
             </span>
             <span class="truncate min-w-0 flex-1 text-[11px] font-mono">{{ sess.username }}@{{ sess.host }}</span>
             <button
               @click.stop="handleCloseSession(sess.sessionId)"
-              class="opacity-0 group-hover:opacity-100 hover:text-red-400 p-0.5 rounded text-xs leading-none transition shrink-0"
+              class="opacity-0 group-hover:opacity-100 hover:text-red-500 dark:hover:text-red-400 p-0.5 rounded text-xs leading-none transition shrink-0"
               title="Close connection"
             >
               <X class="w-3 h-3" />
@@ -360,38 +490,44 @@ watch(
       </div>
 
       <!-- Right: Action Buttons (Always Preserved and Visible) -->
-      <div class="flex items-center space-x-2 shrink-0">
-        <div v-if="sshStore.activeSession && currentTab === 'terminal' && (!sshStore.activeSession.protocol || sshStore.activeSession.protocol === 'sftp')" class="text-[11px] font-mono hidden xl:inline" :style="{ color: 'var(--color-text-muted)' }">
+      <div class="flex items-center space-x-1.5 shrink-0 h-full" data-tauri-drag-region="false">
+        <div v-if="sshStore.activeSession && currentTab === 'terminal' && (!sshStore.activeSession.protocol || sshStore.activeSession.protocol === 'sftp')" class="text-[11px] font-mono hidden xl:inline pr-1" :style="{ color: 'var(--color-text-muted)' }">
           PTY: {{ terminalDimensions.cols }}x{{ terminalDimensions.rows }}
         </div>
 
         <button
           v-if="sshStore.activeSession"
           @click="handleDisconnect"
-          class="flex items-center space-x-1.5 px-3 py-1.5 text-xs rounded-lg bg-red-950/40 text-red-300 hover:bg-red-900/80 hover:text-white border border-red-800/60 hover:border-red-500 shadow-sm transition-colors duration-150 cursor-pointer"
+          class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-all duration-150 cursor-pointer bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-600 hover:text-white hover:border-red-600 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60 dark:hover:bg-red-900/80 dark:hover:text-white dark:hover:border-red-500"
           title="Disconnect active connection"
         >
-          <CatppuccinIcon name="disconnect" :size="14" />
+          <LogOut class="w-3.5 h-3.5 shrink-0" />
           <span class="hidden sm:inline font-medium">Disconnect</span>
         </button>
 
         <button
           @click="showSettingsModal = true"
-          class="flex items-center space-x-1.5 px-3 py-1.5 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
+          class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
           title="Open Settings"
         >
-          <CatppuccinIcon name="settings" :size="14" />
+          <Settings class="w-3.5 h-3.5 shrink-0" />
           <span class="hidden sm:inline">Settings</span>
         </button>
 
         <button
           @click="showConnectModal = true"
-          class="flex items-center space-x-1.5 px-3 py-1.5 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
+          class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
           title="Open Connection Manager"
         >
-          <CatppuccinIcon name="server" :size="15" />
+          <Server class="w-3.5 h-3.5 shrink-0" />
           <span>Connections</span>
         </button>
+
+        <!-- Vertical Separator before Window Controls -->
+        <div class="h-4 w-px mx-1" :style="{ backgroundColor: 'var(--color-border)' }" />
+
+        <!-- Integrated Custom Title Bar Window Controls -->
+        <WindowControls />
       </div>
     </header>
 
@@ -469,7 +605,7 @@ watch(
               @click="showConnectModal = true"
               class="px-4 py-2 rounded-lg text-xs font-semibold shadow-md transition-all btn-accent flex items-center space-x-2 cursor-pointer"
             >
-              <CatppuccinIcon name="server" :size="15" />
+              <Server class="w-3.5 h-3.5 shrink-0" />
               <span>Open Connection Manager</span>
             </button>
           </div>
@@ -503,6 +639,7 @@ watch(
     <!-- Settings Modal -->
     <SettingsModal
       v-if="showSettingsModal"
+      :initial-tab="settingsInitialTab"
       @close="showSettingsModal = false"
     />
 

@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
-import { getKeymapAction, emitKeymapAction, type KeymapAction } from '../utils/keymap'
+import { getKeymapAction, emitKeymapAction, isFileManagerAction, type KeymapAction } from '../utils/keymap'
 
 const props = withDefaults(
   defineProps<{
@@ -151,8 +151,18 @@ const initTerminal = async () => {
   // Intercept application shortcuts before xterm processes them (e.g. Ctrl+Tab to cycle connections, Ctrl+` to toggle view)
   terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type === 'keydown') {
+      // Standard terminal editing keys must always go directly to xterm
+      if (
+        event.key === 'Backspace' ||
+        event.key === 'Enter' ||
+        (event.key === 'Tab' && !event.ctrlKey)
+      ) {
+        return true
+      }
+
       const action = getKeymapAction(event, settingsStore.keymaps)
-      if (action) {
+      // Only intercept application-level actions (view toggle, tab cycle, settings), never file manager navigation
+      if (action && !isFileManagerAction(action)) {
         event.preventDefault()
         event.stopPropagation()
         emit('action', action)

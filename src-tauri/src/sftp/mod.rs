@@ -1,3 +1,7 @@
+pub mod external_edit;
+pub mod dir_watcher;
+pub mod search;
+
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -384,13 +388,13 @@ pub async fn read_remote_file_text(sftp: &SftpSession, path: &str) -> Result<Str
     }
 }
 
-pub async fn write_remote_file_text(sftp: &SftpSession, path: &str, content: &str) -> Result<(), String> {
+pub async fn write_remote_file_binary(sftp: &SftpSession, path: &str, data: &[u8]) -> Result<(), String> {
     let mut file = sftp
         .create(path)
         .await
         .map_err(|e| format!("Failed to create/open remote file '{}': {}", path, e))?;
 
-    file.write_all(content.as_bytes())
+    file.write_all(data)
         .await
         .map_err(|e| format!("Failed to write content to remote file: {}", e))?;
     file.flush()
@@ -399,6 +403,10 @@ pub async fn write_remote_file_text(sftp: &SftpSession, path: &str, content: &st
     let _ = file.shutdown().await;
 
     Ok(())
+}
+
+pub async fn write_remote_file_text(sftp: &SftpSession, path: &str, content: &str) -> Result<(), String> {
+    write_remote_file_binary(sftp, path, content.as_bytes()).await
 }
 
 pub async fn read_local_file_text(path: &str) -> Result<String, String> {
@@ -1375,7 +1383,7 @@ pub async fn extract_remote_archive(
     };
 
     let full_cmd = format!(
-        "{} && echo '---TERMSFTP_ARCHIVE_SUCCESS---' || echo '---TERMSFTP_ARCHIVE_FAILED---'",
+        "{} && echo '---FLOWSFTP_ARCHIVE_SUCCESS---' || echo '---FLOWSFTP_ARCHIVE_FAILED---'",
         extract_cmd
     );
 
@@ -1394,10 +1402,10 @@ pub async fn extract_remote_archive(
     .map_err(|_| "Archive extraction timed out after 5 minutes".to_string())?;
 
     let text = String::from_utf8_lossy(&output_bytes).to_string();
-    if text.contains("---TERMSFTP_ARCHIVE_SUCCESS---") {
+    if text.contains("---FLOWSFTP_ARCHIVE_SUCCESS---") {
         Ok("Archive extracted successfully".to_string())
     } else {
-        let err_detail = text.replace("---TERMSFTP_ARCHIVE_FAILED---", "").trim().to_string();
+        let err_detail = text.replace("---FLOWSFTP_ARCHIVE_FAILED---", "").trim().to_string();
         Err(if err_detail.is_empty() {
             "Archive extraction failed on remote server (check file format and permissions)".to_string()
         } else {
@@ -1471,7 +1479,7 @@ pub async fn compress_remote_archive(
     };
 
     let full_cmd = format!(
-        "{} && echo '---TERMSFTP_ARCHIVE_SUCCESS---' || echo '---TERMSFTP_ARCHIVE_FAILED---'",
+        "{} && echo '---FLOWSFTP_ARCHIVE_SUCCESS---' || echo '---FLOWSFTP_ARCHIVE_FAILED---'",
         compress_cmd
     );
 
@@ -1490,10 +1498,10 @@ pub async fn compress_remote_archive(
     .map_err(|_| "Archive compression timed out after 5 minutes".to_string())?;
 
     let text = String::from_utf8_lossy(&output_bytes).to_string();
-    if text.contains("---TERMSFTP_ARCHIVE_SUCCESS---") {
+    if text.contains("---FLOWSFTP_ARCHIVE_SUCCESS---") {
         Ok(format!("Archive '{}' created successfully", archive_name))
     } else {
-        let err_detail = text.replace("---TERMSFTP_ARCHIVE_FAILED---", "").trim().to_string();
+        let err_detail = text.replace("---FLOWSFTP_ARCHIVE_FAILED---", "").trim().to_string();
         Err(if err_detail.is_empty() {
             "Archive compression failed on remote server (check permissions and disk space)".to_string()
         } else {

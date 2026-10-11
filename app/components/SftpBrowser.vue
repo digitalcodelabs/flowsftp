@@ -30,7 +30,12 @@ import SftpConflictModal from './sftp/modals/SftpConflictModal.vue'
 import SftpDeleteConfirmModal from './sftp/modals/SftpDeleteConfirmModal.vue'
 import SftpTransferQueue from './sftp/queue/SftpTransferQueue.vue'
 import SftpComparisonBar from './sftp/compare/SftpComparisonBar.vue'
+import SftpExternalEditBar from './sftp/SftpExternalEditBar.vue'
+import SftpDirWatcherModal from './sftp/modals/SftpDirWatcherModal.vue'
+import SftpSearchModal from './sftp/modals/SftpSearchModal.vue'
 import { useSftpComparison } from './sftp/compare/useSftpComparison'
+import { useExternalEditStore } from '../stores/externalEdit'
+import { useDirWatcherStore } from '../stores/dirWatcher'
 import { useSftpKeyboardNav } from './sftp/composables/useSftpKeyboardNav'
 import { useSftpDragDrop } from './sftp/composables/useSftpDragDrop'
 import SftpLocalPane from './sftp/panes/SftpLocalPane.vue'
@@ -58,7 +63,15 @@ const sftpStore = useSftpStore()
 const vaultStore = useVaultStore()
 const settingsStore = useSettingsStore()
 const sshStore = useSshStore()
+const externalEditStore = useExternalEditStore()
+const dirWatcherStore = useDirWatcherStore()
 const showSettingsModal = ref(false)
+const settingsInitialTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>('keymap')
+const showDirWatcherModal = ref(false)
+const dirWatcherLocalDir = ref('')
+const dirWatcherRemoteDir = ref('')
+const showSearchModal = ref(false)
+const searchInitialDir = ref('/')
 
 const localPaneComp = ref<InstanceType<typeof SftpLocalPane> | null>(null)
 const remotePaneComp = ref<InstanceType<typeof SftpRemotePane> | null>(null)
@@ -90,7 +103,7 @@ const startHorizontalResize = (e: MouseEvent) => {
     document.body.style.userSelect = ''
     window.removeEventListener('mousemove', onMouseMove)
     window.removeEventListener('mouseup', onMouseUp)
-    localStorage.setItem('termsftp_left_pane_percent', leftPanePercent.value.toString())
+    localStorage.setItem('flowsftp_left_pane_percent', leftPanePercent.value.toString())
   }
 
   window.addEventListener('mousemove', onMouseMove)
@@ -99,7 +112,7 @@ const startHorizontalResize = (e: MouseEvent) => {
 
 const resetHorizontalSplit = () => {
   leftPanePercent.value = 50
-  localStorage.setItem('termsftp_left_pane_percent', '50')
+  localStorage.setItem('flowsftp_left_pane_percent', '50')
 }
 
 // Row density helpers
@@ -479,10 +492,10 @@ const getRowStyle = (isLocal: boolean, path: string, file: LocalFileEntry | Sftp
 // -------------------------------------------------------------
 // File & Directory Sorting State & Logic
 // -------------------------------------------------------------
-const localSortBy = ref<FileSortField>(getStoredSortBy('termsftp_local_sort_by', 'name'))
-const localSortOrder = ref<FileSortOrder>(getStoredSortOrder('termsftp_local_sort_order', 'asc'))
-const remoteSortBy = ref<FileSortField>(getStoredSortBy('termsftp_remote_sort_by', 'name'))
-const remoteSortOrder = ref<FileSortOrder>(getStoredSortOrder('termsftp_remote_sort_order', 'asc'))
+const localSortBy = ref<FileSortField>(getStoredSortBy('flowsftp_local_sort_by', 'name'))
+const localSortOrder = ref<FileSortOrder>(getStoredSortOrder('flowsftp_local_sort_order', 'asc'))
+const remoteSortBy = ref<FileSortField>(getStoredSortBy('flowsftp_remote_sort_by', 'name'))
+const remoteSortOrder = ref<FileSortOrder>(getStoredSortOrder('flowsftp_remote_sort_order', 'asc'))
 
 const handleLocalSort = (field: FileSortField) => {
   if (localSortBy.value === field) {
@@ -492,8 +505,8 @@ const handleLocalSort = (field: FileSortField) => {
     localSortOrder.value = 'asc'
   }
   if (typeof window !== 'undefined') {
-    localStorage.setItem('termsftp_local_sort_by', localSortBy.value)
-    localStorage.setItem('termsftp_local_sort_order', localSortOrder.value)
+    localStorage.setItem('flowsftp_local_sort_by', localSortBy.value)
+    localStorage.setItem('flowsftp_local_sort_order', localSortOrder.value)
   }
 }
 
@@ -505,8 +518,8 @@ const handleRemoteSort = (field: FileSortField) => {
     remoteSortOrder.value = 'asc'
   }
   if (typeof window !== 'undefined') {
-    localStorage.setItem('termsftp_remote_sort_by', remoteSortBy.value)
-    localStorage.setItem('termsftp_remote_sort_order', remoteSortOrder.value)
+    localStorage.setItem('flowsftp_remote_sort_by', remoteSortBy.value)
+    localStorage.setItem('flowsftp_remote_sort_order', remoteSortOrder.value)
   }
 }
 
@@ -688,13 +701,13 @@ const showRemoteBookmarksMenu = ref(false)
 
 const loadBookmarks = () => {
   try {
-    const lb = localStorage.getItem('termsftp_local_bookmarks')
+    const lb = localStorage.getItem('flowsftp_local_bookmarks')
     if (lb) {
       localBookmarks.value = JSON.parse(lb)
     } else {
       localBookmarks.value = []
     }
-    const rb = localStorage.getItem('termsftp_remote_bookmarks')
+    const rb = localStorage.getItem('flowsftp_remote_bookmarks')
     if (rb) {
       remoteBookmarks.value = JSON.parse(rb)
     } else {
@@ -706,11 +719,11 @@ const loadBookmarks = () => {
 }
 
 const saveLocalBookmarks = () => {
-  localStorage.setItem('termsftp_local_bookmarks', JSON.stringify(localBookmarks.value))
+  localStorage.setItem('flowsftp_local_bookmarks', JSON.stringify(localBookmarks.value))
 }
 
 const saveRemoteBookmarks = () => {
-  localStorage.setItem('termsftp_remote_bookmarks', JSON.stringify(remoteBookmarks.value))
+  localStorage.setItem('flowsftp_remote_bookmarks', JSON.stringify(remoteBookmarks.value))
 }
 
 const isLocalBookmarked = computed(() => localBookmarks.value.includes(sftpStore.localPath))
@@ -755,6 +768,58 @@ const handleOpenInDefaultApp = async (path: string) => {
   } catch (err) {
     console.error('Failed to open file in default app:', err)
   }
+}
+
+// Open in External Editor with Live Sync (Remote)
+const handleOpenInExternalEditor = async (file: SftpFileEntry) => {
+  closeContextMenu()
+  if (!props.sessionId) return
+  try {
+    const editor = settingsStore.preferredExternalEditor === 'custom'
+      ? settingsStore.customExternalEditorCommand
+      : settingsStore.preferredExternalEditor
+    showArchiveToast(`Opening ${file.name} in external editor...`, false, true, 2500)
+    await externalEditStore.startEdit(props.sessionId, file.path, editor)
+    showArchiveToast(`Watching ${file.name} for external edits (auto-upload on save)`, false, false, 3500)
+  } catch (err: any) {
+    console.error('Failed to start external edit:', err)
+    showArchiveToast(`Failed to open in external editor: ${err?.message || err}`, true, false, 6000)
+  }
+}
+
+watch(
+  () => externalEditStore.lastSyncNotification,
+  (notif) => {
+    if (notif && props.sessionId) {
+      showArchiveToast(`Auto-uploaded: ${notif.filename} (${notif.time})`, false, false, 3000)
+      sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
+      sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+    }
+  }
+)
+
+watch(
+  () => dirWatcherStore.lastSyncEvent,
+  (ev) => {
+    if (ev && ev.status === 'uploaded' && props.sessionId) {
+      showArchiveToast(`Auto-synced: ${ev.relative_path}`, false, false, 3000)
+      sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
+      sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+    }
+  }
+)
+
+const openDirWatcherModal = (localDir?: string, remoteDir?: string) => {
+  dirWatcherLocalDir.value = localDir || sftpStore.localPath
+  dirWatcherRemoteDir.value = remoteDir || sftpStore.remotePath
+  showDirWatcherModal.value = true
+  closeContextMenu()
+}
+
+const openSearchModal = (remoteDir?: string) => {
+  searchInitialDir.value = remoteDir || sftpStore.remotePath || '/'
+  showSearchModal.value = true
+  closeContextMenu()
 }
 
 // Multi-Selection & Navigation State
@@ -917,12 +982,24 @@ const isAnyModalOpen = () => {
     showPermissionsModal.value ||
     showDeleteConfirmModal.value ||
     showSettingsModal.value ||
+    showDirWatcherModal.value ||
+    showSearchModal.value ||
     vaultStore.showModal
   )
 }
 
+const handleWindowShortcut = (e: KeyboardEvent) => {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (props.sessionId) {
+      openSearchModal()
+    }
+  }
+}
+
 onMounted(() => {
-  const savedLeftPercent = localStorage.getItem('termsftp_left_pane_percent')
+  const savedLeftPercent = localStorage.getItem('flowsftp_left_pane_percent')
   if (savedLeftPercent) {
     const parsed = parseFloat(savedLeftPercent)
     if (!isNaN(parsed) && parsed >= 20 && parsed <= 80) {
@@ -932,13 +1009,23 @@ onMounted(() => {
 
   sftpStore.initLocal()
   vaultStore.init()
+  externalEditStore.init()
+  dirWatcherStore.init()
+  if (props.sessionId) {
+    externalEditStore.loadActiveEdits(props.sessionId)
+    dirWatcherStore.loadPairings(props.sessionId)
+  }
   loadBookmarks()
   startHeartbeat()
   window.addEventListener('online', handleNetworkOnline)
   window.addEventListener('click', closeContextMenu)
+  window.addEventListener('keydown', handleWindowShortcut)
+  window.addEventListener('auxclick', handleAuxClick)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('auxclick', handleAuxClick)
+  window.removeEventListener('keydown', handleWindowShortcut)
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('online', handleNetworkOnline)
   if (heartbeatInterval) clearInterval(heartbeatInterval)
@@ -998,6 +1085,176 @@ const canNavigateLocalUp = computed(() => !!localParentPath.value)
 
 const remoteParentPath = computed(() => getRemoteParentPath(sftpStore.remotePath))
 const canNavigateRemoteUp = computed(() => !!props.sessionId && !!remoteParentPath.value)
+
+// -------------------------------------------------------------
+// Folder Navigation History (Back / Forward Stacks)
+// -------------------------------------------------------------
+const localHistory = ref<string[]>([])
+const localHistoryIndex = ref<number>(-1)
+let isNavigatingLocalHistory = false
+
+const canNavigateLocalBack = computed(() => localHistoryIndex.value > 0)
+const canNavigateLocalForward = computed(
+  () => localHistoryIndex.value >= 0 && localHistoryIndex.value < localHistory.value.length - 1
+)
+
+watch(
+  () => sftpStore.localPath,
+  (newPath) => {
+    if (!newPath) return
+    if (isNavigatingLocalHistory) {
+      isNavigatingLocalHistory = false
+      return
+    }
+    if (localHistory.value.length === 0) {
+      localHistory.value = [newPath]
+      localHistoryIndex.value = 0
+    } else if (localHistory.value[localHistoryIndex.value] !== newPath) {
+      localHistory.value = localHistory.value.slice(0, localHistoryIndex.value + 1)
+      localHistory.value.push(newPath)
+      localHistoryIndex.value = localHistory.value.length - 1
+    }
+  },
+  { immediate: true }
+)
+
+const navigateLocalBack = () => {
+  if (!canNavigateLocalBack.value) return
+  isNavigatingLocalHistory = true
+  localHistoryIndex.value--
+  const targetPath = localHistory.value[localHistoryIndex.value]
+  if (targetPath) {
+    sftpStore.fetchLocalDir(targetPath)
+  }
+}
+
+const navigateLocalForward = () => {
+  if (!canNavigateLocalForward.value) return
+  isNavigatingLocalHistory = true
+  localHistoryIndex.value++
+  const targetPath = localHistory.value[localHistoryIndex.value]
+  if (targetPath) {
+    sftpStore.fetchLocalDir(targetPath)
+  }
+}
+
+const remoteHistory = ref<string[]>([])
+const remoteHistoryIndex = ref<number>(-1)
+let isNavigatingRemoteHistory = false
+
+const canNavigateRemoteBack = computed(
+  () => !!props.sessionId && remoteHistoryIndex.value > 0
+)
+const canNavigateRemoteForward = computed(
+  () =>
+    !!props.sessionId &&
+    remoteHistoryIndex.value >= 0 &&
+    remoteHistoryIndex.value < remoteHistory.value.length - 1
+)
+
+watch(
+  () => sftpStore.remotePath,
+  (newPath) => {
+    if (!newPath || !props.sessionId) return
+    if (isNavigatingRemoteHistory) {
+      isNavigatingRemoteHistory = false
+      return
+    }
+    if (remoteHistory.value.length === 0) {
+      remoteHistory.value = [newPath]
+      remoteHistoryIndex.value = 0
+    } else if (remoteHistory.value[remoteHistoryIndex.value] !== newPath) {
+      remoteHistory.value = remoteHistory.value.slice(0, remoteHistoryIndex.value + 1)
+      remoteHistory.value.push(newPath)
+      remoteHistoryIndex.value = remoteHistory.value.length - 1
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.sessionId,
+  (newSid) => {
+    remoteHistory.value = []
+    remoteHistoryIndex.value = -1
+    if (newSid && sftpStore.remotePath) {
+      remoteHistory.value = [sftpStore.remotePath]
+      remoteHistoryIndex.value = 0
+    }
+  }
+)
+
+const navigateRemoteBack = () => {
+  if (!canNavigateRemoteBack.value || !props.sessionId) return
+  isNavigatingRemoteHistory = true
+  remoteHistoryIndex.value--
+  const targetPath = remoteHistory.value[remoteHistoryIndex.value]
+  if (targetPath) {
+    sftpStore.fetchRemoteDir(props.sessionId, targetPath)
+  }
+}
+
+const navigateRemoteForward = () => {
+  if (!canNavigateRemoteForward.value || !props.sessionId) return
+  isNavigatingRemoteHistory = true
+  remoteHistoryIndex.value++
+  const targetPath = remoteHistory.value[remoteHistoryIndex.value]
+  if (targetPath) {
+    sftpStore.fetchRemoteDir(props.sessionId, targetPath)
+  }
+}
+
+// Mouse Back / Forward (Button 3 & 4) Support
+const handleAuxClick = (e: MouseEvent) => {
+  if (props.active === false) return
+  if (isAnyModalOpen()) return
+  if (e.button === 3) {
+    e.preventDefault()
+    if (activePane.value === 'local') {
+      navigateLocalBack()
+    } else {
+      navigateRemoteBack()
+    }
+  } else if (e.button === 4) {
+    e.preventDefault()
+    if (activePane.value === 'local') {
+      navigateLocalForward()
+    } else {
+      navigateRemoteForward()
+    }
+  }
+}
+
+// Tab: Toggle Active Pane
+const toggleActivePane = () => {
+  if (props.sessionId) {
+    activePane.value = activePane.value === 'local' ? 'remote' : 'local'
+  } else {
+    activePane.value = 'local'
+  }
+  nextTick(() => {
+    if (activePane.value === 'local') {
+      if (selectedLocalFiles.value.length === 0 && filteredLocalFiles.value.length > 0) {
+        const idx = canNavigateLocalUp.value ? -1 : 0
+        applySelection(true, idx, null, false)
+      }
+    } else {
+      if (selectedRemoteFiles.value.length === 0 && filteredRemoteFiles.value.length > 0) {
+        const idx = canNavigateRemoteUp.value ? -1 : 0
+        applySelection(false, idx, null, false)
+      }
+    }
+  })
+}
+
+// Ctrl+L: Edit active pane's address / location bar
+const editActivePath = () => {
+  if (activePane.value === 'local') {
+    localPaneComp.value?.startEditPath()
+  } else {
+    remotePaneComp.value?.startEditPath()
+  }
+}
 
 // Local Directory Navigation
 const navigateLocalUp = () => {
@@ -1273,6 +1530,8 @@ const {
     showRenameModal.value = false
     showCompressModal.value = false
     showExtractModal.value = false
+    showSearchModal.value = false
+    showDirWatcherModal.value = false
     localPaneComp.value?.closeAllDropdowns()
     remotePaneComp.value?.closeAllDropdowns()
     showSettingsModal.value = false
@@ -1283,6 +1542,13 @@ const {
   onLocalRowDoubleClick: (entry) => handleLocalRowDoubleClick(entry),
   onRemoteRowDoubleClick: (entry) => handleRemoteRowDoubleClick(entry),
   onScrollToRow: (pane, idx) => scrollToRow(pane, idx),
+  onTogglePane: () => toggleActivePane(),
+  onEditPath: () => editActivePath(),
+  onTransferCopy: () => handleTransferCopy(),
+  onTransferMove: () => handleTransferMove(),
+  onNewFolder: (pane) => openNewFolder(pane),
+  onNavigateBack: (pane) => (pane === 'local' ? navigateLocalBack() : navigateRemoteBack()),
+  onNavigateForward: (pane) => (pane === 'local' ? navigateLocalForward() : navigateRemoteForward()),
   isAnyModalOpen,
 })
 
@@ -1326,6 +1592,34 @@ const handleDownload = async (remoteFile: SftpFileEntry) => {
     await handleBatchDownload(selectedRemoteFiles.value)
   } else {
     await handleBatchDownload([remoteFile])
+  }
+}
+
+// F5: Copy / Transfer selected files to opposite pane
+const handleTransferCopy = async () => {
+  if (!props.sessionId) return
+  if (activePane.value === 'local') {
+    if (selectedLocalFiles.value.length === 0) return
+    await handleBatchUpload(selectedLocalFiles.value)
+  } else {
+    if (selectedRemoteFiles.value.length === 0) return
+    await handleBatchDownload(selectedRemoteFiles.value)
+  }
+}
+
+// F6: Move selected files to opposite pane (Transfer + Delete source prompt)
+const handleTransferMove = async () => {
+  if (!props.sessionId) return
+  if (activePane.value === 'local') {
+    if (selectedLocalFiles.value.length === 0) return
+    const filesToMove = [...selectedLocalFiles.value]
+    await handleBatchUpload(filesToMove)
+    openDeleteConfirm('local', filesToMove)
+  } else {
+    if (selectedRemoteFiles.value.length === 0) return
+    const filesToMove = [...selectedRemoteFiles.value]
+    await handleBatchDownload(filesToMove)
+    openDeleteConfirm('remote', filesToMove)
   }
 }
 
@@ -1813,8 +2107,8 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
 
 <template>
   <div
-    class="flex flex-col h-full w-full text-slate-200 overflow-hidden select-none transition-colors duration-150 relative"
-    :style="{ backgroundColor: 'var(--color-bg-app)' }"
+    class="flex flex-col h-full w-full overflow-hidden select-none transition-colors duration-150 relative"
+    :style="{ backgroundColor: 'var(--color-bg-app)', color: 'var(--color-text-main)' }"
   >
     <!-- Global Drag/Resize Overlays (Prevents iframes, selections, and sub-elements from eating mousemove/mouseup) -->
     <div
@@ -1918,6 +2212,9 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       </div>
     </transition>
 
+    <!-- External Editor Live Sync Bar -->
+    <SftpExternalEditBar :session-id="props.sessionId" />
+
     <!-- Directory Comparison Control & Summary Bar -->
     <SftpComparisonBar
       v-if="isComparing && props.sessionId"
@@ -1953,6 +2250,8 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :sort-order="localSortOrder"
         :active-drop-folder="activeDropFolder"
         :can-navigate-up="canNavigateLocalUp"
+        :can-navigate-back="canNavigateLocalBack"
+        :can-navigate-forward="canNavigateLocalForward"
         :parent-path="localParentPath"
         :is-parent-selected="isLocalParentSelected"
         :row-padding-class="rowPaddingClass"
@@ -1968,10 +2267,14 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @filter-esc="handleFilterEsc('local')"
         @focus-first-item="focusFirstItem('local')"
         @navigate-up="navigateLocalUp"
+        @navigate-back="navigateLocalBack"
+        @navigate-forward="navigateLocalForward"
         @navigate-to="(path) => sftpStore.fetchLocalDir(path)"
+        @copy-path="handleCopyPath"
         @refresh="sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })"
         @new-file="openNewFile('local')"
         @new-folder="openNewFolder('local')"
+        @open-dir-watcher="() => openDirWatcherModal()"
         @open-settings="showSettingsModal = true"
         @batch-upload="(files) => handleBatchUpload(files)"
         @batch-delete="(files) => handleBatchDeleteLocal(files)"
@@ -2029,6 +2332,8 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :sort-order="remoteSortOrder"
         :active-drop-folder="activeDropFolder"
         :can-navigate-up="canNavigateRemoteUp"
+        :can-navigate-back="canNavigateRemoteBack"
+        :can-navigate-forward="canNavigateRemoteForward"
         :parent-path="remoteParentPath"
         :is-parent-selected="isRemoteParentSelected"
         :row-padding-class="rowPaddingClass"
@@ -2044,11 +2349,15 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @filter-esc="handleFilterEsc('remote')"
         @focus-first-item="focusFirstItem('remote')"
         @navigate-up="navigateRemoteUp"
+        @navigate-back="navigateRemoteBack"
+        @navigate-forward="navigateRemoteForward"
         @navigate-to="(path) => props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, path)"
+        @copy-path="handleCopyPath"
         @refresh="handleRemoteRefresh"
         @reconnect="performAutoReconnect"
         @new-file="openNewFile('remote')"
         @new-folder="openNewFolder('remote')"
+        @open-search="() => openSearchModal()"
         @permissions="(file) => openPermissions(file)"
         @batch-download="(files) => handleBatchDownload(files)"
         @batch-delete="(files) => handleBatchDeleteRemote(files)"
@@ -2101,6 +2410,9 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       @batch-download="(files) => handleBatchDownload(files)"
       @quick-look="(target, file) => openQuickLook(target, file)"
       @edit="(target, file) => openEditor(target, file)"
+      @open-in-external-editor="(file) => handleOpenInExternalEditor(file)"
+      @pair-folder="(localDir) => openDirWatcherModal(localDir)"
+      @search-remote="(remoteDir) => openSearchModal(remoteDir)"
       @open-in-default-app="(path) => handleOpenInDefaultApp(path)"
       @permissions="(file) => openPermissions(file)"
       @open-in-terminal="(path) => handleOpenInTerminal(path)"
@@ -2183,17 +2495,6 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     />
   </div>
 
-  <!-- File Editor Modal -->
-  <FileEditorModal
-    :show="showEditorModal"
-    :session-id="props.sessionId"
-    :target="editorTarget"
-    :file-path="editorFilePath"
-    :file-name="editorFileName"
-    @close="showEditorModal = false"
-    @saved="handleEditorSaved"
-  />
-
   <!-- File Permissions (chmod) Modal -->
   <PermissionsModal
     :show="showPermissionsModal"
@@ -2203,7 +2504,32 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     @updated="handlePermissionsUpdated"
   />
 
-  <SettingsModal :show="showSettingsModal" @close="showSettingsModal = false" />
+  <SettingsModal
+    :show="showSettingsModal"
+    :initial-tab="settingsInitialTab"
+    @close="showSettingsModal = false"
+  />
+
+  <!-- Live Directory Watcher Modal -->
+  <SftpDirWatcherModal
+    :show="showDirWatcherModal"
+    :session-id="props.sessionId"
+    :initial-local-dir="dirWatcherLocalDir"
+    :initial-remote-dir="dirWatcherRemoteDir"
+    @close="showDirWatcherModal = false"
+    @toast="(msg, isErr) => showArchiveToast(msg, isErr)"
+  />
+
+  <!-- Remote Search & Grep Modal -->
+  <SftpSearchModal
+    :show="showSearchModal"
+    :session-id="props.sessionId"
+    :current-remote-path="searchInitialDir"
+    @close="showSearchModal = false"
+    @navigate-to="(path) => props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, path)"
+    @open-editor="(path, name) => openEditor('remote', { path, name, is_dir: false, is_symlink: false, size: 0, modified: 0, permissions: 0o644 })"
+    @quick-look="(path, name) => openQuickLook('remote', { path, name, is_dir: false, is_symlink: false, size: 0, modified: 0, permissions: 0o644 })"
+  />
 
   <!-- macOS-style Spacebar Quick Look Modal -->
   <QuickLookModal
@@ -2216,6 +2542,17 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     @open-editor="(target, file) => openEditor(target, file)"
     @prev="navigateQuickLook('prev')"
     @next="navigateQuickLook('next')"
+  />
+
+  <!-- File Editor Modal (in front of search & preview) -->
+  <FileEditorModal
+    :show="showEditorModal"
+    :session-id="props.sessionId"
+    :target="editorTarget"
+    :file-path="editorFilePath"
+    :file-name="editorFileName"
+    @close="showEditorModal = false"
+    @saved="handleEditorSaved"
   />
 </template>
 

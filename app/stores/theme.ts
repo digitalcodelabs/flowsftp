@@ -129,7 +129,7 @@ export const useThemeStore = defineStore('theme', () => {
   const loadCustomThemes = (): AppTheme[] => {
     if (typeof window === 'undefined') return []
     try {
-      const saved = localStorage.getItem('termsftp_custom_themes')
+      const saved = localStorage.getItem('flowsftp_custom_themes')
       if (saved) {
         return JSON.parse(saved)
       }
@@ -149,7 +149,7 @@ export const useThemeStore = defineStore('theme', () => {
   // Selected Theme ID
   const currentThemeId = ref<string>(
     typeof window !== 'undefined'
-      ? localStorage.getItem('termsftp_theme_id') || 'default'
+      ? localStorage.getItem('flowsftp_theme_id') || 'default'
       : 'default'
   )
 
@@ -167,7 +167,7 @@ export const useThemeStore = defineStore('theme', () => {
       currentTheme,
       (newTheme) => {
         applyThemeToDom(newTheme)
-        localStorage.setItem('termsftp_theme_id', newTheme.id)
+        localStorage.setItem('flowsftp_theme_id', newTheme.id)
       },
       { immediate: true }
     )
@@ -175,7 +175,7 @@ export const useThemeStore = defineStore('theme', () => {
     watch(
       customThemes,
       (themes) => {
-        localStorage.setItem('termsftp_custom_themes', JSON.stringify(themes))
+        localStorage.setItem('flowsftp_custom_themes', JSON.stringify(themes))
       },
       { deep: true }
     )
@@ -320,7 +320,7 @@ export const useThemeStore = defineStore('theme', () => {
       terminal: theme.terminal,
     }
     const jsonString = JSON.stringify(exportData, null, 2)
-    const defaultName = `termsftp-theme-${theme.id}.json`
+    const defaultName = `flowsftp-theme-${theme.id}.json`
 
     // Try native Tauri save_file_dialog first
     try {

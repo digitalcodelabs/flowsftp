@@ -5,7 +5,7 @@ use keyring::Entry;
 pub struct KeychainManager;
 
 impl KeychainManager {
-    const SERVICE: &'static str = "termsftp";
+    const SERVICE: &'static str = "flowsftp";
 
     pub fn set_secret(account: &str, secret: &str) -> Result<(), String> {
         let entry = Entry::new(Self::SERVICE, account)

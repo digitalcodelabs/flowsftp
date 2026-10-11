@@ -86,7 +86,7 @@ const startVerticalResize = (e: MouseEvent) => {
     document.body.style.userSelect = ''
     window.removeEventListener('mousemove', onMouseMove)
     window.removeEventListener('mouseup', onMouseUp)
-    localStorage.setItem('termsftp_drawer_height', drawerHeight.value.toString())
+    localStorage.setItem('flowsftp_drawer_height', drawerHeight.value.toString())
   }
 
   window.addEventListener('mousemove', onMouseMove)
@@ -96,7 +96,7 @@ const startVerticalResize = (e: MouseEvent) => {
 const resetVerticalSplit = () => {
   showTransferDrawer.value = true
   drawerHeight.value = DEFAULT_DRAWER_HEIGHT
-  localStorage.setItem('termsftp_drawer_height', DEFAULT_DRAWER_HEIGHT.toString())
+  localStorage.setItem('flowsftp_drawer_height', DEFAULT_DRAWER_HEIGHT.toString())
 }
 
 // -------------------------------------------------------------
@@ -129,7 +129,7 @@ const isResizingQueueCol = ref<string | null>(null)
 
 const loadQueueColWidths = () => {
   try {
-    const saved = localStorage.getItem('termsftp_queue_col_widths')
+    const saved = localStorage.getItem('flowsftp_queue_col_widths')
     if (saved) {
       const parsed = JSON.parse(saved)
       if (parsed && typeof parsed === 'object') {
@@ -141,7 +141,7 @@ const loadQueueColWidths = () => {
 
 const saveQueueColWidths = () => {
   try {
-    localStorage.setItem('termsftp_queue_col_widths', JSON.stringify(queueColWidths.value))
+    localStorage.setItem('flowsftp_queue_col_widths', JSON.stringify(queueColWidths.value))
   } catch {}
 }
 
@@ -621,7 +621,7 @@ const exportQueueTransfers = (tab: 'active' | 'completed' | 'failed') => {
   else list = sftpStore.failedTransfers
 
   const lines = [
-    `Termsftp Transfer Queue Export - Tab: ${tab} - Date: ${new Date().toISOString()}`,
+    `FlowSFTP Transfer Queue Export - Tab: ${tab} - Date: ${new Date().toISOString()}`,
     '--------------------------------------------------------------------------------',
     'Server | Direction | Local File | Remote File | Size | Priority | Status/Error',
     ...list.map((t) =>
@@ -633,7 +633,7 @@ const exportQueueTransfers = (tab: 'active' | 'completed' | 'failed') => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `termsftp-${tab}-transfers-${Date.now()}.txt`
+  a.download = `flowsftp-${tab}-transfers-${Date.now()}.txt`
   a.click()
   URL.revokeObjectURL(url)
   closeQueueContextMenu()
@@ -644,7 +644,7 @@ const exportQueueTransfers = (tab: 'active' | 'completed' | 'failed') => {
 // -------------------------------------------------------------
 type QueueCompletionAction = 'nothing' | 'play_sound' | 'disconnect' | 'close'
 const queueCompletionAction = ref<QueueCompletionAction>(
-  (typeof window !== 'undefined' && (localStorage.getItem('termsftp_queue_completion_action') as QueueCompletionAction)) || 'nothing'
+  (typeof window !== 'undefined' && (localStorage.getItem('flowsftp_queue_completion_action') as QueueCompletionAction)) || 'nothing'
 )
 
 const playNotificationSound = () => {
@@ -684,7 +684,7 @@ const playNotificationSound = () => {
 const setQueueCompletionAction = (action: QueueCompletionAction) => {
   queueCompletionAction.value = action
   if (typeof window !== 'undefined') {
-    localStorage.setItem('termsftp_queue_completion_action', action)
+    localStorage.setItem('flowsftp_queue_completion_action', action)
   }
   closeQueueContextMenu()
   if (action === 'play_sound') {
@@ -693,7 +693,7 @@ const setQueueCompletionAction = (action: QueueCompletionAction) => {
   } else if (action === 'disconnect') {
     emit('toast', 'Action after queue: Disconnect from server', false, false, 2500)
   } else if (action === 'close') {
-    emit('toast', 'Action after queue: Close Termsftp', false, false, 2500)
+    emit('toast', 'Action after queue: Close FlowSFTP', false, false, 2500)
   } else {
     emit('toast', 'Action after queue: Do nothing', false, false, 2000)
   }
@@ -711,7 +711,7 @@ const handleQueueCompleted = async () => {
     }
   } else if (queueCompletionAction.value === 'close') {
     playNotificationSound()
-    emit('toast', 'Queue complete: Closing TermSFTP in 2 seconds...', false, false, 2000)
+    emit('toast', 'Queue complete: Closing FlowSFTP in 2 seconds...', false, false, 2000)
     setTimeout(async () => {
       try {
         await invoke('exit_app')
@@ -747,7 +747,7 @@ const handleWindowClick = () => {
 
 onMounted(() => {
   loadQueueColWidths()
-  const savedHeight = localStorage.getItem('termsftp_drawer_height')
+  const savedHeight = localStorage.getItem('flowsftp_drawer_height')
   if (savedHeight) {
     const h = parseInt(savedHeight, 10)
     if (!isNaN(h) && h >= MIN_DRAWER_HEIGHT) {
@@ -803,7 +803,8 @@ defineExpose({
     :style="{
       height: showTransferDrawer ? `${drawerHeight}px` : 'auto',
       backgroundColor: 'var(--color-bg-card)',
-      borderColor: 'var(--color-border)'
+      borderColor: 'var(--color-border)',
+      color: 'var(--color-text-main)'
     }"
   >
     <!-- Horizontal Splitter Handle (Vertical Resize for Bottom Drawer) -->
@@ -846,8 +847,8 @@ defineExpose({
           <col :style="{ width: `${queueColWidths.status}px` }" />
         </colgroup>
         <thead
-          class="sticky top-0 z-10 border-b select-none"
-          :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+          class="sticky top-0 z-10 border-b select-none font-medium"
+          :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
         >
           <tr>
             <th class="px-2 py-1 font-normal border-r relative select-none" :style="{ borderColor: 'var(--color-border)' }">
@@ -912,59 +913,60 @@ defineExpose({
                 @contextmenu.stop="openQueueContextMenu($event, row.item)"
                 class="border-b transition-colors cursor-pointer"
                 :class="selectedQueueItemIds.has(row.item.transfer_id) ? 'bg-sky-600/30 text-white font-medium' : 'hover:bg-black/10 dark:hover:bg-white/5'"
-                :style="{ borderColor: 'var(--color-border)' }"
+                :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
               >
                 <td class="px-2 py-1 pl-6 align-top">
                   <div class="flex items-center space-x-1.5 truncate">
-                    <FileText class="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-                    <span class="truncate font-mono text-[11px]" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
+                    <FileText class="w-3.5 h-3.5 flex-shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
+                    <span class="truncate font-mono text-[11px] font-medium" :style="{ color: 'var(--color-text-main)' }" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
                   </div>
 
                   <!-- FileZilla-style Live Progress Bar Sub-line -->
                   <div
                     v-if="isTransferActive(row.item)"
-                    class="flex items-center space-x-2.5 mt-1 text-[10px] font-mono text-zinc-400 dark:text-zinc-400 select-none whitespace-nowrap pl-5"
+                    class="flex items-center space-x-2.5 mt-1 text-[10px] font-mono select-none whitespace-nowrap pl-5"
+                    :style="{ color: 'var(--color-text-muted)' }"
                   >
-                    <span class="shrink-0">{{ getTransferElapsed(row.item) }}</span>
-                    <span class="shrink-0">{{ getTransferLeft(row.item) }}</span>
+                    <span class="shrink-0 font-medium">{{ getTransferElapsed(row.item) }}</span>
+                    <span class="shrink-0 font-medium">{{ getTransferLeft(row.item) }}</span>
 
                     <!-- FileZilla Crisp Green Progress Bar -->
                     <div
-                      class="relative w-32 sm:w-36 h-3.5 rounded-[2px] border border-zinc-400/50 dark:border-zinc-600/70 bg-zinc-200 dark:bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner"
+                      class="relative w-32 sm:w-36 h-3.5 rounded-[2px] border border-zinc-400 dark:border-zinc-600 bg-zinc-200 dark:bg-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner"
                     >
                       <div
                         class="absolute left-0 top-0 bottom-0 bg-[#22c55e] transition-all duration-150"
                         :style="{ width: `${getTransferPercentNumber(row.item)}%` }"
                       />
-                      <span class="relative z-10 text-[9px] font-bold font-mono text-zinc-900 dark:text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)] leading-none select-none">
+                      <span class="relative z-10 text-[9px] font-bold font-mono text-zinc-900 dark:text-white drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)] dark:drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)] leading-none select-none">
                         {{ getTransferPercentFormatted(row.item) }}
                       </span>
                     </div>
 
                     <!-- Exact Transferred Bytes and Speed -->
-                    <span class="text-zinc-300 dark:text-zinc-300 shrink-0">
+                    <span class="shrink-0 font-medium" :style="{ color: 'var(--color-text-muted)' }">
                       {{ (row.item.bytes_transferred || 0).toLocaleString() }} bytes ({{ formatSpeedMib(row.item.speed_bytes_per_sec) }})
                     </span>
                   </div>
                 </td>
                 <td class="px-2 py-1 text-center font-bold align-top">
-                  <span :class="row.item.direction === 'upload' ? 'text-sky-400' : 'text-emerald-400'">
+                  <span :class="row.item.direction === 'upload' ? 'text-sky-600 dark:text-sky-400' : 'text-emerald-600 dark:text-emerald-400'">
                     {{ row.item.direction === 'upload' ? '-->' : '<--' }}
                   </span>
                 </td>
-                <td class="px-2 py-1 truncate align-top font-mono text-[11px]" :title="row.item.remote_path || row.item.file_name">
+                <td class="px-2 py-1 truncate align-top font-mono text-[11px]" :style="{ color: 'var(--color-text-main)' }" :title="row.item.remote_path || row.item.file_name">
                   {{ row.item.remote_path || row.item.file_name }}
                 </td>
-                <td class="px-2 py-1 text-right font-mono align-top text-[11px]">
+                <td class="px-2 py-1 text-right font-mono align-top text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
                   {{ (row.item.total_bytes || 0).toLocaleString() }}
                 </td>
-                <td class="px-2 py-1 align-top text-[11px]">
+                <td class="px-2 py-1 align-top text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
                   {{ row.item.priority || 'Normal' }}
                 </td>
                 <td class="px-2 py-1 truncate align-top text-[11px]">
-                  <span v-if="!sftpStore.isQueueProcessing" class="text-amber-400 font-semibold">Paused</span>
-                  <span v-else-if="isTransferActive(row.item)" class="text-sky-400 font-medium">Transferring</span>
-                  <span v-else class="text-zinc-500">Queued</span>
+                  <span v-if="!sftpStore.isQueueProcessing" class="text-amber-600 dark:text-amber-400 font-semibold">Paused</span>
+                  <span v-else-if="isTransferActive(row.item)" class="text-sky-600 dark:text-sky-400 font-semibold">Transferring</span>
+                  <span v-else class="text-zinc-600 dark:text-zinc-400 font-medium">Queued</span>
                 </td>
               </tr>
             </template>
@@ -993,8 +995,8 @@ defineExpose({
           <col :style="{ width: `${queueColWidths.reason}px` }" />
         </colgroup>
         <thead
-          class="sticky top-0 z-10 border-b select-none"
-          :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+          class="sticky top-0 z-10 border-b select-none font-medium"
+          :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
         >
           <tr>
             <th class="px-2 py-1 font-normal border-r relative select-none" :style="{ borderColor: 'var(--color-border)' }">
@@ -1060,32 +1062,32 @@ defineExpose({
                 @contextmenu.stop="openQueueContextMenu($event, row.item)"
                 class="border-b transition-colors cursor-pointer"
                 :class="selectedQueueItemIds.has(row.item.transfer_id) ? 'bg-sky-600/30 text-white font-medium' : 'hover:bg-black/10 dark:hover:bg-white/5'"
-                :style="{ borderColor: 'var(--color-border)' }"
+                :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
               >
                 <td class="px-2 py-0.5 truncate pl-6">
                   <div class="flex items-center space-x-1.5 truncate">
-                    <FileText class="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-                    <span class="truncate" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
+                    <FileText class="w-3.5 h-3.5 flex-shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
+                    <span class="truncate font-mono text-[11px] font-medium" :style="{ color: 'var(--color-text-main)' }" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
                   </div>
                 </td>
                 <td class="px-2 py-0.5 text-center font-bold">
-                  <span :class="row.item.direction === 'upload' ? 'text-sky-400' : 'text-emerald-400'">
+                  <span :class="row.item.direction === 'upload' ? 'text-sky-600 dark:text-sky-400' : 'text-emerald-600 dark:text-emerald-400'">
                     {{ row.item.direction === 'upload' ? '-->' : '<--' }}
                   </span>
                 </td>
-                <td class="px-2 py-0.5 truncate" :title="row.item.remote_path || row.item.file_name">
+                <td class="px-2 py-0.5 truncate font-mono text-[11px]" :style="{ color: 'var(--color-text-main)' }" :title="row.item.remote_path || row.item.file_name">
                   {{ row.item.remote_path || row.item.file_name }}
                 </td>
-                <td class="px-2 py-0.5 text-right font-mono">
+                <td class="px-2 py-0.5 text-right font-mono" :style="{ color: 'var(--color-text-muted)' }">
                   {{ (row.item.total_bytes || 0).toLocaleString() }}
                 </td>
-                <td class="px-2 py-0.5">
+                <td class="px-2 py-0.5" :style="{ color: 'var(--color-text-muted)' }">
                   {{ row.item.priority || 'Normal' }}
                 </td>
-                <td class="px-2 py-0.5 truncate text-[10px]">
+                <td class="px-2 py-0.5 truncate text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
                   {{ formatTransferTime(row.item.completed_at || row.item.started_at) }}
                 </td>
-                <td class="px-2 py-0.5 truncate text-red-400" :title="row.item.error">
+                <td class="px-2 py-0.5 truncate text-red-600 dark:text-red-400 font-semibold" :title="row.item.error">
                   {{ row.item.error || 'Transfer failed' }}
                 </td>
               </tr>
@@ -1114,8 +1116,8 @@ defineExpose({
           <col :style="{ width: `${queueColWidths.time}px` }" />
         </colgroup>
         <thead
-          class="sticky top-0 z-10 border-b select-none"
-          :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+          class="sticky top-0 z-10 border-b select-none font-medium"
+          :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
         >
           <tr>
             <th class="px-2 py-1 font-normal border-r relative select-none" :style="{ borderColor: 'var(--color-border)' }">
@@ -1177,29 +1179,29 @@ defineExpose({
                 @contextmenu.stop="openQueueContextMenu($event, row.item)"
                 class="border-b transition-colors cursor-pointer"
                 :class="selectedQueueItemIds.has(row.item.transfer_id) ? 'bg-sky-600/30 text-white font-medium' : 'hover:bg-black/10 dark:hover:bg-white/5'"
-                :style="{ borderColor: 'var(--color-border)' }"
+                :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
               >
                 <td class="px-2 py-0.5 truncate pl-6">
                   <div class="flex items-center space-x-1.5 truncate">
-                    <FileText class="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-                    <span class="truncate" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
+                    <FileText class="w-3.5 h-3.5 flex-shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
+                    <span class="truncate font-mono text-[11px] font-medium" :style="{ color: 'var(--color-text-main)' }" :title="row.item.local_path || row.item.file_name">{{ row.item.local_path || row.item.file_name }}</span>
                   </div>
                 </td>
                 <td class="px-2 py-0.5 text-center font-bold">
-                  <span :class="row.item.direction === 'upload' ? 'text-sky-400' : 'text-emerald-400'">
+                  <span :class="row.item.direction === 'upload' ? 'text-sky-600 dark:text-sky-400' : 'text-emerald-600 dark:text-emerald-400'">
                     {{ row.item.direction === 'upload' ? '-->' : '<--' }}
                   </span>
                 </td>
-                <td class="px-2 py-0.5 truncate" :title="row.item.remote_path || row.item.file_name">
+                <td class="px-2 py-0.5 truncate font-mono text-[11px]" :style="{ color: 'var(--color-text-main)' }" :title="row.item.remote_path || row.item.file_name">
                   {{ row.item.remote_path || row.item.file_name }}
                 </td>
-                <td class="px-2 py-0.5 text-right font-mono">
+                <td class="px-2 py-0.5 text-right font-mono" :style="{ color: 'var(--color-text-muted)' }">
                   {{ (row.item.total_bytes || 0).toLocaleString() }}
                 </td>
-                <td class="px-2 py-0.5">
+                <td class="px-2 py-0.5" :style="{ color: 'var(--color-text-muted)' }">
                   {{ row.item.priority || 'Normal' }}
                 </td>
-                <td class="px-2 py-0.5 truncate text-[10px]">
+                <td class="px-2 py-0.5 truncate text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
                   {{ formatTransferTime(row.item.completed_at || row.item.started_at) }}
                 </td>
               </tr>
@@ -1225,8 +1227,9 @@ defineExpose({
           @click="transferTab = 'active'; showTransferDrawer = true"
           class="px-2.5 py-0.5 rounded border text-[11px] transition cursor-pointer flex items-center space-x-1"
           :style="transferTab === 'active' && showTransferDrawer
-            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }
+            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }
             : { backgroundColor: 'transparent', borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :class="transferTab === 'active' && showTransferDrawer ? '' : 'hover:bg-black/5 dark:hover:bg-white/5 hover:text-[var(--color-text-main)]'"
         >
           <span>Queued files{{ sftpStore.activeTransfers.length > 0 ? ` (${sftpStore.activeTransfers.length})` : '' }}</span>
         </button>
@@ -1235,8 +1238,9 @@ defineExpose({
           @click="transferTab = 'failed'; showTransferDrawer = true"
           class="px-2.5 py-0.5 rounded border text-[11px] transition cursor-pointer flex items-center space-x-1"
           :style="transferTab === 'failed' && showTransferDrawer
-            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }
+            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: '#dc2626', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }
             : { backgroundColor: 'transparent', borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :class="transferTab === 'failed' && showTransferDrawer ? '' : 'hover:bg-black/5 dark:hover:bg-white/5 hover:text-[var(--color-text-main)]'"
         >
           <span>Failed transfers{{ sftpStore.failedTransfers.length > 0 ? ` (${sftpStore.failedTransfers.length})` : '' }}</span>
         </button>
@@ -1245,8 +1249,9 @@ defineExpose({
           @click="transferTab = 'completed'; showTransferDrawer = true"
           class="px-2.5 py-0.5 rounded border text-[11px] transition cursor-pointer flex items-center space-x-1"
           :style="transferTab === 'completed' && showTransferDrawer
-            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }
+            ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: '#16a34a', fontWeight: '600', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }
             : { backgroundColor: 'transparent', borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :class="transferTab === 'completed' && showTransferDrawer ? '' : 'hover:bg-black/5 dark:hover:bg-white/5 hover:text-[var(--color-text-main)]'"
         >
           <span>Successful transfers{{ sftpStore.completedTransfers.length > 0 ? ` (${sftpStore.completedTransfers.length})` : '' }}</span>
         </button>
@@ -1257,7 +1262,7 @@ defineExpose({
         <!-- Active Throughput Badge -->
         <div
           v-if="sftpStore.activeTransfers.length > 0 && sftpStore.totalTransferSpeed > 0"
-          class="hidden md:flex items-center space-x-1 text-amber-400"
+          class="hidden md:flex items-center space-x-1 text-amber-500 dark:text-amber-400"
         >
           <span>⚡</span>
           <span class="font-semibold">{{ formatBytes(sftpStore.totalTransferSpeed) }}/s</span>
@@ -1265,16 +1270,16 @@ defineExpose({
 
         <!-- Lock Icon (Encrypted Session Indicator) -->
         <div class="flex items-center space-x-1" title="Secure SFTP connection active">
-          <Lock class="w-3.5 h-3.5 text-amber-400" />
+          <Lock class="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
         </div>
 
         <!-- Queue Size Indicator (FileZilla format) -->
-        <div class="flex items-center space-x-1" :title="`Queue remaining: ${formatBytes(totalQueueBytes)}`">
+        <div class="flex items-center space-x-1" :title="`Queue remaining: ${formatBytes(totalQueueBytes)}`" :style="{ color: 'var(--color-text-main)' }">
           <RefreshCw
-            class="w-3 h-3 text-zinc-400"
+            class="w-3 h-3 text-zinc-500 dark:text-zinc-400"
             :class="sftpStore.activeTransfers.length > 0 && sftpStore.isQueueProcessing ? 'animate-spin' : ''"
           />
-          <span>{{ formatQueueSizeDisplay(totalQueueBytes) }}</span>
+          <span class="font-medium">Queue: {{ formatQueueSizeDisplay(totalQueueBytes) }}</span>
         </div>
 
         <!-- Action After Queue Active Badge -->
@@ -1477,7 +1482,7 @@ defineExpose({
           >
             <Check v-if="queueCompletionAction === 'close'" class="w-3.5 h-3.5 text-sky-400" />
             <span v-else class="w-3.5" />
-            <span>Close TermSFTP</span>
+            <span>Close FlowSFTP</span>
           </button>
         </div>
       </div>

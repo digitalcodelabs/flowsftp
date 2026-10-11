@@ -1,4 +1,4 @@
-# 🚀 TermSFTP
+# 🚀 FlowSFTP
 
 <div align="center">
 
@@ -18,9 +18,9 @@ Built with **Tauri v2**, **Rust**, **Nuxt 4**, **Vue 3**, **Tailwind CSS**, and 
 
 ## 🌟 Overview
 
-**TermSFTP** reimagines classic file transfer tools like FileZilla and WinSCP for modern developers. It combines a high-performance **dual-pane local & remote file manager** with a full-featured **tabbed SSH terminal** powered by WebGL. 
+**FlowSFTP** reimagines classic file transfer tools like FileZilla and WinSCP for modern developers. It combines a high-performance **dual-pane local & remote file manager** with a full-featured **tabbed SSH terminal** powered by WebGL. 
 
-With native OS performance, encrypted credential vaulting, live file search filtering, built-in code editing, macOS-style Quick Look preview, FileZilla-exact 3-tab transfer queueing, non-blocking background deletions, and rich Catppuccin theming, TermSFTP delivers a unified workflow for server administration, remote development, and file management.
+With native OS performance, encrypted credential vaulting, live file search filtering, external editor live sync, live folder pairing with auto-upload, recursive remote SSH grep, built-in code editing, macOS-style Quick Look preview, FileZilla-exact 3-tab transfer queueing, non-blocking background deletions, and rich Catppuccin theming, FlowSFTP delivers a unified workflow for server administration, remote development, and file management.
 
 ---
 
@@ -77,6 +77,32 @@ With native OS performance, encrypted credential vaulting, live file search filt
 
 ---
 
+### 🛠️ Developer Power Features
+- **Edit in External Editor with Live Sync**:
+  - Open any remote or local file in **VS Code**, **Cursor AI**, **Sublime Text**, **Notepad++**, or your preferred custom CLI command.
+  - Configurable default external editor in **Settings -> External Editor** (`code`, `cursor`, `subl`, `notepad++`, or custom executable path).
+  - Remote files are automatically staged in an isolated temporary directory; FlowSFTP launches your editor and attaches a cross-platform filesystem watcher via the asynchronous `notify` crate.
+  - **Debounced Instant Auto-Upload**: Whenever you press <kbd>Ctrl+S</kbd> in your editor, changes are debounced (600ms) and automatically synced back to the remote server or local destination.
+  - **Live Floating Status Bar**: Real-time status pill (`SftpExternalEditBar`) at the bottom of the window displays actively synced files, live upload spinners, last-synced timestamps, and one-click actions to manually re-sync or stop watching.
+  - Clean background session teardown and staged file cleanup on session close or manual stop.
+- **Live Directory Watcher & Auto-Upload (Folder Pairing)**:
+  - Pair any local project workspace directly with a remote target directory (`SftpDirWatcherModal`).
+  - Seamless "edit locally, test remotely" workflow — perfect for web applications, PHP, Python, Node.js, and server-side development.
+  - Real-time recursive filesystem monitoring powered by Rust's asynchronous `notify` (v8) channel.
+  - **Intelligent Ignore Filtering**: Automatically excludes bulky build directories, caches, and temp files (`.git`, `node_modules`, `dist`, `build`, `.next`, `.nuxt`, `target`, `.idea`, `.vscode`, `*.swp`, `*.tmp`, and user-defined custom glob patterns).
+  - Configurable debounce delay (default 800ms) avoids duplicate uploads during rapid saves or multi-file compile cycles.
+  - Visual toolbar status pill with live pulsing indicator, change statistics, real-time activity log drawer, and one-click pause / resume controls.
+- **Recursive Remote Search & SSH Grep (`Ctrl+Shift+F` / `Cmd+Shift+F`)**:
+  - Deep recursive search modal (`SftpSearchModal`) for instantly locating files and code across complex remote directory trees.
+  - **Kernel-Speed SSH Grep**: Executes native `find` and `grep -rnI` directly on the remote Linux / Unix host over the SSH channel without downloading files.
+  - Search by filename pattern (glob / wildcards like `*.vue`, `app.*`, `*.conf`) or deep full-text string content search with matched line numbers and syntax-highlighted snippets.
+  - Case-sensitive and regex matching options with configurable maximum results limits.
+  - **FTP / Breadth-First Crawl Fallback**: Gracefully falls back to an asynchronous breadth-first crawler for FTP / FTPS connections or restricted SFTP hosts without shell access.
+  - **Live Cancellation & Stop Control**: Instantly abort running searches at any time with the pulsating **Stop** button, by pressing <kbd>Esc</kbd>, or upon closing the modal, preserving and displaying all matches discovered up to that point.
+  - **Quick Navigation**: Double-click any search match to open/edit the file immediately or jump directly to its containing remote directory.
+
+---
+
 ### 📥 FileZilla-Exact 3-Tab Transfer Queue & Bottom Drawer
 - **Dedicated 3-Tab Structure**:
   - **Queued files**: Shows pending and currently transferring items.
@@ -99,7 +125,7 @@ With native OS performance, encrypted credential vaulting, live file search filt
     - **Do nothing** (default)
     - **Play notification sound**: Synthesizes a crisp, pleasant two-tone completion chime via Web Audio API.
     - **Disconnect from server**: Automatically closes active SFTP and SSH connections upon completion.
-    - **Close Termsftp**: Closes the application cleanly after a 2-second grace period with audio feedback.
+    - **Close FlowSFTP**: Closes the application cleanly after a 2-second grace period with audio feedback.
   - Status bar indicator badge highlights active completion actions (`🔔 Sound on complete`, `🔌 Disconnect on complete`, `🚪 Close on complete`).
 - **Queue Controls & Right-Click Context Actions**:
   - **Process Queue / Pause Queue**: Toggle queue processing on the fly.
@@ -122,8 +148,11 @@ With native OS performance, encrypted credential vaulting, live file search filt
 ### 🛡️ Protocols & Security
 - **Protocols Supported**:
   - **SFTP** (over SSH) powered by Rust's asynchronous `russh` and `russh-sftp`.
-  - **FTP / FTPS** (TLS/SSL encryption) powered by `suppaftp`.
+  - **FTP / FTPS** (TLS/SSL encryption) powered by `suppaftp` with automatic dropped connection recovery and seamless file browsing.
   - **SSH Shell** for interactive terminal sessions.
+- **Connection Profiles & Group Folders**:
+  - Organize server bookmarks into custom named folders / groups.
+  - One-click folder creation, inline folder renaming, and quick profile management.
 - **Master Password & Encrypted Vault**: Protect saved host profiles and credentials with AES encryption, including master password reset workflows.
 - **OS Native Keyring Support**: Integration with Windows Credential Manager, macOS Keychain, and Linux Secret Service via the `keyring` crate.
 - **Authentication Methods**:
@@ -136,12 +165,12 @@ With native OS performance, encrypted credential vaulting, live file search filt
 
 ### 📝 Integrated Tools
 - **Built-in Code Editor**:
-  - Edit remote and local files directly in-app without downloading external copies.
+  - Edit remote and local files directly in-app across SFTP, FTP, FTPS, and local filesystems.
   - Syntax highlighting via CodeMirror / Monaco for 100+ programming languages.
   - Vim keybinding mode toggle.
   - Auto-upload and cache invalidation on save (<kbd>Ctrl+S</kbd>).
 - **Quick Look Instant Preview (<kbd>Spacebar</kbd>)**:
-  - macOS-inspired file preview for quick file inspection.
+  - macOS-inspired file preview for quick file inspection across SFTP, FTP, FTPS, and local directories.
   - Full preview support for Markdown, JSON, source code, and images.
   - Navigate between files seamlessly using <kbd>←</kbd> and <kbd>→</kbd> arrow keys.
 - **Permissions Modal (chmod)**:
@@ -171,6 +200,7 @@ With native OS performance, encrypted credential vaulting, live file search filt
 
 | Shortcut | Context | Action |
 | :--- | :--- | :--- |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> | Remote / Global | Open Recursive Remote Search & SSH Grep |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> | File Browser | Toggle Directory Comparison Mode |
 | <kbd>Ctrl</kbd> + <kbd>F</kbd> / <kbd>⌘</kbd> + <kbd>F</kbd> | File Browser | Toggle In-Pane Live Filter |
 | <kbd>Space</kbd> | File Browser | Quick Look / Instant Preview |
@@ -197,6 +227,7 @@ With native OS performance, encrypted credential vaulting, live file search filt
 - **Rust Backend Crates**:
   - `russh` & `russh-sftp` — Async SSH & SFTP client
   - `suppaftp` — FTP & FTPS client with TLS
+  - `notify` (v8) — Cross-platform filesystem watcher for external editor live sync & folder pairing
   - `keyring` — Native system keychain integration
   - `tokio` — Asynchronous multi-threaded runtime
 
@@ -246,8 +277,8 @@ sudo apt install -y libwebkit2gtk-4.1-dev \
 
 ### 1. Clone Repository
 ```bash
-git clone https://github.com/your-username/termsftp.git
-cd termsftp
+git clone https://github.com/your-username/flowsftp.git
+cd flowsftp
 ```
 
 ### 2. Install Dependencies
@@ -288,7 +319,7 @@ npm run build
 ## 📂 Project Structure
 
 ```
-termsftp/
+flowsftp/
 ├── app/                         # Frontend application (Nuxt 4 / Vue 3)
 │   ├── app.vue                  # Main application shell & tab router
 │   ├── components/              # Vue components
@@ -298,12 +329,20 @@ termsftp/
 │   │   ├── QuickLookModal.vue   # macOS-style instant file preview
 │   │   ├── ConnectionManagerModal.vue # Connection profiles & vault
 │   │   ├── PermissionsModal.vue # Unix chmod visual calculator
-│   │   └── SettingsModal.vue    # App settings & preferences
+│   │   ├── SettingsModal.vue    # App settings & preferences
+│   │   └── sftp/                # SFTP panes, modals, and toolbars
+│   │       ├── SftpExternalEditBar.vue   # Floating status bar for external editor live sync
+│   │       ├── modals/
+│   │       │   ├── SftpDirWatcherModal.vue # Directory watcher & folder pairing modal
+│   │       │   └── SftpSearchModal.vue     # Recursive remote search & SSH grep modal
+│   │       └── panes/           # Local and remote browser panes
 │   ├── stores/                  # Pinia state stores
 │   │   ├── sftp.ts              # SFTP/Local files, queue, bookmarks
 │   │   ├── ssh.ts               # SSH session management
-│   │   ├── vault.ts             # Encrypted server profiles
-│   │   ├── settings.ts          # Density, fonts, keymaps
+│   │   ├── vault.ts             # Encrypted server profiles & group folders
+│   │   ├── externalEdit.ts      # External editor watcher & live sync state
+│   │   ├── dirWatcher.ts        # Folder pairing & background sync state
+│   │   ├── settings.ts          # Density, fonts, keymaps, external editor config
 │   │   └── theme.ts             # Theme palettes
 │   └── utils/                   # Keymap & utility helpers
 │
@@ -313,10 +352,20 @@ termsftp/
 │   └── src/
 │       ├── main.rs              # Tauri initialization
 │       ├── lib.rs               # Library entry & command registration
+│       ├── state.rs             # Shared application state
+│       ├── sftp/                # SFTP, FTP, watcher, and search engines
+│       │   ├── mod.rs
+│       │   ├── client.rs        # SFTP client implementation
+│       │   ├── dir_watcher.rs   # Recursive directory watcher & auto-sync engine
+│       │   ├── external_edit.rs # External editor launcher & file change monitor
+│       │   └── search.rs        # Native SSH grep & BFS directory search
 │       └── commands/            # Tauri IPC command modules
 │           ├── sftp.rs          # SFTP engine & local filesystem commands
 │           ├── ssh.rs           # SSH terminal PTY & streaming
 │           ├── ftp.rs           # FTP / FTPS protocol implementation
+│           ├── dir_watcher.rs   # Folder pairing IPC commands
+│           ├── external_edit.rs # External editor IPC commands
+│           ├── search.rs        # Remote search & SSH grep IPC commands
 │           ├── keychain.rs      # OS native credential storage
 │           └── dialog.rs        # Native file & folder dialogs
 │

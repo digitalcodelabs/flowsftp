@@ -10,14 +10,26 @@ import {
   AlertCircle,
   FileCode,
   Terminal,
+  Maximize2,
+  Minimize2,
+  Scissors,
+  Copy,
+  ClipboardPaste,
+  Undo2,
+  Redo2,
+  CheckSquare,
+  Search,
+  Code2,
 } from 'lucide-vue-next'
+import { selectAll, undo, redo, undoDepth, redoDepth, indentSelection } from '@codemirror/commands'
+import { openSearchPanel } from '@codemirror/search'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore, isLightTheme } from '../stores/theme'
 import FileIcon from './FileIcon.vue'
 
 // CodeMirror 6 and Extensions
 import { EditorView, basicSetup } from 'codemirror'
-import { EditorState, Compartment, type Extension } from '@codemirror/state'
+import { EditorState, Compartment, Prec, type Extension } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
 import { languages } from '@codemirror/language-data'
 import { LanguageDescription, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -39,6 +51,7 @@ const emit = defineEmits<{
 
 const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
+const externalEditStore = useExternalEditStore()
 
 const editorContainerRef = ref<HTMLDivElement | null>(null)
 let editorView: EditorView | null = null
@@ -50,6 +63,13 @@ const isSaving = ref(false)
 const isDirty = ref(false)
 const errorMessage = ref<string | null>(null)
 const successMessage = ref<string | null>(null)
+const isMaximized = ref(false)
+
+watch(isMaximized, () => {
+  nextTick(() => {
+    editorView?.requestMeasure()
+  })
+})
 
 // Stats
 const cursorLine = ref(1)
@@ -70,13 +90,6 @@ const themeCompartment = new Compartment()
 // Toggle Vim mode
 const toggleVimMode = () => {
   settingsStore.editorVimMode = !settingsStore.editorVimMode
-  if (editorView) {
-    editorView.dispatch({
-      effects: vimCompartment.reconfigure(settingsStore.editorVimMode ? vim({ status: true }) : []),
-    })
-    hookVimModeListener()
-    currentVimMode.value = settingsStore.editorVimMode ? 'NORMAL' : 'OFF'
-  }
 }
 
 // Watch settingsStore.editorVimMode for changes
@@ -89,6 +102,7 @@ watch(
       })
       hookVimModeListener()
       currentVimMode.value = active ? 'NORMAL' : 'OFF'
+      editorView.focus()
     }
   }
 )
@@ -177,6 +191,18 @@ const buildThemeExtensions = (): Extension[] => {
         fontSize: '12px',
         width: '100%',
       },
+      '.cm-fat-cursor': {
+        position: 'absolute',
+        background: `${term.cursor || ui.accent} !important`,
+        opacity: '0.75',
+        border: 'none',
+        whiteSpace: 'pre',
+      },
+      '&:not(.cm-focused) .cm-fat-cursor': {
+        background: 'none !important',
+        outline: `solid 1px ${term.cursor || ui.accent} !important`,
+        color: 'transparent !important',
+      },
     },
     { dark: !isLightTheme(theme) }
   )
@@ -256,6 +282,24 @@ const hookVimModeListener = () => {
   }
 }
 
+// Explicit Vim Escape handler: exits insertMode/visualMode and enters normal mode
+const handleVimEscape = () => {
+  if (!editorView) return
+  const cm = getCM(editorView)
+  if (!cm) return
+  Vim.handleKey(cm, '<Esc>')
+  editorView.focus()
+  if (cm.state?.vim) {
+    if (cm.state.vim.insertMode) {
+      currentVimMode.value = 'INSERT'
+    } else if (cm.state.vim.visualMode) {
+      currentVimMode.value = 'VISUAL'
+    } else {
+      currentVimMode.value = 'NORMAL'
+    }
+  }
+}
+
 // Register Vim Ex commands (:w, :wq, :x, :q, :q!)
 const setupVimExCommands = () => {
   try {
@@ -297,10 +341,36 @@ const initEditor = (docContent: string) => {
   }
 
   const extensions: Extension[] = [
+    // Include vim compartment first before other keymaps as required by codemirror-vim
+    vimCompartment.of(isVimMode.value ? vim({ status: true }) : []),
     basicSetup,
     themeCompartment.of(buildThemeExtensions()),
     languageCompartment.of([]),
-    vimCompartment.of(isVimMode.value ? vim({ status: true }) : []),
+    // Ensure Escape and Ctrl-[ immediately transition back to normal mode
+    Prec.highest(
+      keymap.of([
+        {
+          key: 'Escape',
+          run: () => {
+            if (isVimMode.value) {
+              handleVimEscape()
+              return true
+            }
+            return false
+          },
+        },
+        {
+          key: 'Ctrl-[',
+          run: () => {
+            if (isVimMode.value) {
+              handleVimEscape()
+              return true
+            }
+            return false
+          },
+        },
+      ])
+    ),
     keymap.of([
       {
         key: 'Mod-s',
@@ -347,6 +417,7 @@ const initEditor = (docContent: string) => {
   lineCount.value = state.doc.lines
   cursorLine.value = 1
   cursorCol.value = 1
+  currentVimMode.value = isVimMode.value ? 'NORMAL' : 'OFF'
 
   hookVimModeListener()
   detectAndLoadLanguage()
@@ -447,10 +518,14 @@ const handleOpenInDefaultApp = async () => {
     if (props.target === 'local') {
       await invoke('sftp_open_in_default_app', { path: props.filePath })
     } else {
-      successMessage.value = 'Opening in external editor is supported for local files'
-      setTimeout(() => {
-        if (successMessage.value) successMessage.value = null
-      }, 3000)
+      if (!props.sessionId) {
+        throw new Error('No active session connected')
+      }
+      const editor = settingsStore.preferredExternalEditor === 'custom'
+        ? settingsStore.customExternalEditorCommand
+        : settingsStore.preferredExternalEditor
+      await externalEditStore.startEdit(props.sessionId, props.filePath, editor)
+      emit('close')
     }
   } catch (err: any) {
     errorMessage.value = `Failed to open file: ${err?.message || err}`
@@ -467,23 +542,197 @@ const handleClose = () => {
   emit('close')
 }
 
-// Global modal keydown: intercept Ctrl+W to close editor modal
+// Global modal keydown: intercept Ctrl+W, Escape, and Ctrl+[
 const handleModalKeyDown = (e: KeyboardEvent) => {
   if (!props.show) return
 
   // Ctrl+W or Cmd+W to close editor modal
+  // If custom context menu is open, Escape should close it first
+  if (contextMenuVisible.value && (e.key === 'Escape' || (e.ctrlKey && e.key === '['))) {
+    e.preventDefault()
+    e.stopPropagation()
+    closeContextMenu()
+    return
+  }
+
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
     e.preventDefault()
     e.stopPropagation()
     handleClose()
     return
   }
+
+  // Escape or Ctrl+[ handling
+  if (e.key === 'Escape' || (e.ctrlKey && e.key === '[')) {
+    if (isVimMode.value && editorView) {
+      e.preventDefault()
+      e.stopPropagation()
+      handleVimEscape()
+      return
+    } else if (!isVimMode.value) {
+      e.preventDefault()
+      e.stopPropagation()
+      handleClose()
+      return
+    }
+  }
+}
+
+// Custom Right-Click Context Menu State & Handlers
+const contextMenuVisible = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
+const hasSelection = ref(false)
+const canUndoState = ref(false)
+const canRedoState = ref(false)
+
+const openContextMenu = (e: MouseEvent) => {
+  e.preventDefault()
+  e.stopPropagation()
+  if (!editorView) return
+
+  // Move cursor if clicked outside existing selection
+  const pos = editorView.posAtCoords({ x: e.clientX, y: e.clientY })
+  if (pos !== null) {
+    const state = editorView.state
+    const { from, to } = state.selection.main
+    if (from === to || pos < from || pos > to) {
+      editorView.dispatch({
+        selection: { anchor: pos },
+      })
+    }
+  }
+
+  const state = editorView.state
+  const { from, to } = state.selection.main
+  hasSelection.value = from !== to
+  canUndoState.value = undoDepth(state) > 0
+  canRedoState.value = redoDepth(state) > 0
+
+  // Clamping to screen boundaries
+  const menuWidth = 220
+  const menuHeight = 330
+  const maxX = window.innerWidth - menuWidth - 12
+  const maxY = window.innerHeight - menuHeight - 12
+
+  contextMenuX.value = Math.max(12, Math.min(e.clientX, maxX))
+  contextMenuY.value = Math.max(12, Math.min(e.clientY, maxY))
+  contextMenuVisible.value = true
+}
+
+const closeContextMenu = () => {
+  contextMenuVisible.value = false
+}
+
+const handleCut = async () => {
+  closeContextMenu()
+  if (!editorView) return
+  const state = editorView.state
+  const { from, to } = state.selection.main
+  if (from !== to) {
+    const text = state.sliceDoc(from, to)
+    try {
+      await navigator.clipboard.writeText(text)
+      editorView.dispatch({
+        changes: { from, to, insert: '' },
+        selection: { anchor: from },
+      })
+      editorView.focus()
+    } catch (err) {
+      console.warn('Cut failed:', err)
+    }
+  }
+}
+
+const handleCopy = async () => {
+  closeContextMenu()
+  if (!editorView) return
+  const state = editorView.state
+  const { from, to } = state.selection.main
+  if (from !== to) {
+    const text = state.sliceDoc(from, to)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      console.warn('Copy failed:', err)
+    }
+  }
+}
+
+const handlePaste = async () => {
+  closeContextMenu()
+  if (!editorView) return
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) {
+      const state = editorView.state
+      const { from, to } = state.selection.main
+      editorView.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + text.length },
+      })
+      editorView.focus()
+    }
+  } catch (err) {
+    console.warn('Paste failed:', err)
+  }
+}
+
+const handleSelectAll = () => {
+  closeContextMenu()
+  if (editorView) {
+    selectAll(editorView)
+    editorView.focus()
+  }
+}
+
+const handleUndo = () => {
+  closeContextMenu()
+  if (editorView) {
+    undo(editorView)
+    editorView.focus()
+  }
+}
+
+const handleRedo = () => {
+  closeContextMenu()
+  if (editorView) {
+    redo(editorView)
+    editorView.focus()
+  }
+}
+
+const handleFind = () => {
+  closeContextMenu()
+  if (editorView) {
+    openSearchPanel(editorView)
+  }
+}
+
+const handleIndentSelection = () => {
+  closeContextMenu()
+  if (editorView) {
+    indentSelection(editorView)
+    editorView.focus()
+  }
+}
+
+const handleSaveFromMenu = () => {
+  closeContextMenu()
+  handleSave()
+}
+
+const handleToggleVimFromMenu = () => {
+  closeContextMenu()
+  toggleVimMode()
 }
 
 watch(
   () => [props.show, props.filePath],
   ([show]) => {
+    closeContextMenu()
     if (show) {
+      isMaximized.value = false
       setupVimExCommands()
       nextTick(() => {
         loadContent()
@@ -501,10 +750,13 @@ watch(
 onMounted(() => {
   setupVimExCommands()
   window.addEventListener('keydown', handleModalKeyDown, true)
+  window.addEventListener('resize', closeContextMenu)
 })
 
 onBeforeUnmount(() => {
+  closeContextMenu()
   window.removeEventListener('keydown', handleModalKeyDown, true)
+  window.removeEventListener('resize', closeContextMenu)
   if (editorView) {
     editorView.destroy()
     editorView = null
@@ -515,11 +767,17 @@ onBeforeUnmount(() => {
 <template>
   <div
     v-if="show"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
+    class="fixed top-10 inset-x-0 bottom-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-md animate-in fade-in duration-150 select-none"
+    :class="isMaximized ? 'p-0' : 'p-2 sm:p-3.5'"
     @click.self="handleClose"
   >
     <div
-      class="w-full max-w-5xl h-[85vh] flex flex-col rounded-2xl border shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors"
+      class="flex flex-col border shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-all"
+      :class="
+        isMaximized
+          ? 'w-full h-full rounded-none border-0'
+          : 'w-[96vw] max-w-[1550px] h-[calc(100%-1rem)] max-h-[calc(100%-1rem)] rounded-2xl'
+      "
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
     >
       <!-- Header -->
@@ -535,11 +793,11 @@ onBeforeUnmount(() => {
                 {{ fileName }}
               </span>
               <span
-                class="px-1.5 py-0.2 rounded text-[10px] uppercase font-mono font-medium border"
+                class="px-2 py-0.5 rounded text-[10px] uppercase font-mono font-semibold border"
                 :class="
                   target === 'remote'
-                    ? 'bg-sky-950/60 border-sky-500/40 text-sky-300'
-                    : 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                    ? 'bg-sky-500/15 border-sky-500/30 text-sky-700 dark:bg-sky-950/60 dark:border-sky-500/40 dark:text-sky-300'
+                    : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:bg-emerald-950/60 dark:border-emerald-500/40 dark:text-emerald-300'
                 "
               >
                 {{ target }}
@@ -548,7 +806,7 @@ onBeforeUnmount(() => {
               <!-- Dirty / Unsaved Indicator -->
               <span
                 v-if="isDirty"
-                class="flex items-center space-x-1 text-[11px] font-medium text-amber-400 animate-pulse"
+                class="flex items-center space-x-1 text-[11px] font-medium text-amber-500 dark:text-amber-400 animate-pulse"
                 title="Unsaved changes (Ctrl+S or :w to save)"
               >
                 <span>●</span>
@@ -556,7 +814,7 @@ onBeforeUnmount(() => {
               </span>
               <span
                 v-else-if="successMessage"
-                class="flex items-center space-x-1 text-[11px] font-medium text-emerald-400"
+                class="flex items-center space-x-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
               >
                 <Check class="w-3.5 h-3.5" />
                 <span>{{ successMessage }}</span>
@@ -573,47 +831,61 @@ onBeforeUnmount(() => {
           <button
             @click="toggleVimMode"
             :title="isVimMode ? 'Vim Keybindings Active (Click to switch to Standard Mode)' : 'Standard Keybindings Active (Click to switch to Vim Mode)'"
-            class="px-2.5 py-1.5 rounded-lg border text-xs font-mono font-semibold flex items-center space-x-1.5 transition"
+            class="px-2.5 py-1.5 rounded-lg border text-xs font-mono font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-sm"
             :class="
               isVimMode
-                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-sm'
-                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:bg-emerald-950/60 dark:border-emerald-500/50 dark:text-emerald-300'
+                : 'hover:bg-black/5 dark:hover:bg-white/5'
             "
-            :style="{ borderColor: isVimMode ? undefined : 'var(--color-border)' }"
+            :style="
+              isVimMode
+                ? {}
+                : { backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }
+            "
           >
             <span class="text-[10px] font-bold">VIM</span>
             <span
               class="w-2 h-2 rounded-full"
-              :class="isVimMode ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50 animate-pulse' : 'bg-slate-600'"
+              :class="isVimMode ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse' : 'bg-zinc-400 dark:bg-zinc-600'"
             />
           </button>
 
           <button
-            v-if="target === 'local'"
             @click="handleOpenInDefaultApp"
-            title="Open in system default text editor"
-            class="px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            :title="target === 'local' ? 'Open in system default text editor' : 'Open in external editor with live auto-upload sync'"
+            class="px-2.5 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card cursor-pointer"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           >
             <ExternalLink class="w-3.5 h-3.5" />
-            <span>Default App</span>
+            <span>{{ target === 'local' ? 'Default App' : 'External Editor' }}</span>
           </button>
 
           <button
             @click="loadContent"
             :disabled="isLoading || isSaving"
             title="Reload content from server"
-            class="p-1.5 rounded-lg border text-xs transition btn-theme-card disabled:opacity-50"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            class="p-1.5 rounded-lg border text-xs transition btn-theme-card disabled:opacity-50 cursor-pointer"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           >
             <RotateCcw class="w-3.5 h-3.5" :class="{ 'animate-spin': isLoading }" />
+          </button>
+
+          <!-- Maximize / Restore Toggle Button -->
+          <button
+            @click="isMaximized = !isMaximized"
+            :title="isMaximized ? 'Restore editor size' : 'Maximize editor (Fullscreen)'"
+            class="p-1.5 rounded-lg border text-xs transition btn-theme-card cursor-pointer"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+          >
+            <Minimize2 v-if="isMaximized" class="w-3.5 h-3.5" />
+            <Maximize2 v-else class="w-3.5 h-3.5" />
           </button>
 
           <button
             @click="handleSave"
             :disabled="isSaving || isLoading || !isDirty"
             title="Save file (Ctrl+S or :w)"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition btn-accent disabled:opacity-40"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition btn-accent disabled:opacity-40 cursor-pointer"
           >
             <Save class="w-3.5 h-3.5" :class="{ 'animate-pulse': isSaving }" />
             <span>{{ isSaving ? 'Saving...' : 'Save' }}</span>
@@ -624,7 +896,9 @@ onBeforeUnmount(() => {
           <button
             @click="handleClose"
             title="Close editor (Ctrl+W or :q)"
-            class="p-1.5 rounded-lg text-xs transition hover:bg-red-500/20 text-slate-400 hover:text-red-300"
+            class="p-1.5 rounded-lg text-xs transition hover:bg-red-500/15 cursor-pointer"
+            :style="{ color: 'var(--color-text-muted)' }"
+            :class="'hover:text-red-500 dark:hover:text-red-300'"
           >
             <X class="w-4 h-4" />
           </button>
@@ -641,7 +915,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Main Editor Body -->
-      <div class="flex-1 relative flex overflow-hidden min-h-0 select-text">
+      <div
+        class="flex-1 relative flex overflow-hidden min-h-0 select-text"
+        @contextmenu.prevent="openContextMenu"
+      >
         <!-- Loading Spinner -->
         <div
           v-if="isLoading"
@@ -669,12 +946,12 @@ onBeforeUnmount(() => {
           <!-- Vim Mode Indicator -->
           <div v-if="isVimMode" class="flex items-center space-x-1.5">
             <span
-              class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+              class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border"
               :class="{
-                'bg-emerald-950/80 border border-emerald-500/50 text-emerald-300': currentVimMode === 'NORMAL',
-                'bg-sky-950/80 border border-sky-500/50 text-sky-300': currentVimMode === 'INSERT',
-                'bg-purple-950/80 border border-purple-500/50 text-purple-300': currentVimMode === 'VISUAL',
-                'bg-rose-950/80 border border-rose-500/50 text-rose-300': currentVimMode === 'REPLACE',
+                'bg-emerald-500/15 border-emerald-500/35 text-emerald-700 dark:bg-emerald-950/80 dark:border-emerald-500/50 dark:text-emerald-300': currentVimMode === 'NORMAL',
+                'bg-sky-500/15 border-sky-500/35 text-sky-700 dark:bg-sky-950/80 dark:border-sky-500/50 dark:text-sky-300': currentVimMode === 'INSERT',
+                'bg-purple-500/15 border-purple-500/35 text-purple-700 dark:bg-purple-950/80 dark:border-purple-500/50 dark:text-purple-300': currentVimMode === 'VISUAL',
+                'bg-rose-500/15 border-rose-500/35 text-rose-700 dark:bg-rose-950/80 dark:border-rose-500/50 dark:text-rose-300': currentVimMode === 'REPLACE',
               }"
             >
               -- {{ currentVimMode }} --
@@ -699,37 +976,228 @@ onBeforeUnmount(() => {
 
           <!-- Shortcuts Hint -->
           <template v-if="isVimMode">
-            <span class="text-[10px] opacity-80 flex items-center space-x-1.5">
-              <span><span class="text-amber-300 font-semibold">:w</span> save</span>
+            <span class="text-[10px] flex items-center space-x-1.5">
+              <span><span class="text-amber-600 dark:text-amber-300 font-semibold">:w</span> save</span>
               <span>•</span>
-              <span><span class="text-amber-300 font-semibold">:wq</span> save & quit</span>
+              <span><span class="text-amber-600 dark:text-amber-300 font-semibold">:wq</span> save & quit</span>
               <span>•</span>
-              <span><span class="text-amber-300 font-semibold">:q</span> quit</span>
+              <span><span class="text-amber-600 dark:text-amber-300 font-semibold">:q</span> quit</span>
               <span>•</span>
               <span class="flex items-center space-x-1 inline-flex">
-                <kbd class="px-1 py-0.5 rounded text-[10px] border" :style="{ borderColor: 'var(--color-border)' }">Ctrl+W</kbd>
+                <kbd
+                  class="px-1 py-0.5 rounded text-[10px] border font-mono"
+                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                >Ctrl+W</kbd>
                 <span>Close</span>
               </span>
             </span>
           </template>
           <template v-else>
             <span class="flex items-center space-x-1">
-              <kbd class="px-1 py-0.5 rounded text-[10px] border" :style="{ borderColor: 'var(--color-border)' }">Ctrl+S</kbd>
+              <kbd
+                class="px-1 py-0.5 rounded text-[10px] border font-mono"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+              >Ctrl+S</kbd>
               <span>Save</span>
             </span>
             <span>•</span>
             <span class="flex items-center space-x-1">
-              <kbd class="px-1 py-0.5 rounded text-[10px] border" :style="{ borderColor: 'var(--color-border)' }">Ctrl+W</kbd>
+              <kbd
+                class="px-1 py-0.5 rounded text-[10px] border font-mono"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+              >Ctrl+W</kbd>
               <span>Close</span>
             </span>
           </template>
         </div>
       </div>
     </div>
+
+    <!-- Custom Themed Editor Context Menu -->
+    <Teleport to="body">
+      <div
+        v-if="show && contextMenuVisible"
+        class="fixed inset-0 z-[9999]"
+        @click="closeContextMenu"
+        @contextmenu.prevent="closeContextMenu"
+      >
+        <div
+          :style="{
+            left: `${contextMenuX}px`,
+            top: `${contextMenuY}px`,
+            backgroundColor: 'var(--color-bg-card)',
+            borderColor: 'var(--color-border)',
+            boxShadow: '0 20px 40px -8px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--color-border)',
+          }"
+          class="fixed min-w-[210px] backdrop-blur-md rounded-xl border p-1 text-xs select-none animate-in fade-in zoom-in-95 duration-75 shadow-2xl"
+          @click.stop
+        >
+          <!-- Cut -->
+          <button
+            type="button"
+            @click="handleCut"
+            :disabled="!hasSelection"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+            :class="{ 'opacity-40 pointer-events-none cursor-not-allowed': !hasSelection }"
+          >
+            <div class="flex items-center space-x-2">
+              <Scissors class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Cut</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+X</span>
+          </button>
+
+          <!-- Copy -->
+          <button
+            type="button"
+            @click="handleCopy"
+            :disabled="!hasSelection"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+            :class="{ 'opacity-40 pointer-events-none cursor-not-allowed': !hasSelection }"
+          >
+            <div class="flex items-center space-x-2">
+              <Copy class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Copy</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+C</span>
+          </button>
+
+          <!-- Paste -->
+          <button
+            type="button"
+            @click="handlePaste"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+          >
+            <div class="flex items-center space-x-2">
+              <ClipboardPaste class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Paste</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+V</span>
+          </button>
+
+          <div class="h-px my-1" :style="{ backgroundColor: 'var(--color-border)' }" />
+
+          <!-- Undo -->
+          <button
+            type="button"
+            @click="handleUndo"
+            :disabled="!canUndoState"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+            :class="{ 'opacity-40 pointer-events-none cursor-not-allowed': !canUndoState }"
+          >
+            <div class="flex items-center space-x-2">
+              <Undo2 class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Undo</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+Z</span>
+          </button>
+
+          <!-- Redo -->
+          <button
+            type="button"
+            @click="handleRedo"
+            :disabled="!canRedoState"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+            :class="{ 'opacity-40 pointer-events-none cursor-not-allowed': !canRedoState }"
+          >
+            <div class="flex items-center space-x-2">
+              <Redo2 class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Redo</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+Y</span>
+          </button>
+
+          <div class="h-px my-1" :style="{ backgroundColor: 'var(--color-border)' }" />
+
+          <!-- Select All -->
+          <button
+            type="button"
+            @click="handleSelectAll"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+          >
+            <div class="flex items-center space-x-2">
+              <CheckSquare class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Select All</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+A</span>
+          </button>
+
+          <!-- Find / Search -->
+          <button
+            type="button"
+            @click="handleFind"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+          >
+            <div class="flex items-center space-x-2">
+              <Search class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Find in File</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+F</span>
+          </button>
+
+          <!-- Indent Selection -->
+          <button
+            type="button"
+            @click="handleIndentSelection"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+          >
+            <div class="flex items-center space-x-2">
+              <Code2 class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+              <span>Indent Selection</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Tab</span>
+          </button>
+
+          <div class="h-px my-1" :style="{ backgroundColor: 'var(--color-border)' }" />
+
+          <!-- Toggle Vim Mode -->
+          <button
+            type="button"
+            @click="handleToggleVimFromMenu"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+          >
+            <div class="flex items-center space-x-2">
+              <Terminal class="w-3.5 h-3.5" :style="{ color: isVimMode ? 'var(--color-accent)' : 'var(--color-text-muted)' }" />
+              <span>Vim Mode</span>
+            </div>
+            <span
+              class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border"
+              :class="isVimMode ? 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:text-emerald-400' : 'text-zinc-500 border-zinc-700'"
+            >
+              {{ isVimMode ? 'ON' : 'OFF' }}
+            </span>
+          </button>
+
+          <!-- Save File -->
+          <button
+            type="button"
+            @click="handleSaveFromMenu"
+            :disabled="!isDirty || isSaving"
+            class="editor-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left cursor-pointer"
+            :class="{ 'opacity-40 pointer-events-none cursor-not-allowed': !isDirty || isSaving }"
+          >
+            <div class="flex items-center space-x-2">
+              <Save class="w-3.5 h-3.5" :style="{ color: isDirty ? 'var(--color-accent)' : 'var(--color-text-muted)' }" />
+              <span>Save File</span>
+            </div>
+            <span class="text-[10px] font-mono opacity-50">Ctrl+S</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
+.editor-menu-item {
+  color: var(--color-text-main);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.editor-menu-item:hover {
+  background-color: var(--color-bg-hover);
+  color: var(--color-text-main);
+}
+
 :deep(.cm-editor) {
   height: 100% !important;
   outline: none !important;

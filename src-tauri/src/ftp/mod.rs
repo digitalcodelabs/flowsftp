@@ -1053,14 +1053,14 @@ impl ActiveFtpSession {
         }
     }
 
-    pub async fn write_file_text(&self, path: &str, content: &str) -> Result<(), String> {
-        match self.try_write_file_text(path, content).await {
+    pub async fn write_file_binary(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        match self.try_write_file_binary(path, bytes).await {
             Ok(()) => Ok(()),
             Err(e) => {
                 if is_connection_error(&e) {
-                    log::info!("[ftp] Connection dropped during write_file_text, reconnecting...");
+                    log::info!("[ftp] Connection dropped during write_file_binary, reconnecting...");
                     if self.reconnect().await.is_ok() {
-                        return self.try_write_file_text(path, content).await;
+                        return self.try_write_file_binary(path, bytes).await;
                     }
                 }
                 Err(e)
@@ -1068,14 +1068,14 @@ impl ActiveFtpSession {
         }
     }
 
-    async fn try_write_file_text(&self, path: &str, content: &str) -> Result<(), String> {
+    async fn try_write_file_binary(&self, path: &str, bytes: &[u8]) -> Result<(), String> {
         let client_arc = self.client.clone();
         let p = path.to_string();
-        let bytes = content.as_bytes().to_vec();
+        let buf = bytes.to_vec();
 
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut guard = client_arc.blocking_lock();
-            let mut cursor = std::io::Cursor::new(bytes);
+            let mut cursor = std::io::Cursor::new(buf);
 
             match &mut *guard {
                 FtpClientStream::Plain(s) => {
@@ -1092,6 +1092,10 @@ impl ActiveFtpSession {
         })
         .await
         .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn write_file_text(&self, path: &str, content: &str) -> Result<(), String> {
+        self.write_file_binary(path, content.as_bytes()).await
     }
 
     pub async fn set_permissions(&self, path: &str, permissions: u32) -> Result<(), String> {

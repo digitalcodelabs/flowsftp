@@ -4,6 +4,8 @@ import {
   type LocalFileEntry,
   type SftpFileEntry,
 } from '../../../stores/sftp'
+import { useSettingsStore } from '../../../stores/settings'
+import { matchesShortcut } from '../../../utils/keymap'
 
 export interface UseSftpKeyboardNavOptions {
   active?: Ref<boolean | undefined> | (() => boolean | undefined)
@@ -52,6 +54,13 @@ export interface UseSftpKeyboardNavOptions {
   onLocalRowDoubleClick: (entry: LocalFileEntry) => void
   onRemoteRowDoubleClick: (entry: SftpFileEntry) => void
   onScrollToRow: (pane: 'local' | 'remote', index: number) => void
+  onTogglePane?: () => void
+  onEditPath?: () => void
+  onTransferCopy?: () => void
+  onTransferMove?: () => void
+  onNewFolder?: (pane: 'local' | 'remote') => void
+  onNavigateBack?: (pane: 'local' | 'remote') => void
+  onNavigateForward?: (pane: 'local' | 'remote') => void
   isAnyModalOpen: () => boolean
 }
 
@@ -62,11 +71,17 @@ export function isTypingInInput(e: KeyboardEvent | EventTarget | null): boolean 
   if (tag === 'input' || tag === 'textarea' || target.isContentEditable) {
     return true
   }
-  return !!target.closest?.('.monaco-editor')
+  return (
+    Boolean(target.closest?.('.cm-editor')) ||
+    Boolean(target.closest?.('.monaco-editor')) ||
+    Boolean(target.closest?.('.xterm')) ||
+    Boolean(target.closest?.('.terminal'))
+  )
 }
 
 export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
   const sftpStore = useSftpStore()
+  const settingsStore = useSettingsStore()
 
   const isActive = (): boolean => {
     if (typeof options.active === 'function') {
@@ -166,29 +181,6 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
   const handleKeyNavigation = (e: KeyboardEvent) => {
     if (!isActive()) return
     if (isTypingInInput(e) || options.isAnyModalOpen()) return
-
-    // Tab: toggle active pane
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      const sid = typeof options.sessionId === 'function' ? options.sessionId() : options.sessionId.value
-      if (sid) {
-        options.activePane.value = options.activePane.value === 'local' ? 'remote' : 'local'
-      } else {
-        options.activePane.value = 'local'
-      }
-      return
-    }
-
-    // Backspace or Alt+ArrowUp: go to parent directory
-    if (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowUp')) {
-      e.preventDefault()
-      if (options.activePane.value === 'local' && options.canNavigateLocalUp.value) {
-        options.onNavigateLocalUp()
-      } else if (options.activePane.value === 'remote' && options.canNavigateRemoteUp.value) {
-        options.onNavigateRemoteUp()
-      }
-      return
-    }
 
     const isLocal = options.activePane.value === 'local'
     const files = isLocal ? options.filteredLocalFiles.value : options.filteredRemoteFiles.value
@@ -292,6 +284,130 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       return
     }
 
+    // Ctrl+L / Cmd+L / editPath: Focus address/location bar for editing
+    if (
+      (settingsStore.keymaps.editPath && matchesShortcut(e, settingsStore.keymaps.editPath)) ||
+      (!settingsStore.keymaps.editPath && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l')
+    ) {
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      options.onEditPath?.()
+      return
+    }
+
+    // Tab / Toggle Active Pane
+    if (
+      (settingsStore.keymaps.togglePane && matchesShortcut(e, settingsStore.keymaps.togglePane)) ||
+      (!settingsStore.keymaps.togglePane && e.key === 'Tab')
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      if (options.onTogglePane) {
+        options.onTogglePane()
+      } else {
+        const sid = typeof options.sessionId === 'function' ? options.sessionId() : options.sessionId.value
+        if (sid) {
+          options.activePane.value = options.activePane.value === 'local' ? 'remote' : 'local'
+        } else {
+          options.activePane.value = 'local'
+        }
+      }
+      return
+    }
+
+    // F5 / Transfer Copy to opposite pane
+    if (
+      (settingsStore.keymaps.transferCopy && matchesShortcut(e, settingsStore.keymaps.transferCopy)) ||
+      (!settingsStore.keymaps.transferCopy && e.key === 'F5')
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      options.onTransferCopy?.()
+      return
+    }
+
+    // F6 / Transfer Move to opposite pane
+    if (
+      (settingsStore.keymaps.transferMove && matchesShortcut(e, settingsStore.keymaps.transferMove)) ||
+      (!settingsStore.keymaps.transferMove && e.key === 'F6')
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      options.onTransferMove?.()
+      return
+    }
+
+    // F7 / New Folder
+    if (
+      (settingsStore.keymaps.newFolder && matchesShortcut(e, settingsStore.keymaps.newFolder)) ||
+      (!settingsStore.keymaps.newFolder && e.key === 'F7')
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      options.onNewFolder?.(options.activePane.value)
+      return
+    }
+
+    // History: Back (Alt+Left)
+    if (
+      (settingsStore.keymaps.navBack && matchesShortcut(e, settingsStore.keymaps.navBack)) ||
+      (!settingsStore.keymaps.navBack && e.altKey && (e.key === 'ArrowLeft' || e.key === 'Left'))
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      options.onNavigateBack?.(options.activePane.value)
+      return
+    }
+
+    // History: Forward (Alt+Right)
+    if (
+      (settingsStore.keymaps.navForward && matchesShortcut(e, settingsStore.keymaps.navForward)) ||
+      (!settingsStore.keymaps.navForward && e.altKey && (e.key === 'ArrowRight' || e.key === 'Right'))
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      options.onNavigateForward?.(options.activePane.value)
+      return
+    }
+
+    // Nav Up / Parent directory (Backspace / Alt+Up)
+    if (
+      (settingsStore.keymaps.navUp && matchesShortcut(e, settingsStore.keymaps.navUp)) ||
+      (!settingsStore.keymaps.navUp && (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowUp')))
+    ) {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      if (options.activePane.value === 'local' && options.canNavigateLocalUp.value) {
+        options.onNavigateLocalUp()
+      } else if (options.activePane.value === 'remote' && options.canNavigateRemoteUp.value) {
+        options.onNavigateRemoteUp()
+      }
+      return
+    }
+
     // F2: Rename selected item in active pane
     if (e.key === 'F2') {
       if (isTypingInInput(e)) return
@@ -303,8 +419,12 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       return
     }
 
-    // Delete / Del: Delete selected item(s) in active pane
-    if (e.key === 'Delete' || e.key === 'Del') {
+    // Delete / Del / F8: Delete selected item(s) in active pane
+    if (
+      (settingsStore.keymaps.deleteFiles && matchesShortcut(e, settingsStore.keymaps.deleteFiles)) ||
+      (!settingsStore.keymaps.deleteFiles && (e.key === 'Delete' || e.key === 'Del' || e.key === 'F8')) ||
+      e.key === 'Delete' || e.key === 'Del'
+    ) {
       if (isTypingInInput(e)) return
       if (options.isAnyModalOpen()) return
 
@@ -364,6 +484,10 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       }
       if (options.showDeleteConfirmModal.value) {
         options.onCloseDeleteConfirm()
+        return
+      }
+      if (options.isAnyModalOpen()) {
+        options.onCloseOtherModals()
         return
       }
       if (options.showLocalFilter.value && options.localSearchQuery.value) {

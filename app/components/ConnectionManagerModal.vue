@@ -969,8 +969,8 @@ const handleFormSubmit = () => {
         <!-- Live Connection Progress Log Box -->
         <div
           v-if="connectionLogs.length > 0 || isConnecting"
-          class="mb-3 rounded-xl border shadow-lg overflow-hidden shrink-0 transition-all duration-200"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-accent)' }"
+          class="mb-3 rounded-xl border shadow-sm overflow-hidden shrink-0 transition-all duration-200"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
         >
           <!-- Log Header -->
           <div
@@ -1002,17 +1002,24 @@ const handleFormSubmit = () => {
           </div>
 
           <!-- Log Content Console -->
-          <div ref="logContainerRef" class="p-2.5 max-h-32 overflow-y-auto font-mono text-[11px] space-y-1 bg-black/60 select-text">
+          <div
+            ref="logContainerRef"
+            class="p-2.5 max-h-32 overflow-y-auto font-mono text-[11px] space-y-1 select-text"
+            :style="{
+              backgroundColor: 'var(--color-terminal-bg)',
+              color: 'var(--color-terminal-fg)'
+            }"
+          >
             <div
               v-for="(log, idx) in connectionLogs"
               :key="idx"
               :class="[
                 'flex items-start space-x-2 leading-tight',
-                log.type === 'error' ? 'text-rose-400' : log.type === 'success' ? 'text-emerald-400' : ''
+                log.type === 'error' ? 'text-red-600 dark:text-rose-400 font-semibold' : log.type === 'success' ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''
               ]"
-              :style="log.type !== 'error' && log.type !== 'success' ? { color: 'var(--color-text-main)' } : undefined"
+              :style="log.type !== 'error' && log.type !== 'success' ? { color: 'var(--color-terminal-fg)' } : undefined"
             >
-              <span class="select-none text-[10px] shrink-0 font-mono" :style="{ color: 'var(--color-text-muted)' }">[{{ log.time }}]</span>
+              <span class="select-none text-[10px] shrink-0 font-mono opacity-70" :style="{ color: 'var(--color-text-muted)' }">[{{ log.time }}]</span>
               <span class="break-all">{{ log.message }}</span>
             </div>
             <div v-if="isConnecting" class="flex items-center space-x-2 text-[10px] pt-0.5" :style="{ color: 'var(--color-accent)' }">
@@ -1566,8 +1573,8 @@ const handleFormSubmit = () => {
         <!-- Connection Progress in Form Mode -->
         <div
           v-if="connectionLogs.length > 0 || isConnecting"
-          class="rounded-xl border shadow-lg overflow-hidden shrink-0"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          class="rounded-xl border shadow-sm overflow-hidden shrink-0"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
         >
           <div
             class="flex items-center justify-between px-3 py-1.5 border-b text-[11px]"
@@ -1582,17 +1589,23 @@ const handleFormSubmit = () => {
             </div>
             <span v-if="isConnecting" class="text-[10px] font-mono animate-pulse" :style="{ color: 'var(--color-accent)' }">Authenticating...</span>
           </div>
-          <div class="p-2.5 max-h-24 overflow-y-auto font-mono text-[10px] space-y-1 select-text" :style="{ backgroundColor: 'rgba(0,0,0,0.3)' }">
+          <div
+            class="p-2.5 max-h-24 overflow-y-auto font-mono text-[10px] space-y-1 select-text"
+            :style="{
+              backgroundColor: 'var(--color-terminal-bg)',
+              color: 'var(--color-terminal-fg)'
+            }"
+          >
             <div
               v-for="(log, idx) in connectionLogs"
               :key="idx"
               :class="[
                 'flex items-start space-x-2 leading-tight',
-                log.type === 'error' ? 'text-rose-400' : log.type === 'success' ? 'text-emerald-400' : ''
+                log.type === 'error' ? 'text-red-600 dark:text-rose-400 font-semibold' : log.type === 'success' ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''
               ]"
-              :style="log.type !== 'error' && log.type !== 'success' ? { color: 'var(--color-text-main)' } : undefined"
+              :style="log.type !== 'error' && log.type !== 'success' ? { color: 'var(--color-terminal-fg)' } : undefined"
             >
-              <span class="select-none text-[9px] shrink-0 font-mono" :style="{ color: 'var(--color-text-muted)' }">[{{ log.time }}]</span>
+              <span class="select-none text-[9px] shrink-0 font-mono opacity-70" :style="{ color: 'var(--color-text-muted)' }">[{{ log.time }}]</span>
               <span class="break-all">{{ log.message }}</span>
             </div>
           </div>
@@ -1702,8 +1715,8 @@ const handleFormSubmit = () => {
         <!-- Live Auth Progress in Password Prompt Modal -->
         <div
           v-if="connectionLogs.length > 0 || promptIsConnecting"
-          class="rounded-xl border shadow-lg overflow-hidden shrink-0"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          class="rounded-xl border shadow-sm overflow-hidden shrink-0"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
         >
           <div
             class="flex items-center justify-between px-2.5 py-1 border-b text-[10px]"
@@ -1718,17 +1731,23 @@ const handleFormSubmit = () => {
             </div>
             <span v-if="promptIsConnecting" class="text-[9px] font-mono animate-pulse" :style="{ color: 'var(--color-accent)' }">Connecting...</span>
           </div>
-          <div class="p-2 max-h-24 overflow-y-auto font-mono text-[10px] space-y-1 select-text" :style="{ backgroundColor: 'rgba(0,0,0,0.3)' }">
+          <div
+            class="p-2 max-h-24 overflow-y-auto font-mono text-[10px] space-y-1 select-text"
+            :style="{
+              backgroundColor: 'var(--color-terminal-bg)',
+              color: 'var(--color-terminal-fg)'
+            }"
+          >
             <div
               v-for="(log, idx) in connectionLogs"
               :key="idx"
               :class="[
                 'flex items-start space-x-1.5 leading-tight',
-                log.type === 'error' ? 'text-rose-400' : log.type === 'success' ? 'text-emerald-400' : ''
+                log.type === 'error' ? 'text-red-600 dark:text-rose-400 font-semibold' : log.type === 'success' ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : ''
               ]"
-              :style="log.type !== 'error' && log.type !== 'success' ? { color: 'var(--color-text-main)' } : undefined"
+              :style="log.type !== 'error' && log.type !== 'success' ? { color: 'var(--color-terminal-fg)' } : undefined"
             >
-              <span class="select-none text-[9px] shrink-0 font-mono" :style="{ color: 'var(--color-text-muted)' }">[{{ log.time }}]</span>
+              <span class="select-none text-[9px] shrink-0 font-mono opacity-70" :style="{ color: 'var(--color-text-muted)' }">[{{ log.time }}]</span>
               <span class="break-all">{{ log.message }}</span>
             </div>
             <div v-if="promptIsConnecting" class="flex items-center space-x-1.5 text-[10px] pt-0.5" :style="{ color: 'var(--color-accent)' }">

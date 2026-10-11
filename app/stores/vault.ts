@@ -15,7 +15,7 @@ interface VaultFileStructure {
   entries: Record<string, VaultEntry>
 }
 
-const VERIFY_TOKEN = 'TERMSFTP_MASTER_VAULT_V1'
+const VERIFY_TOKEN = 'FLOWSFTP_MASTER_VAULT_V1'
 const ITERATIONS = 100_000
 
 function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {

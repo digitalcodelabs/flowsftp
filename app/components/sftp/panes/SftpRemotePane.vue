@@ -10,6 +10,8 @@ import {
   GitCompare,
   FolderSync,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ArrowUp,
   ArrowDown,
 } from 'lucide-vue-next'
@@ -18,6 +20,7 @@ import { useSettingsStore } from '../../../stores/settings'
 import { useSshStore } from '../../../stores/ssh'
 import FileIcon from '../../FileIcon.vue'
 import CatppuccinIcon from '../../CatppuccinIcon.vue'
+import SftpBreadcrumbBar from './SftpBreadcrumbBar.vue'
 import SftpComparisonBadge from '../compare/SftpComparisonBadge.vue'
 import type { ComparisonResult } from '../compare/types'
 import type { FileSortField, FileSortOrder } from './sorting'
@@ -48,6 +51,8 @@ const props = defineProps<{
   searchQuery: string
   activeDropFolder: { pane: 'local' | 'remote'; path: string } | null
   canNavigateUp: boolean
+  canNavigateBack?: boolean
+  canNavigateForward?: boolean
   parentPath: string | null
   isParentSelected: boolean
   rowPaddingClass: string
@@ -69,11 +74,15 @@ const emit = defineEmits<{
   (e: 'filter-esc'): void
   (e: 'focus-first-item'): void
   (e: 'navigate-up'): void
+  (e: 'navigate-back'): void
+  (e: 'navigate-forward'): void
   (e: 'navigate-to', path: string): void
+  (e: 'copy-path', pathStr: string): void
   (e: 'refresh'): void
   (e: 'reconnect'): void
   (e: 'new-file'): void
   (e: 'new-folder'): void
+  (e: 'open-search'): void
   (e: 'permissions', file: SftpFileEntry): void
   (e: 'batch-download', files: SftpFileEntry[]): void
   (e: 'batch-delete', files: SftpFileEntry[]): void
@@ -126,11 +135,17 @@ const closeAllDropdowns = () => {
   showBookmarksMenu.value = false
 }
 
+const breadcrumbBarRef = ref<InstanceType<typeof SftpBreadcrumbBar> | null>(null)
+const startEditPath = () => {
+  breadcrumbBarRef.value?.startEditing()
+}
+
 defineExpose({
   rootEl,
   filterInputRef,
   syncInputPath,
   closeAllDropdowns,
+  startEditPath,
 })
 </script>
 
@@ -162,6 +177,12 @@ defineExpose({
           title="Active navigation pane"
         />
         <span class="text-xs font-semibold" :style="{ color: 'var(--color-accent-secondary)' }">{{ protocolLabel }}</span>
+        <span
+          v-if="active"
+          class="px-1.5 py-0.2 rounded font-mono text-[9px] font-bold uppercase tracking-wider bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/30"
+        >
+          Active
+        </span>
         <span v-if="sessionId" class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
           ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${sftpStore.remoteFiles.length}` : `${filteredFiles.length}` }} items)
         </span>
@@ -173,14 +194,14 @@ defineExpose({
         <template v-if="selectedFiles.length > 0">
           <button
             @click="emit('batch-download', selectedFiles)"
-            :title="`Download ${selectedFiles.length} selected item(s) to local`"
+            :title="`Download ${selectedFiles.length} selected item(s) to local (F5)`"
             class="h-6 px-1.5 rounded text-xs transition flex items-center justify-center bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 shadow-sm"
           >
             <CatppuccinIcon name="download" :size="15" />
           </button>
           <button
             @click="emit('batch-delete', selectedFiles)"
-            :title="`Delete ${selectedFiles.length} selected item(s) from server`"
+            :title="`Delete ${selectedFiles.length} selected item(s) from server (F8 / Delete)`"
             class="h-6 px-1.5 rounded text-red-400 hover:bg-red-950/60 text-xs transition flex items-center justify-center border border-transparent hover:border-red-500/30"
           >
             <CatppuccinIcon name="delete" :size="15" />
@@ -206,11 +227,11 @@ defineExpose({
           @click="sftpStore.toggleSynchronizedBrowsing()"
           :title="sftpStore.isSynchronizedBrowsing ? 'Synchronized Browsing is ON (Lockstep Navigation)' : 'Turn ON Synchronized Browsing (Lockstep Navigation)'"
           class="p-1 rounded text-xs transition hover:opacity-80 relative"
-          :class="sftpStore.isSynchronizedBrowsing ? 'text-sky-400 bg-sky-500/15 ring-1 ring-sky-400/40' : ''"
+          :class="sftpStore.isSynchronizedBrowsing ? 'text-sky-700 dark:text-sky-400 bg-sky-500/15 ring-1 ring-sky-400/40' : ''"
           :style="{ color: sftpStore.isSynchronizedBrowsing ? 'var(--color-accent-secondary)' : 'var(--color-text-muted)' }"
         >
           <FolderSync class="w-4 h-4" />
-          <span v-if="sftpStore.isSynchronizedBrowsing" class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+          <span v-if="sftpStore.isSynchronizedBrowsing" class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-sky-500 dark:bg-sky-400 animate-pulse" />
         </button>
 
         <!-- Toggle In-Pane Search Filter (Ctrl+F) -->
@@ -225,11 +246,36 @@ defineExpose({
           <Search class="w-4 h-4" />
         </button>
 
+        <!-- Folder History: Back (Alt+Left) -->
+        <button
+          @click="emit('navigate-back')"
+          :disabled="!canNavigateBack"
+          :class="{ 'opacity-30 cursor-not-allowed': !canNavigateBack }"
+          title="Go back (Alt+Left)"
+          class="p-1 rounded text-xs transition hover:opacity-80"
+          :style="{ color: 'var(--color-text-muted)' }"
+        >
+          <ChevronLeft class="w-4 h-4" />
+        </button>
+
+        <!-- Folder History: Forward (Alt+Right) -->
+        <button
+          @click="emit('navigate-forward')"
+          :disabled="!canNavigateForward"
+          :class="{ 'opacity-30 cursor-not-allowed': !canNavigateForward }"
+          title="Go forward (Alt+Right)"
+          class="p-1 rounded text-xs transition hover:opacity-80"
+          :style="{ color: 'var(--color-text-muted)' }"
+        >
+          <ChevronRight class="w-4 h-4" />
+        </button>
+
+        <!-- Parent Directory: Up (Backspace) -->
         <button
           @click="emit('navigate-up')"
           :disabled="!canNavigateUp"
           :class="{ 'opacity-30 cursor-not-allowed': !canNavigateUp }"
-          title="Go to parent directory"
+          title="Go to parent directory (Backspace)"
           class="p-1 rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
@@ -280,59 +326,42 @@ defineExpose({
         >
           <CatppuccinIcon name="folder" :size="15" />
         </button>
+        <button
+          v-if="sessionId"
+          @click="emit('open-search')"
+          title="Recursive Remote Search & SSH Grep (Ctrl+Shift+F)"
+          class="p-1 rounded text-xs transition hover:opacity-80 text-sky-600 dark:text-sky-400"
+        >
+          <Search class="w-4 h-4" />
+        </button>
       </div>
     </div>
 
-    <!-- Remote Path Address Bar (Location) -->
+    <!-- Remote Path Breadcrumb Bar & Bookmarks -->
     <div
-      class="px-3 py-1.5 border-b flex items-center space-x-2 transition-colors duration-150"
+      class="border-b flex items-center pr-2 transition-colors duration-150"
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
     >
-      <div
-        class="flex-1 flex items-center space-x-2 px-2.5 py-1 rounded-lg border transition-colors duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
-      >
-        <CatppuccinIcon name="globe" :size="15" class="shrink-0 select-none" />
-        <input
+      <div class="flex-1 min-w-0">
+        <SftpBreadcrumbBar
           v-if="sessionId"
-          v-model="inputPath"
-          @keyup.enter="emit('navigate-to', inputPath)"
+          ref="breadcrumbBarRef"
+          :path="currentPath"
+          pane="remote"
+          :active="active"
+          :git-status="sftpStore.remoteGitStatus"
           placeholder="/var/www/..."
-          class="flex-1 bg-transparent text-xs font-mono focus:outline-none truncate"
-          :style="{ color: 'var(--color-text-main)' }"
+          @navigate-to="emit('navigate-to', $event)"
+          @copy-path="emit('copy-path', $event)"
         />
-        <div v-else class="text-xs italic flex-1" :style="{ color: 'var(--color-text-muted)' }">
-          Connect an SSH session to access remote SFTP files
+        <div v-else class="px-3 py-2 text-xs italic flex items-center space-x-2" :style="{ color: 'var(--color-text-muted)' }">
+          <CatppuccinIcon name="globe" :size="15" class="shrink-0 select-none opacity-50" />
+          <span>Connect an SSH session to access remote SFTP files</span>
         </div>
-
-        <!-- Remote Git Branch Badge -->
-        <div
-          v-if="sessionId && sftpStore.remoteGitStatus?.is_repo && sftpStore.remoteGitStatus.branch"
-          class="flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono border flex-shrink-0"
-          :style="{
-            backgroundColor: 'rgba(245, 158, 11, 0.12)',
-            color: '#fbbf24',
-            borderColor: 'rgba(245, 158, 11, 0.35)'
-          }"
-          :title="`Remote Git Branch: ${sftpStore.remoteGitStatus.branch}`"
-        >
-          <GitBranch class="w-3 h-3 text-amber-400" />
-          <span class="font-semibold">{{ sftpStore.remoteGitStatus.branch }}</span>
-        </div>
-
-        <button
-          v-if="sessionId"
-          @click="emit('navigate-to', inputPath)"
-          class="p-0.5 rounded text-xs font-semibold transition hover:opacity-100 opacity-60"
-          :style="{ color: 'var(--color-accent-secondary)' }"
-          title="Navigate to remote path (Enter)"
-        >
-          ↵
-        </button>
       </div>
 
       <!-- Remote Bookmark Toggle & Dropdown -->
-      <div v-if="sessionId" class="relative flex items-center space-x-1">
+      <div v-if="sessionId" class="relative flex items-center space-x-1 shrink-0 pl-1.5">
         <button
           @click="emit('toggle-bookmark')"
           :title="isBookmarked ? 'Remove Bookmark' : 'Bookmark this remote folder'"

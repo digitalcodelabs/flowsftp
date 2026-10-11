@@ -62,6 +62,12 @@ try {
     height: 16,
   })
 
+  // Linux / WSL Tux Icon in Catppuccin vector style
+  const tuxBody = '<g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2a3.3 3.3 0 0 0-3.3 3.3c0 1.1.4 2.1.9 2.7C4.6 8.8 3.5 10.2 3.5 12c0 1.1.9 2 2 2h5c1.1 0 2-.9 2-2 0-1.8-1.1-3.2-2.1-4 .5-.6.9-1.6.9-2.7A3.3 3.3 0 0 0 8 2Z" stroke="#cad3f5" stroke-width="1.2"/><path d="M4.2 9c-.9 1-1.6 2.3-1.1 3.4.4.8 1.2.9 1.7.5" stroke="#cad3f5" stroke-width="1.1"/><path d="M11.8 9c.9 1 1.6 2.3 1.1 3.4-.4.8-1.2.9-1.7.5" stroke="#cad3f5" stroke-width="1.1"/><path d="M5.8 14c-.2-1.7.8-3.5 2.2-3.5s2.4 1.8 2.2 3.5" stroke="#cad3f5" stroke-width="1"/><circle cx="6.7" cy="5" r="0.6" fill="#cad3f5"/><circle cx="9.3" cy="5" r="0.6" fill="#cad3f5"/><path d="M6.8 6.4h2.4L8 7.7Z" fill="#eed49f" stroke="#eed49f" stroke-width="0.6"/><path d="M4.5 14.6c.6.6 1.8.6 2.4 0" stroke="#eed49f" stroke-width="1.2"/><path d="M9.1 14.6c.6.6 1.8.6 2.4 0" stroke="#eed49f" stroke-width="1.2"/></g>'
+  addIcon('catppuccin:linux', { body: tuxBody, width: 16, height: 16 })
+  addIcon('catppuccin:wsl', { body: tuxBody, width: 16, height: 16 })
+  addIcon('catppuccin:tux', { body: tuxBody, width: 16, height: 16 })
+
   addIcon('catppuccin:download', {
     body: '<g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 10v2.5a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5V10" stroke="#cad3f5" stroke-width="1.6"/><path d="M8 2v7.5" stroke="#a6da95" stroke-width="1.8"/><path d="M4.5 6.2L8 9.8l3.5-3.6" stroke="#a6da95" stroke-width="1.8"/></g>',
     width: 16,

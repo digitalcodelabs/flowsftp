@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onUnmounted } from 'vue'
 import { Package, X, RotateCw } from 'lucide-vue-next'
 import type { LocalFileEntry, SftpFileEntry } from '../../../stores/sftp'
 
@@ -20,10 +20,20 @@ const format = ref<'.tar.gz' | '.zip'>('.tar.gz')
 const archiveName = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
 
+const handleWindowKeyDown = (e: KeyboardEvent) => {
+  if (!props.show) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('close')
+  }
+}
+
 watch(
   () => props.show,
   (isOpen) => {
     if (isOpen) {
+      window.addEventListener('keydown', handleWindowKeyDown, true)
       format.value = '.tar.gz'
       if (props.selectedItems.length === 1) {
         archiveName.value = `${props.selectedItems[0].name}.tar.gz`
@@ -38,10 +48,16 @@ watch(
           inputRef.value?.select()
         }, 50)
       })
+    } else {
+      window.removeEventListener('keydown', handleWindowKeyDown, true)
     }
   },
   { immediate: true }
 )
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleWindowKeyDown, true)
+})
 
 const selectFormat = (newFormat: '.tar.gz' | '.zip') => {
   format.value = newFormat
@@ -60,8 +76,10 @@ const handleSubmit = () => {
 <template>
   <div
     v-if="show"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+    tabindex="-1"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 outline-none"
     @click.self="emit('close')"
+    @keydown.esc.prevent.stop="emit('close')"
   >
     <div
       class="w-full max-w-sm rounded-xl border shadow-2xl p-4 space-y-3.5 animate-in fade-in zoom-in-95 duration-100"
@@ -119,7 +137,7 @@ const handleSubmit = () => {
           v-model="archiveName"
           @keydown.enter.prevent="handleSubmit"
           @keyup.enter="handleSubmit"
-          @keydown.esc="emit('close')"
+          @keydown.esc.prevent.stop="emit('close')"
           placeholder="archive.tar.gz"
           class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none font-mono"
           :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import appIcon from '~/assets/icon.png'
 import {
   Settings,
   Zap,
@@ -25,12 +26,15 @@ import {
   FileCode,
   Sparkles,
   AlertTriangle,
+  Code2,
+  Search,
 } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 import { useSftpStore } from '../stores/sftp'
 import { useVaultStore } from '../stores/vault'
 import { useSettingsStore, TERMINAL_FONTS, BROWSER_FONTS } from '../stores/settings'
 import { useThemeStore, isLightTheme, type AppTheme } from '../stores/theme'
+import { useDirWatcherStore } from '../stores/dirWatcher'
 import FileIcon from './FileIcon.vue'
 import {
   KEYMAP_ACTIONS_META,
@@ -43,9 +47,11 @@ import {
 const props = withDefaults(
   defineProps<{
     show?: boolean
+    initialTab?: 'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'
   }>(),
   {
     show: true,
+    initialTab: 'themes',
   }
 )
 
@@ -57,8 +63,18 @@ const sftpStore = useSftpStore()
 const vaultStore = useVaultStore()
 const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
+const dirWatcherStore = useDirWatcherStore()
 
-const activeTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols'>('themes')
+const activeTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>(props.initialTab || 'themes')
+
+watch(
+  () => props.initialTab,
+  (newTab) => {
+    if (newTab) {
+      activeTab.value = newTab
+    }
+  }
+)
 
 // Theme Import / Export state
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -154,6 +170,10 @@ const connectionActions = computed(() =>
   KEYMAP_ACTIONS_META.filter((a) => a.category === 'connections')
 )
 
+const fileManagerActions = computed(() =>
+  KEYMAP_ACTIONS_META.filter((a) => a.category === 'fileManager')
+)
+
 const currentPresetId = computed(() => {
   for (const preset of KEYMAP_PRESETS) {
     const isMatch = Object.entries(preset.keymaps).every(
@@ -197,8 +217,23 @@ const handleRecordingKeyDown = (e: KeyboardEvent) => {
   }
 }
 
+const handleGlobalModalKeyDown = (e: KeyboardEvent) => {
+  if (recordingAction.value) return // Don't close while recording shortcut
+
+  if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma'))) {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('close')
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalModalKeyDown, true)
+})
+
 onBeforeUnmount(() => {
   stopRecording()
+  window.removeEventListener('keydown', handleGlobalModalKeyDown, true)
 })
 
 const handleLockVault = () => {
@@ -241,8 +276,7 @@ const handleResetVault = async () => {
         class="flex items-center justify-between px-6 py-4 border-b shrink-0 transition-colors duration-150"
         :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
       >
-        <div class="flex items-center space-x-2.5">
-          <Settings class="w-4 h-4" :style="{ color: 'var(--color-accent)' }" />
+        <div class="flex items-center space-x-2.5 select-none">
           <h3 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">Settings</h3>
         </div>
         <button
@@ -313,6 +347,15 @@ const handleResetVault = async () => {
         >
           <Globe class="w-3.5 h-3.5" />
           <span>Protocols</span>
+        </button>
+        <button
+          @click="activeTab = 'developer'"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          :class="{ 'font-semibold': activeTab === 'developer' }"
+          :style="activeTab === 'developer' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+        >
+          <Code2 class="w-3.5 h-3.5" />
+          <span>Developer</span>
         </button>
       </div>
 
@@ -549,11 +592,11 @@ const handleResetVault = async () => {
                 <span class="w-2.5 h-2.5 rounded-full bg-red-500/80 inline-block" />
                 <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/80 inline-block" />
                 <span class="w-2.5 h-2.5 rounded-full bg-green-500/80 inline-block" />
-                <span class="text-[10px] ml-1" :style="{ color: 'var(--color-text-muted)' }">termsftp-shell — 80x24</span>
+                <span class="text-[10px] ml-1" :style="{ color: 'var(--color-text-muted)' }">flowsftp-shell — 80x24</span>
               </div>
 
               <div>
-                <span :style="{ color: themeStore.currentTheme.terminal.green }">user@termsftp</span>
+                <span :style="{ color: themeStore.currentTheme.terminal.green }">user@flowsftp</span>
                 <span :style="{ color: themeStore.currentTheme.terminal.foreground }">:</span>
                 <span :style="{ color: themeStore.currentTheme.terminal.blue }">~/projects/web</span>
                 <span :style="{ color: themeStore.currentTheme.terminal.foreground }">$ </span>
@@ -571,7 +614,7 @@ const handleResetVault = async () => {
                 <span :style="{ color: themeStore.currentTheme.terminal.green }">package.json</span>
               </div>
               <div class="mt-1">
-                <span :style="{ color: themeStore.currentTheme.terminal.green }">user@termsftp</span>
+                <span :style="{ color: themeStore.currentTheme.terminal.green }">user@flowsftp</span>
                 <span :style="{ color: themeStore.currentTheme.terminal.foreground }">:</span>
                 <span :style="{ color: themeStore.currentTheme.terminal.blue }">~/projects/web</span>
                 <span :style="{ color: themeStore.currentTheme.terminal.foreground }">$ </span>
@@ -1167,6 +1210,100 @@ const handleResetVault = async () => {
               </div>
             </div>
           </div>
+
+          <!-- Dual-Pane File Manager Navigation & Operations -->
+          <div
+            class="rounded-xl border p-4 space-y-3"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div class="flex items-center space-x-2">
+              <div
+                class="w-5 h-5 rounded-md border flex items-center justify-center"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+              >
+                <FolderSync class="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Dual-Pane File Manager &amp; Navigation</h4>
+                <p class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">Switch active pane with Tab, transfer items (F5/F6), create folders (F7), delete (F8), and navigate folder history.</p>
+              </div>
+            </div>
+
+            <div class="divide-y pt-1" :style="{ borderColor: 'var(--color-border)' }">
+              <div
+                v-for="action in fileManagerActions"
+                :key="action.id"
+                class="py-2.5 flex items-center justify-between gap-3"
+                :style="{ borderColor: 'var(--color-border)' }"
+              >
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-xs" :style="{ color: 'var(--color-text-main)' }">{{ action.title }}</div>
+                  <div class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">{{ action.description }}</div>
+                </div>
+
+                <div class="flex items-center space-x-2 shrink-0">
+                  <!-- Recording State -->
+                  <div v-if="recordingAction === action.id" class="flex items-center space-x-2">
+                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/70 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
+                      <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                      <span>{{ recordingPreview || 'Press keys...' }}</span>
+                    </span>
+                    <button
+                      @click="stopRecording"
+                      class="px-2 py-1 text-[11px] rounded border transition btn-theme-card"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    >
+                      Cancel (Esc)
+                    </button>
+                  </div>
+
+                  <!-- Normal Display -->
+                  <template v-else>
+                    <div class="flex items-center space-x-1 font-mono">
+                      <template
+                        v-for="(part, idx) in splitShortcutParts(settingsStore.keymaps[action.id])"
+                        :key="idx"
+                      >
+                        <kbd
+                          class="px-2 py-0.5 text-xs rounded border font-semibold shadow-sm"
+                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                        >
+                          {{ part }}
+                        </kbd>
+                        <span
+                          v-if="idx < splitShortcutParts(settingsStore.keymaps[action.id]).length - 1"
+                          class="text-[10px]"
+                          :style="{ color: 'var(--color-text-muted)' }"
+                        >
+                          +
+                        </span>
+                      </template>
+                    </div>
+
+                    <button
+                      @click="startRecording(action.id)"
+                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 btn-theme-card"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      title="Record new shortcut"
+                    >
+                      <Edit2 class="w-3 h-3" :style="{ color: 'var(--color-text-muted)' }" />
+                      <span>Edit</span>
+                    </button>
+
+                    <button
+                      v-if="settingsStore.keymaps[action.id] !== action.defaultShortcut"
+                      @click="settingsStore.resetKeymapAction(action.id)"
+                      class="p-1 rounded transition"
+                      :style="{ color: 'var(--color-text-muted)' }"
+                      title="Reset to default"
+                    >
+                      <RotateCcw class="w-3 h-3" />
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- 4. SECURITY & MASTER PASSWORD TAB -->
@@ -1320,7 +1457,7 @@ const handleResetVault = async () => {
               <div>
                 <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Supported Transfer Protocols</h4>
                 <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
-                  All connection protocols currently supported in TermSFTP.
+                  All connection protocols currently supported in FlowSFTP.
                 </p>
               </div>
             </div>
@@ -1360,6 +1497,248 @@ const handleResetVault = async () => {
                     Plain FTP (Port 21) & Secure FTPS with TLS encryption. Directory listing, upload/download queue with live progress.
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. DEVELOPER TAB -->
+        <div v-if="activeTab === 'developer'" class="space-y-4">
+          <!-- External Editor Section -->
+          <div
+            class="rounded-xl border p-4 space-y-4"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div class="flex items-center space-x-2.5">
+              <Code2 class="w-4 h-4" :style="{ color: 'var(--color-accent)' }" />
+              <div>
+                <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">External Editor Live Sync</h4>
+                <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+                  Choose which editor to open when selecting "Edit in External Editor (Live Sync)" on remote files.
+                </p>
+              </div>
+            </div>
+
+            <!-- Radio choices for preferred editor -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                @click="settingsStore.preferredExternalEditor = 'default'"
+                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
+                :class="settingsStore.preferredExternalEditor === 'default' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
+                :style="{
+                  backgroundColor: settingsStore.preferredExternalEditor === 'default' ? undefined : 'var(--color-bg-card)',
+                  borderColor: settingsStore.preferredExternalEditor === 'default' ? undefined : 'var(--color-border)',
+                }"
+              >
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'default' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
+                  <div v-if="settingsStore.preferredExternalEditor === 'default'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">System Default App</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Uses your operating system's registered file associations</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="settingsStore.preferredExternalEditor = 'code'"
+                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
+                :class="settingsStore.preferredExternalEditor === 'code' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
+                :style="{
+                  backgroundColor: settingsStore.preferredExternalEditor === 'code' ? undefined : 'var(--color-bg-card)',
+                  borderColor: settingsStore.preferredExternalEditor === 'code' ? undefined : 'var(--color-border)',
+                }"
+              >
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'code' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
+                  <div v-if="settingsStore.preferredExternalEditor === 'code'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Visual Studio Code</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono text-sky-700 dark:text-sky-300">code &lt;file&gt;</code> on PATH</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="settingsStore.preferredExternalEditor = 'cursor'"
+                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
+                :class="settingsStore.preferredExternalEditor === 'cursor' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
+                :style="{
+                  backgroundColor: settingsStore.preferredExternalEditor === 'cursor' ? undefined : 'var(--color-bg-card)',
+                  borderColor: settingsStore.preferredExternalEditor === 'cursor' ? undefined : 'var(--color-border)',
+                }"
+              >
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'cursor' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
+                  <div v-if="settingsStore.preferredExternalEditor === 'cursor'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Cursor AI</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono text-sky-700 dark:text-sky-300">cursor &lt;file&gt;</code> on PATH</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="settingsStore.preferredExternalEditor = 'subl'"
+                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
+                :class="settingsStore.preferredExternalEditor === 'subl' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
+                :style="{
+                  backgroundColor: settingsStore.preferredExternalEditor === 'subl' ? undefined : 'var(--color-bg-card)',
+                  borderColor: settingsStore.preferredExternalEditor === 'subl' ? undefined : 'var(--color-border)',
+                }"
+              >
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'subl' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
+                  <div v-if="settingsStore.preferredExternalEditor === 'subl'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Sublime Text</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono text-sky-700 dark:text-sky-300">subl &lt;file&gt;</code> on PATH</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="settingsStore.preferredExternalEditor = 'notepad++'"
+                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
+                :class="settingsStore.preferredExternalEditor === 'notepad++' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
+                :style="{
+                  backgroundColor: settingsStore.preferredExternalEditor === 'notepad++' ? undefined : 'var(--color-bg-card)',
+                  borderColor: settingsStore.preferredExternalEditor === 'notepad++' ? undefined : 'var(--color-border)',
+                }"
+              >
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'notepad++' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
+                  <div v-if="settingsStore.preferredExternalEditor === 'notepad++'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Notepad++</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches Notepad++ executable on PATH</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                @click="settingsStore.preferredExternalEditor = 'custom'"
+                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
+                :class="settingsStore.preferredExternalEditor === 'custom' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
+                :style="{
+                  backgroundColor: settingsStore.preferredExternalEditor === 'custom' ? undefined : 'var(--color-bg-card)',
+                  borderColor: settingsStore.preferredExternalEditor === 'custom' ? undefined : 'var(--color-border)',
+                }"
+              >
+                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'custom' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
+                  <div v-if="settingsStore.preferredExternalEditor === 'custom'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                </div>
+                <div>
+                  <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Custom Command / Path</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Specify executable path or CLI name</div>
+                </div>
+              </button>
+            </div>
+
+            <!-- Custom Command Input -->
+            <div v-if="settingsStore.preferredExternalEditor === 'custom'" class="pt-2">
+              <label class="block text-[11px] font-medium mb-1" :style="{ color: 'var(--color-text-muted)' }">
+                Executable or Command Path:
+              </label>
+              <input
+                v-model="settingsStore.customExternalEditorCommand"
+                type="text"
+                placeholder="e.g. C:\Program Files\Zed\zed.exe or nvim"
+                class="w-full px-3 py-2 rounded-lg border text-xs font-mono focus:outline-none input-theme"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+              />
+            </div>
+
+            <!-- Info box -->
+            <div class="p-3 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-900 dark:text-sky-200 text-[11px] leading-relaxed">
+              <span class="font-semibold text-sky-700 dark:text-sky-300">How Live Sync Works:</span>
+              When you open a remote file in an external editor, FlowSFTP downloads a temporary staging copy, preserves its file extension for syntax highlighting, and watches it with a real-time filesystem watcher. Whenever you save in your editor (<kbd class="px-1 py-0.2 rounded border bg-sky-500/20 text-sky-950 dark:text-sky-100 border-sky-500/30 font-mono text-[10px]">Ctrl+S</kbd>), FlowSFTP automatically debounces and uploads your changes back to the remote server.
+            </div>
+          </div>
+
+          <!-- Directory Watchers & Auto-Upload Section -->
+          <div
+            class="rounded-xl border p-4 space-y-4"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2.5">
+                <FolderSync class="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                <div>
+                  <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Live Directory Watcher & Auto-Upload</h4>
+                  <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+                    Active pairings between local project folders and remote server directories.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="dirWatcherStore.pairings.length === 0" class="p-4 rounded-lg border border-dashed text-center text-xs" :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }">
+              No folder pairings active. Right-click any local folder in the file browser and choose "Pair with Remote (Live Auto-Sync)" to start.
+            </div>
+
+            <div v-else class="space-y-2">
+              <div
+                v-for="p in dirWatcherStore.pairings"
+                :key="p.id"
+                class="p-3 rounded-lg border flex items-center justify-between text-xs"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+              >
+                <div class="space-y-1 min-w-0 flex-1 pr-3">
+                  <div class="flex items-center space-x-2 font-mono text-[11px]">
+                    <span class="text-amber-700 dark:text-amber-300 truncate max-w-[200px]" :title="p.local_dir">{{ p.local_dir }}</span>
+                    <span :style="{ color: 'var(--color-text-muted)' }">➔</span>
+                    <span class="text-sky-700 dark:text-sky-300 truncate max-w-[200px]" :title="p.remote_dir">{{ p.remote_dir }}</span>
+                  </div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
+                    Status: <span class="text-emerald-700 dark:text-emerald-400 font-semibold">{{ p.status }}</span> • {{ p.files_uploaded }} files synced
+                  </div>
+                </div>
+
+                <div class="flex items-center space-x-1.5 shrink-0">
+                  <button
+                    @click="dirWatcherStore.toggleWatcher(p.id, !p.enabled)"
+                    class="px-2 py-1 rounded border text-xs cursor-pointer"
+                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                  >
+                    {{ p.enabled ? 'Pause' : 'Resume' }}
+                  </button>
+                  <button
+                    @click="dirWatcherStore.stopWatcher(p.id)"
+                    class="p-1 rounded text-rose-400 hover:bg-rose-950/40 cursor-pointer"
+                    title="Remove pairing"
+                  >
+                    <Trash2 class="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Remote Search & Grep Section -->
+          <div
+            class="rounded-xl border p-4 space-y-3"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          >
+            <div class="flex items-center space-x-2.5">
+              <Search class="w-4 h-4 text-sky-400" />
+              <div>
+                <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Recursive Remote Search & SSH Grep</h4>
+                <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+                  Instant search across deeply nested remote directories and files.
+                </p>
+              </div>
+            </div>
+
+            <div class="p-3 rounded-lg bg-sky-950/20 border border-sky-500/20 text-sky-200/90 text-[11px] leading-relaxed space-y-1">
+              <div>
+                <span class="font-semibold text-sky-300">Keyboard Shortcut:</span>
+                Press <kbd class="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-200 font-mono text-[10px]">Ctrl+Shift+F</kbd> anywhere in the file browser.
+              </div>
+              <div>
+                <span class="font-semibold text-sky-300">Native Server Speed:</span>
+                SSH sessions execute native Linux <code class="font-mono text-sky-300">find</code> and <code class="font-mono text-sky-300">grep</code> directly on the server host, returning matching lines and line numbers instantly without downloading files.
               </div>
             </div>
           </div>

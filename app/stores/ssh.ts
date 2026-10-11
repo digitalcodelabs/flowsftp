@@ -60,8 +60,8 @@ export interface BackendSessionInfo {
 export const useSshStore = defineStore('ssh', () => {
   const sessions = ref<SshSessionItem[]>([])
   const activeSessionId = ref<string | null>(null)
-  const ACTIVE_SESSION_STORAGE_KEY = 'termsftp_active_session_id'
-  const LAST_CONNECT_CONFIGS_KEY = 'termsftp_last_connect_configs'
+  const ACTIVE_SESSION_STORAGE_KEY = 'flowsftp_active_session_id'
+  const LAST_CONNECT_CONFIGS_KEY = 'flowsftp_last_connect_configs'
 
   const loadSavedConfigs = (): Record<string, SshConnectConfig | FtpConnectConfig> => {
     try {

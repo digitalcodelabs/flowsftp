@@ -453,7 +453,7 @@ onUnmounted(() => {
 <template>
   <div
     v-if="show && file"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md select-none animate-in fade-in duration-100"
+    class="fixed top-10 inset-x-0 bottom-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md select-none animate-in fade-in duration-100"
     @click.self="close"
   >
     <div
@@ -578,17 +578,17 @@ onUnmounted(() => {
 
       <!-- Quick Look Body -->
       <div
-        class="flex-1 overflow-auto relative min-h-[300px] max-h-[68vh] flex flex-col items-center justify-center p-4 select-text"
+        class="flex-1 relative overflow-hidden flex flex-col min-h-[300px] max-h-[68vh] min-h-0 select-text"
         :style="{ backgroundColor: 'var(--color-bg-card)' }"
       >
         <!-- Loading State -->
-        <div v-if="isLoading" class="flex flex-col items-center justify-center py-12 space-y-3">
+        <div v-if="isLoading" class="flex-1 w-full flex flex-col items-center justify-center py-12 space-y-3">
           <Loader2 class="w-8 h-8 animate-spin" :style="{ color: 'var(--color-accent)' }" />
           <p class="text-xs font-mono" :style="{ color: 'var(--color-text-muted)' }">Loading preview...</p>
         </div>
 
         <!-- Error State -->
-        <div v-else-if="error" class="flex flex-col items-center justify-center py-12 space-y-3 text-center max-w-md">
+        <div v-else-if="error" class="flex-1 w-full flex flex-col items-center justify-center py-12 px-4 space-y-3 text-center max-w-md mx-auto">
           <AlertCircle class="w-10 h-10 text-red-400" />
           <p class="text-sm font-semibold text-red-400">Failed to load preview</p>
           <p class="text-xs font-mono text-zinc-400">{{ error }}</p>
@@ -597,7 +597,7 @@ onUnmounted(() => {
         <!-- 1. IMAGE & SVG PREVIEW -->
         <div
           v-else-if="(previewType === 'image' || previewType === 'svg') && blobUrl"
-          class="w-full h-full flex flex-col items-center justify-center relative overflow-hidden"
+          class="flex-1 w-full flex flex-col items-center justify-center relative overflow-hidden p-4"
         >
           <!-- Checkerboard container for transparency support -->
           <div
@@ -642,20 +642,20 @@ onUnmounted(() => {
         </div>
 
         <!-- 2. MARKDOWN PREVIEW -->
-        <div v-else-if="previewType === 'markdown'" class="w-full h-full flex flex-col">
+        <div v-else-if="previewType === 'markdown'" class="flex-1 w-full flex flex-col min-h-0 overflow-hidden">
           <div
             v-if="!showRawMarkdown"
-            class="w-full max-w-3xl mx-auto px-6 py-4 overflow-y-auto"
+            class="flex-1 w-full overflow-y-auto px-6 py-4 max-w-3xl mx-auto"
             v-html="renderedMarkdown"
           />
           <pre
             v-else
-            class="w-full h-full p-4 font-mono text-xs overflow-auto text-zinc-200"
+            class="flex-1 w-full p-4 font-mono text-xs overflow-auto text-zinc-200"
           ><code>{{ textContent }}</code></pre>
         </div>
 
         <!-- 3. JSON PREVIEW -->
-        <div v-else-if="previewType === 'json'" class="w-full h-full overflow-auto p-4">
+        <div v-else-if="previewType === 'json'" class="flex-1 w-full overflow-auto p-4 select-text min-h-0">
           <pre
             class="font-mono text-xs leading-relaxed text-zinc-200"
             v-html="formattedJsonHtml"
@@ -663,24 +663,29 @@ onUnmounted(() => {
         </div>
 
         <!-- 4. CODE & TEXT PREVIEW -->
-        <div v-else-if="previewType === 'code' || previewType === 'text'" class="w-full h-full overflow-auto flex text-xs font-mono">
-          <!-- Line Numbers -->
-          <div
-            class="select-none py-2 pr-3 text-right text-zinc-600 border-r border-zinc-800/80 mr-3 flex flex-col font-mono text-[11px]"
-            :style="{ minWidth: '40px' }"
-          >
-            <span v-for="n in codeLines.length" :key="n" class="leading-relaxed">{{ n }}</span>
-          </div>
-          <!-- Code Lines -->
-          <div class="py-2 flex-1 overflow-x-auto text-zinc-200 leading-relaxed">
-            <div v-for="(line, idx) in codeLines" :key="idx" class="whitespace-pre hover:bg-white/5 px-1 rounded">
-              {{ line || ' ' }}
+        <div
+          v-else-if="previewType === 'code' || previewType === 'text'"
+          class="flex-1 w-full overflow-auto select-text min-h-0"
+        >
+          <div class="inline-flex min-w-full font-mono text-xs leading-5 py-3">
+            <!-- Line Numbers (sticky to left on horizontal scroll) -->
+            <div
+              class="sticky left-0 select-none pl-4 pr-3 text-right text-zinc-500 border-r border-zinc-800/80 mr-3 flex flex-col font-mono text-xs leading-5 shrink-0 z-10"
+              :style="{ minWidth: '48px', backgroundColor: 'var(--color-bg-card)' }"
+            >
+              <span v-for="n in codeLines.length" :key="n" class="h-5 leading-5 block">{{ n }}</span>
+            </div>
+            <!-- Code Lines -->
+            <div class="flex-1 pr-4 text-zinc-200 leading-5">
+              <div v-for="(line, idx) in codeLines" :key="idx" class="h-5 leading-5 whitespace-pre hover:bg-white/5 px-1 rounded">
+                {{ line || ' ' }}
+              </div>
             </div>
           </div>
         </div>
 
         <!-- 5. AUDIO PREVIEW -->
-        <div v-else-if="previewType === 'audio' && blobUrl" class="w-full max-w-md flex flex-col items-center justify-center py-10 space-y-6">
+        <div v-else-if="previewType === 'audio' && blobUrl" class="flex-1 w-full flex flex-col items-center justify-center py-10 px-4 space-y-6 max-w-md mx-auto">
           <div class="w-24 h-24 rounded-2xl flex items-center justify-center shadow-2xl border" :style="{ backgroundColor: 'var(--color-bg-hover)', borderColor: 'var(--color-border)' }">
             <Music class="w-12 h-12" :style="{ color: 'var(--color-accent)' }" />
           </div>
@@ -692,12 +697,12 @@ onUnmounted(() => {
         </div>
 
         <!-- 6. VIDEO PREVIEW -->
-        <div v-else-if="previewType === 'video' && blobUrl" class="w-full h-full flex items-center justify-center">
+        <div v-else-if="previewType === 'video' && blobUrl" class="flex-1 w-full flex items-center justify-center p-4">
           <video controls autoplay :src="blobUrl" class="max-w-full max-h-[60vh] rounded-xl shadow-2xl" />
         </div>
 
         <!-- 7. BINARY / OTHER PREVIEW -->
-        <div v-else class="flex flex-col items-center justify-center py-12 space-y-4 text-center max-w-sm">
+        <div v-else class="flex-1 w-full flex flex-col items-center justify-center py-12 px-4 space-y-4 text-center max-w-sm mx-auto">
           <div class="w-20 h-20 rounded-2xl flex items-center justify-center border shadow-xl" :style="{ backgroundColor: 'var(--color-bg-hover)', borderColor: 'var(--color-border)' }">
             <FileText class="w-10 h-10" :style="{ color: 'var(--color-accent)' }" />
           </div>

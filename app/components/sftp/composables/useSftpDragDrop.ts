@@ -109,7 +109,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
 
     if (e.dataTransfer) {
       const jsonStr = JSON.stringify({
-        type: 'termsftp-drag',
+        type: 'flowsftp-drag',
         source: 'local',
         files: filesToDrag,
       })
@@ -152,7 +152,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
 
     if (e.dataTransfer) {
       const jsonStr = JSON.stringify({
-        type: 'termsftp-drag',
+        type: 'flowsftp-drag',
         source: 'remote',
         files: filesToDrag,
       })
@@ -238,7 +238,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       try {
         const data = JSON.parse(dataStr)
         if (
-          data.type === 'termsftp-drag' &&
+          data.type === 'flowsftp-drag' &&
           data.source === 'local' &&
           Array.isArray(data.files) &&
           data.files.length > 0
@@ -334,7 +334,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       try {
         const data = JSON.parse(dataStr)
         if (
-          data.type === 'termsftp-drag' &&
+          data.type === 'flowsftp-drag' &&
           data.source === 'remote' &&
           Array.isArray(data.files) &&
           data.files.length > 0
@@ -504,7 +504,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
         const data = JSON.parse(dataStr)
         if (pane === 'remote' && sid) {
           if (
-            data.type === 'termsftp-drag' &&
+            data.type === 'flowsftp-drag' &&
             data.source === 'local' &&
             Array.isArray(data.files)
           ) {
@@ -513,7 +513,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
           }
         } else if (pane === 'local') {
           if (
-            data.type === 'termsftp-drag' &&
+            data.type === 'flowsftp-drag' &&
             data.source === 'remote' &&
             Array.isArray(data.files)
           ) {
@@ -522,7 +522,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
             }
             return
           } else if (
-            data.type === 'termsftp-drag' &&
+            data.type === 'flowsftp-drag' &&
             data.source === 'local' &&
             Array.isArray(data.files)
           ) {
