@@ -355,7 +355,7 @@ defineExpose({
 
     <!-- Remote Path Breadcrumb Bar & Bookmarks -->
     <div
-      class="h-8 border-b flex items-center pr-2 transition-colors duration-150 shrink-0"
+      class="h-8 flex items-center pr-2 transition-colors duration-150 shrink-0"
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
     >
       <div class="flex-1 min-w-0">
