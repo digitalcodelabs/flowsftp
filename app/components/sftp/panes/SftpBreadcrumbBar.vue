@@ -311,7 +311,7 @@ defineExpose({
 
 <template>
   <div
-    class="px-2.5 py-1 flex items-center space-x-1.5 transition-colors duration-150 select-none"
+    class="h-8 px-2.5 flex items-center space-x-1.5 transition-colors duration-150 select-none shrink-0"
     :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
   >
     <!-- Left Icon (Pane identifier) -->
@@ -327,7 +327,7 @@ defineExpose({
 
     <!-- Middle: Breadcrumb Pills OR Editable Input -->
     <div
-      class="flex-1 min-w-0 flex items-center rounded-lg border px-2 py-0.5 transition-all duration-150 group"
+      class="h-[26px] flex-1 min-w-0 flex items-center rounded-lg border px-2 transition-colors duration-150 group overflow-hidden"
       :style="{
         backgroundColor: 'var(--color-bg-pane)',
         borderColor: isEditing
@@ -336,7 +336,7 @@ defineExpose({
       }"
     >
       <!-- Direct Editable Input Mode -->
-      <div v-if="isEditing" class="flex-1 flex items-center space-x-1.5 min-w-0">
+      <div v-if="isEditing" class="flex-1 flex items-center space-x-1.5 min-w-0 h-full">
         <input
           ref="inputRef"
           v-model="inputPath"
@@ -344,13 +344,13 @@ defineExpose({
           @keydown.esc.prevent="cancelEdit"
           @blur="submitEdit"
           :placeholder="placeholder || (pane === 'local' ? 'C:/Users/...' : '/var/www/...')"
-          class="flex-1 bg-transparent text-xs font-mono focus:outline-none truncate py-0.5"
+          class="flex-1 bg-transparent text-xs font-mono focus:outline-none truncate h-full leading-none py-0 border-0 outline-none"
           :style="{ color: 'var(--color-text-main)' }"
         />
         <button
           type="button"
           @mousedown.prevent="submitEdit"
-          class="p-0.5 rounded text-[11px] font-semibold opacity-70 hover:opacity-100 transition"
+          class="p-0.5 rounded text-[11px] font-semibold opacity-70 hover:opacity-100 transition shrink-0"
           :style="{ color: pane === 'local' ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }"
           title="Navigate (Enter)"
         >
@@ -359,7 +359,7 @@ defineExpose({
         <button
           type="button"
           @mousedown.prevent="cancelEdit"
-          class="p-0.5 rounded text-[11px] opacity-50 hover:opacity-100 transition hover:text-red-400"
+          class="p-0.5 rounded text-[11px] opacity-50 hover:opacity-100 transition hover:text-red-400 shrink-0"
           title="Cancel (Esc)"
         >
           <X class="w-3.5 h-3.5" />
@@ -372,14 +372,14 @@ defineExpose({
         ref="breadcrumbsScrollRef"
         @wheel.passive="handleWheel"
         @dblclick="startEditing"
-        class="flex-1 min-w-0 flex items-center overflow-x-auto no-scrollbar py-0.5 space-x-0.5 cursor-pointer"
+        class="flex-1 min-w-0 flex items-center overflow-x-auto no-scrollbar h-full space-x-0.5 cursor-pointer py-0"
         title="Double-click or click pencil to edit full path"
       >
         <template v-for="(crumb, idx) in breadcrumbs" :key="crumb.path + idx">
           <!-- Path Slash Divider -->
           <span
             v-if="shouldShowDivider(idx)"
-            class="text-xs select-none shrink-0 px-0.5 opacity-40 font-mono"
+            class="text-xs select-none shrink-0 px-0.5 opacity-40 font-mono leading-none"
             :style="{ color: 'var(--color-text-muted)' }"
           >
             /
@@ -389,7 +389,7 @@ defineExpose({
           <button
             type="button"
             @click.stop="handleCrumbClick(crumb)"
-            class="px-1.5 py-0.5 rounded text-xs font-mono shrink-0 transition-all duration-100 flex items-center space-x-1"
+            class="px-1.5 rounded text-xs font-mono shrink-0 transition-all duration-100 flex items-center space-x-1 leading-none h-[20px]"
             :class="[
               crumb.isLast
                 ? 'font-semibold cursor-default'
@@ -417,19 +417,19 @@ defineExpose({
       <!-- Git Branch Pill (if repo) -->
       <div
         v-if="gitStatus?.is_repo && gitStatus.branch"
-        class="hidden sm:flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-mono border bg-amber-500/10 text-amber-700 border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/35"
+        class="hidden sm:flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-mono border bg-amber-500/10 text-amber-700 border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/35 h-[22px]"
         :title="`Git Branch: ${gitStatus.branch}`"
       >
         <GitBranch class="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
         <span class="font-semibold max-w-[80px] truncate">{{ gitStatus.branch }}</span>
       </div>
 
-      <!-- Quick Edit Toggle -->
+      <!-- Quick Edit Toggle (maintains stable width during editing) -->
       <button
-        v-if="!isEditing"
         type="button"
         @click="startEditing"
-        class="p-1 rounded text-xs transition hover:bg-black/10 dark:hover:bg-white/10 opacity-60 hover:opacity-100 cursor-pointer"
+        class="w-6 h-6 flex items-center justify-center rounded text-xs transition hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+        :class="isEditing ? 'invisible pointer-events-none' : 'opacity-60 hover:opacity-100'"
         :style="{ color: 'var(--color-text-muted)' }"
         title="Edit path directly (Ctrl+L or double-click)"
       >
@@ -440,7 +440,7 @@ defineExpose({
       <button
         type="button"
         @click="handleCopyPath"
-        class="p-1 rounded text-xs transition hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+        class="w-6 h-6 flex items-center justify-center rounded text-xs transition hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
         :class="copied ? 'text-emerald-400 opacity-100' : 'opacity-60 hover:opacity-100'"
         :style="{ color: copied ? '#34d399' : 'var(--color-text-muted)' }"
         :title="copied ? 'Path copied to clipboard!' : 'Copy full path'"
@@ -450,6 +450,7 @@ defineExpose({
       </button>
     </div>
   </div>
+
 </template>
 
 <style scoped>

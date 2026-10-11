@@ -204,17 +204,16 @@ defineExpose({
     >
       <div class="flex items-center space-x-2">
         <span
-          class="w-1.5 h-1.5 rounded-full transition-all duration-150"
-          :class="active ? 'opacity-100 scale-100 ring-2 ring-emerald-500/30' : 'opacity-0 scale-50'"
+          class="w-2 h-2 rounded-full transition-all duration-150 shrink-0"
+          :class="active ? 'opacity-100 scale-100 ring-2 ring-emerald-500/40 shadow-sm shadow-emerald-500/20' : 'opacity-25 scale-75'"
           :style="{ backgroundColor: 'var(--color-accent)' }"
           title="Active navigation pane"
         />
-        <span class="text-xs font-semibold" :style="{ color: 'var(--color-accent)' }">Local Files</span>
         <span
-          v-if="active"
-          class="px-1.5 py-0.2 rounded font-mono text-[9px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+          class="text-xs font-semibold transition-colors duration-150"
+          :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }"
         >
-          Active
+          Local Files
         </span>
         <span class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
           ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${sftpStore.localFiles.length}` : `${filteredFiles.length}` }} items)
@@ -445,7 +444,7 @@ defineExpose({
 
     <!-- Local Path Breadcrumb Bar & Bookmarks -->
     <div
-      class="border-b flex items-center pr-2 transition-colors duration-150"
+      class="h-8 border-b flex items-center pr-2 transition-colors duration-150 shrink-0"
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
     >
       <div class="flex-1 min-w-0">
