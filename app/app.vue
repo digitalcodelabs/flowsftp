@@ -42,19 +42,7 @@ const themeStore = useThemeStore()
 // Navigation & Modal State
 const currentTab = ref<'terminal' | 'sftp'>('terminal')
 const showConnectModal = ref(false)
-const showSettingsModal = ref(false)
-const settingsInitialTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>('keymap')
 const tabsContainerRef = ref<HTMLDivElement | null>(null)
-
-watch(
-  () => settingsStore.isSettingsModalOpen,
-  (isOpen) => {
-    if (isOpen) {
-      settingsInitialTab.value = settingsStore.settingsModalTab as any
-      showSettingsModal.value = true
-    }
-  }
-)
 
 // Terminal status
 const terminalDimensions = ref({ cols: 80, rows: 24 })
@@ -187,8 +175,11 @@ const executeKeyAction = (action: KeymapAction) => {
 
   switch (action) {
     case 'openKeymap':
-      settingsInitialTab.value = 'keymap'
-      showSettingsModal.value = !showSettingsModal.value
+      if (settingsStore.isSettingsModalOpen) {
+        settingsStore.closeSettings()
+      } else {
+        settingsStore.openSettings('keymap')
+      }
       break
     case 'toggleView':
       toggleView()
@@ -216,13 +207,16 @@ const handleGlobalKeyDown = (e: KeyboardEvent) => {
   ) {
     e.preventDefault()
     e.stopPropagation()
-    settingsInitialTab.value = 'keymap'
-    showSettingsModal.value = !showSettingsModal.value
+    if (settingsStore.isSettingsModalOpen) {
+      settingsStore.closeSettings()
+    } else {
+      settingsStore.openSettings('keymap')
+    }
     return
   }
 
   // Do not navigate if other modals are open (unless recording shortcut, which is handled inside modal)
-  if (showConnectModal.value || showSettingsModal.value || vaultStore.showModal) {
+  if (showConnectModal.value || settingsStore.isSettingsModalOpen || vaultStore.showModal) {
     return
   }
 
@@ -278,7 +272,7 @@ onMounted(async () => {
   window.addEventListener('contextmenu', handleGlobalContextMenu)
 
   unlistenKeymapBus = onKeymapAction((action) => {
-    if (showConnectModal.value || showSettingsModal.value || vaultStore.showModal) {
+    if (showConnectModal.value || settingsStore.isSettingsModalOpen || vaultStore.showModal) {
       return
     }
     executeKeyAction(action)
@@ -545,7 +539,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         </button>
 
         <button
-          @click="showSettingsModal = true"
+          @click="settingsStore.openSettings()"
           class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
           title="Open Settings"
         >
@@ -677,9 +671,9 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
     <!-- Settings Modal -->
     <SettingsModal
-      v-if="showSettingsModal"
-      :initial-tab="settingsInitialTab"
-      @close="showSettingsModal = false; settingsStore.closeSettings()"
+      v-if="settingsStore.isSettingsModalOpen"
+      :initial-tab="settingsStore.settingsModalTab"
+      @close="settingsStore.closeSettings()"
     />
 
     <!-- Master Password Modal (Global Prompt) -->

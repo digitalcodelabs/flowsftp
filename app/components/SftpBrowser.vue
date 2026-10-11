@@ -17,7 +17,6 @@ import {
 import { useVaultStore } from '../stores/vault'
 import { useSettingsStore } from '../stores/settings'
 import { useSshStore } from '../stores/ssh'
-import SettingsModal from './SettingsModal.vue'
 import FileEditorModal from './FileEditorModal.vue'
 import PermissionsModal from './PermissionsModal.vue'
 import QuickLookModal from './QuickLookModal.vue'
@@ -66,18 +65,6 @@ const settingsStore = useSettingsStore()
 const sshStore = useSshStore()
 const externalEditStore = useExternalEditStore()
 const dirWatcherStore = useDirWatcherStore()
-const showSettingsModal = ref(false)
-const settingsInitialTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer'>('keymap')
-
-watch(
-  () => settingsStore.isSettingsModalOpen,
-  (isOpen) => {
-    if (isOpen) {
-      settingsInitialTab.value = settingsStore.settingsModalTab as any
-      showSettingsModal.value = true
-    }
-  }
-)
 const showDirWatcherModal = ref(false)
 const dirWatcherLocalDir = ref('')
 const dirWatcherRemoteDir = ref('')
@@ -1012,7 +999,7 @@ const isAnyModalOpen = () => {
     showEditorModal.value ||
     showPermissionsModal.value ||
     showDeleteConfirmModal.value ||
-    showSettingsModal.value ||
+    settingsStore.isSettingsModalOpen ||
     showDirWatcherModal.value ||
     showSearchModal.value ||
     vaultStore.showModal
@@ -1599,7 +1586,7 @@ const {
     showDirWatcherModal.value = false
     localPaneComp.value?.closeAllDropdowns()
     remotePaneComp.value?.closeAllDropdowns()
-    showSettingsModal.value = false
+    settingsStore.closeSettings()
     showPermissionsModal.value = false
   },
   onNavigateLocalUp: () => navigateLocalUp(),
@@ -2428,7 +2415,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @new-file="openNewFile('local')"
         @new-folder="openNewFolder('local')"
         @open-dir-watcher="() => openDirWatcherModal()"
-        @open-settings="showSettingsModal = true"
+        @open-settings="settingsStore.openSettings('transfers')"
         @batch-upload="(files) => handleBatchUpload(files)"
         @batch-delete="(files) => handleBatchDeleteLocal(files)"
         @row-click="handleLocalRowClick"
@@ -2657,12 +2644,6 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     :item="permissionsItem"
     @close="showPermissionsModal = false"
     @updated="handlePermissionsUpdated"
-  />
-
-  <SettingsModal
-    :show="showSettingsModal"
-    :initial-tab="settingsInitialTab"
-    @close="showSettingsModal = false; settingsStore.closeSettings()"
   />
 
   <!-- Live Directory Watcher Modal -->

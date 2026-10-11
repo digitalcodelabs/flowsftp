@@ -87,7 +87,8 @@ watch(
     if (newTab) {
       activeTab.value = newTab
     }
-  }
+  },
+  { immediate: true }
 )
 
 watch(
@@ -98,6 +99,12 @@ watch(
     }
   }
 )
+
+watch(activeTab, (tab) => {
+  if (tab && settingsStore.settingsModalTab !== tab) {
+    settingsStore.settingsModalTab = tab
+  }
+})
 
 // Ignore Filter state & presets
 const newIgnorePatternInput = ref('')
@@ -450,6 +457,7 @@ const browserOtherFonts = computed(() => {
 <template>
   <div
     v-if="props.show"
+    @click.self="emit('close')"
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
   >
     <div
