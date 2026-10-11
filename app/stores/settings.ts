@@ -252,11 +252,18 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // Intelligent Ignore Filtering for Transfers & Directory Crawling
-  const enableTransferIgnoreFilter = ref<boolean>(
-    typeof window !== 'undefined'
-      ? localStorage.getItem('flowsftp_enable_transfer_ignore') !== 'false'
-      : true
-  )
+  const getInitialTransferIgnoreState = (): boolean => {
+    if (typeof window === 'undefined') return false
+    // Migration: ensure we start with ignore rules disabled by default as requested
+    if (!localStorage.getItem('flowsftp_transfer_ignore_default_disabled_v1')) {
+      localStorage.setItem('flowsftp_transfer_ignore_default_disabled_v1', 'true')
+      localStorage.setItem('flowsftp_enable_transfer_ignore', 'false')
+      return false
+    }
+    return localStorage.getItem('flowsftp_enable_transfer_ignore') === 'true'
+  }
+
+  const enableTransferIgnoreFilter = ref<boolean>(getInitialTransferIgnoreState())
 
   const loadSavedIgnorePatterns = (): string[] => {
     if (typeof window === 'undefined') return [...DEFAULT_TRANSFER_IGNORE_PATTERNS]

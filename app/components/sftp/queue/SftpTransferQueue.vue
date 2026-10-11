@@ -384,7 +384,7 @@ const totalQueueBytes = computed(() => {
 })
 
 const formatQueueSizeDisplay = (bytes: number): string => {
-  if (bytes <= 0) return 'Queue empty'
+  if (bytes <= 0) return 'empty'
   if (bytes < 1024) return `Queue: ${bytes} B`
   if (bytes < 1024 * 1024) return `Queue: ${(bytes / 1024).toFixed(1)} KiB`
   if (bytes < 1024 * 1024 * 1024) return `Queue: ${(bytes / (1024 * 1024)).toFixed(1)} MiB`
