@@ -9,20 +9,54 @@ dist
 # Node dependencies
 node_modules
 
-# Logs
+# Logs & Debugging
 logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Misc
-.DS_Store
-.fleet
-.idea
+# Linters & Coverage
+.eslintcache
+.stylelintcache
+coverage
+.nyc_output
 
 # Local env files
 .env
 .env.*
 !.env.example
 
-# Rust / Tauri target
+# Rust / Tauri target & generated schemas
 src-tauri/target
+src-tauri/gen/schemas/
+src-tauri/gen/
 
+# Tauri updater & code signing keys / certificates (Security)
+tauri.key
+*.key
+*.pem
+*.pfx
+*.p12
+*.keystore
+
+# Editors & IDEs
+.idea
+.fleet
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+*~
+.history/
+
+# Operating System files
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
