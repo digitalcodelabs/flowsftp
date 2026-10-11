@@ -1994,15 +1994,19 @@ const openNewFile = (target: 'local' | 'remote') => {
   nextTick(() => focusInput(newFileInputRef.value))
 }
 
-const submitNewFile = async (fileName?: string) => {
+const submitNewFile = async (fileName?: string, overwrite: boolean = false) => {
   const nameToUse = (typeof fileName === 'string' ? fileName : newFileName.value).trim()
   if (!nameToUse) return
-  if (newFileTarget.value === 'local') {
-    await sftpStore.createLocalFile(nameToUse)
-  } else if (props.sessionId) {
-    await sftpStore.createRemoteFile(props.sessionId, nameToUse)
+  try {
+    if (newFileTarget.value === 'local') {
+      await sftpStore.createLocalFile(nameToUse, overwrite)
+    } else if (props.sessionId) {
+      await sftpStore.createRemoteFile(props.sessionId, nameToUse, overwrite)
+    }
+    showNewFileModal.value = false
+  } catch (err: any) {
+    console.error('Failed to create file:', err)
   }
-  showNewFileModal.value = false
 }
 
 const openRename = (target: 'local' | 'remote', item: LocalFileEntry | SftpFileEntry) => {
@@ -2951,6 +2955,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     <SftpNewFolderModal
       :show="showNewFolderModal"
       :target="newFolderTarget"
+      :existing-items="newFolderTarget === 'local' ? sftpStore.localFiles : sftpStore.remoteFiles"
       @close="showNewFolderModal = false"
       @submit="submitNewFolder"
     />
@@ -2959,6 +2964,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     <SftpNewFileModal
       :show="showNewFileModal"
       :target="newFileTarget"
+      :existing-items="newFileTarget === 'local' ? sftpStore.localFiles : sftpStore.remoteFiles"
       @close="showNewFileModal = false"
       @submit="submitNewFile"
     />

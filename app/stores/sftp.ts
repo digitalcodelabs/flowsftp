@@ -844,11 +844,11 @@ export const useSftpStore = defineStore('sftp', () => {
     await fetchRemoteDir(sessionId, remotePath.value, { force: true })
   }
 
-  async function createRemoteFile(sessionId: string, name: string) {
+  async function createRemoteFile(sessionId: string, name: string, overwrite: boolean = false) {
     const target = remotePath.value.endsWith('/')
       ? `${remotePath.value}${name}`
       : `${remotePath.value}/${name}`
-    await invoke('sftp_create_remote_file', { sessionId, path: target })
+    await invoke('sftp_create_remote_file', { sessionId, path: target, overwrite })
     invalidateRemoteCache(sessionId, remotePath.value)
     await fetchRemoteDir(sessionId, remotePath.value, { force: true })
   }
@@ -862,11 +862,11 @@ export const useSftpStore = defineStore('sftp', () => {
     await fetchLocalDir(localPath.value, { force: true })
   }
 
-  async function createLocalFile(name: string) {
+  async function createLocalFile(name: string, overwrite: boolean = false) {
     const target = localPath.value.endsWith('/')
       ? `${localPath.value}${name}`
       : `${localPath.value}/${name}`
-    await invoke('sftp_create_local_file', { path: target })
+    await invoke('sftp_create_local_file', { path: target, overwrite })
     invalidateLocalCache(localPath.value)
     await fetchLocalDir(localPath.value, { force: true })
   }

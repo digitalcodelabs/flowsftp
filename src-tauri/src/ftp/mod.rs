@@ -963,12 +963,22 @@ impl ActiveFtpSession {
         .map_err(|e| format!("Worker thread error: {}", e))?
     }
 
-    pub async fn create_file(&self, path: &str) -> Result<(), String> {
+    pub async fn create_file(&self, path: &str, overwrite: Option<bool>) -> Result<(), String> {
         let client_arc = self.client.clone();
         let p = path.to_string();
+        let allow_overwrite = overwrite.unwrap_or(false);
 
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut guard = client_arc.blocking_lock();
+            if !allow_overwrite {
+                let exists = match &mut *guard {
+                    FtpClientStream::Plain(s) => s.size(&p).is_ok(),
+                    FtpClientStream::Secure(s) => s.size(&p).is_ok(),
+                };
+                if exists {
+                    return Err(format!("File '{}' already exists on remote server", p));
+                }
+            }
             let mut cursor = std::io::Cursor::new(&[]);
             match &mut *guard {
                 FtpClientStream::Plain(s) => s.put_file(&p, &mut cursor).map(|_| ()).map_err(|e| format!("Failed to create file: {}", e)),

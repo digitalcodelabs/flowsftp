@@ -328,7 +328,12 @@ pub async fn batch_create_remote_dirs(sftp: &SftpSession, paths: Vec<String>) ->
     Ok(())
 }
 
-pub async fn create_remote_file(sftp: &SftpSession, path: &str) -> Result<(), String> {
+pub async fn create_remote_file(sftp: &SftpSession, path: &str, overwrite: Option<bool>) -> Result<(), String> {
+    if !overwrite.unwrap_or(false) {
+        if sftp.metadata(path).await.is_ok() {
+            return Err(format!("File '{}' already exists on remote server", path));
+        }
+    }
     sftp.create(path)
         .await
         .map(|_| ())
@@ -1454,8 +1459,11 @@ pub async fn create_local_dir(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create local directory '{}': {}", path, e))
 }
 
-pub async fn create_local_file(path: &str) -> Result<(), String> {
+pub async fn create_local_file(path: &str, overwrite: Option<bool>) -> Result<(), String> {
     let (native, _) = normalize_to_native_path(path);
+    if !overwrite.unwrap_or(false) && native.exists() {
+        return Err(format!("File '{}' already exists", path));
+    }
     if let Some(parent) = native.parent() {
         let _ = fs::create_dir_all(parent).await;
     }

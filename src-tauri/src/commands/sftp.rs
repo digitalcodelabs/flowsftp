@@ -102,9 +102,10 @@ pub async fn sftp_create_remote_file(
     state: State<'_, AppState>,
     session_id: String,
     path: String,
+    overwrite: Option<bool>,
 ) -> Result<(), String> {
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        return ftp.create_file(&path).await;
+        return ftp.create_file(&path, overwrite).await;
     }
 
     let session = state
@@ -113,7 +114,7 @@ pub async fn sftp_create_remote_file(
         .ok_or_else(|| format!("Session '{}' not found", session_id))?;
 
     let sftp = session.get_sftp().await?;
-    create_remote_file(&sftp, &path).await
+    create_remote_file(&sftp, &path, overwrite).await
 }
 
 #[tauri::command]
@@ -501,8 +502,8 @@ pub async fn sftp_create_local_dir(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn sftp_create_local_file(path: String) -> Result<(), String> {
-    create_local_file(&path).await
+pub async fn sftp_create_local_file(path: String, overwrite: Option<bool>) -> Result<(), String> {
+    create_local_file(&path, overwrite).await
 }
 
 #[tauri::command]
