@@ -10,7 +10,6 @@ import {
   WifiOff,
   Folder,
   Square,
-  Upload,
 } from 'lucide-vue-next'
 import {
   useSftpStore,
@@ -20,6 +19,7 @@ import {
 import { useVaultStore } from '../stores/vault'
 import { useSettingsStore } from '../stores/settings'
 import { useSshStore } from '../stores/ssh'
+import CatppuccinIcon from './CatppuccinIcon.vue'
 import FileEditorModal from './FileEditorModal.vue'
 import PermissionsModal from './PermissionsModal.vue'
 import QuickLookModal from './QuickLookModal.vue'
@@ -2326,7 +2326,15 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
                 : 'var(--color-success, #a6e3a1)'
           }"
         >
-          <RotateCw v-if="archiveToast.isLoading" class="w-3.5 h-3.5 animate-spin" />
+          <div v-if="archiveToast.isLoading && archiveToast.message.toLowerCase().includes('download')" class="relative flex items-center justify-center">
+            <CatppuccinIcon name="download" :size="14" class="opacity-80 animate-pulse" />
+          </div>
+          <div v-else-if="archiveToast.isLoading && archiveToast.message.toLowerCase().includes('upload')" class="relative flex items-center justify-center">
+            <CatppuccinIcon name="upload" :size="14" class="opacity-80 animate-pulse" />
+          </div>
+          <RotateCw v-else-if="archiveToast.isLoading" class="w-3.5 h-3.5 animate-spin" />
+          <CatppuccinIcon v-else-if="archiveToast.message.toLowerCase().includes('download')" name="download" :size="14" />
+          <CatppuccinIcon v-else-if="archiveToast.message.toLowerCase().includes('upload')" name="upload" :size="14" />
           <CheckCircle2 v-else-if="!archiveToast.isError" class="w-3.5 h-3.5" />
           <AlertTriangle v-else class="w-3.5 h-3.5" />
         </div>
@@ -2463,14 +2471,24 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         >
           <CheckCircle2 v-if="sftpStore.activeFolderUpload.isComplete" class="w-4 h-4 text-emerald-500" />
           <span
-            v-else-if="sftpStore.activeFolderUpload.isScanning || sftpStore.activeFolderUpload.isStopping"
+            v-else-if="sftpStore.activeFolderUpload.isStopping"
             class="animate-spin w-4 h-4 border-2 rounded-full"
             :style="{
               borderColor: 'color-mix(in srgb, currentColor 30%, transparent)',
               borderTopColor: 'currentColor'
             }"
           />
-          <Upload v-else class="w-4 h-4 animate-bounce text-sky-400" />
+          <div v-else-if="sftpStore.activeFolderUpload.isScanning" class="relative flex items-center justify-center">
+            <CatppuccinIcon name="upload" :size="16" class="opacity-75 animate-pulse" />
+            <span
+              class="absolute -inset-1 animate-spin border rounded-full pointer-events-none"
+              :style="{
+                borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)',
+                borderTopColor: 'var(--color-accent)'
+              }"
+            />
+          </div>
+          <CatppuccinIcon v-else name="upload" :size="16" class="animate-bounce" />
         </div>
 
         <div class="flex flex-col min-w-0 pr-1">
@@ -2590,14 +2608,24 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         >
           <CheckCircle2 v-if="sftpStore.activeFolderDownload.isComplete" class="w-4 h-4 text-emerald-500" />
           <span
-            v-else-if="sftpStore.activeFolderDownload.isScanning || sftpStore.activeFolderDownload.isStopping"
+            v-else-if="sftpStore.activeFolderDownload.isStopping"
             class="animate-spin w-4 h-4 border-2 rounded-full"
             :style="{
               borderColor: 'color-mix(in srgb, currentColor 30%, transparent)',
               borderTopColor: 'currentColor'
             }"
           />
-          <Download v-else class="w-4 h-4 animate-bounce text-cyan-400" />
+          <div v-else-if="sftpStore.activeFolderDownload.isScanning" class="relative flex items-center justify-center">
+            <CatppuccinIcon name="download" :size="16" class="opacity-75 animate-pulse" />
+            <span
+              class="absolute -inset-1 animate-spin border rounded-full pointer-events-none"
+              :style="{
+                borderColor: 'color-mix(in srgb, #06b6d4 25%, transparent)',
+                borderTopColor: '#06b6d4'
+              }"
+            />
+          </div>
+          <CatppuccinIcon v-else name="download" :size="16" class="animate-bounce" />
         </div>
 
         <div class="flex flex-col min-w-0 pr-1">
