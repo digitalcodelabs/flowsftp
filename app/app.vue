@@ -31,6 +31,7 @@ import SettingsModal from './components/SettingsModal.vue'
 import MasterPasswordModal from './components/MasterPasswordModal.vue'
 import CatppuccinIcon from './components/CatppuccinIcon.vue'
 import WindowControls from './components/WindowControls.vue'
+import appIcon from '~/assets/icon.png'
 
 const sshStore = useSshStore()
 const vaultStore = useVaultStore()
@@ -378,8 +379,13 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         borderColor: 'var(--color-border)'
       }"
     >
-      <!-- Left: View Switcher -->
-      <div class="flex items-center shrink-0" data-tauri-drag-region="false">
+      <!-- Left: Logo & View Switcher -->
+      <div class="flex items-center space-x-2.5 shrink-0">
+        <!-- App Logo -->
+        <div class="flex items-center select-none" title="FlowSFTP">
+          <img :src="appIcon" alt="FlowSFTP" class="w-6 h-6 rounded-md object-contain shrink-0 pointer-events-none drop-shadow-xs" />
+        </div>
+
         <!-- View Switcher Tabs -->
         <div
           class="flex items-center space-x-1 p-0.5 rounded-lg border shrink-0 transition-colors"
@@ -436,16 +442,12 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         </div>
       </div>
 
-      <!-- Middle: Centered Draggable FlowSFTP Title when no active sessions -->
+      <!-- Middle: Centered Draggable Space when no active sessions -->
       <div
         v-if="sshStore.sessions.length === 0"
         data-tauri-drag-region
         class="flex-1 flex items-center justify-center min-w-0 pointer-events-none select-none"
-      >
-        <!-- <span class="text-xs font-semibold tracking-wider opacity-40 font-mono" :style="{ color: 'var(--color-text-main)' }">
-          FlowSFTP
-        </span> -->
-      </div>
+      />
 
       <!-- Middle: Active Sessions Tabs (Scrollable + Overflow Menu) -->
       <div

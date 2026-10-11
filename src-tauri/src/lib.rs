@@ -6,6 +6,7 @@ pub mod ssh;
 pub mod state;
 
 use commands::dialog::{pick_and_read_file, save_file_dialog};
+use commands::fonts::get_system_fonts;
 use commands::dir_watcher::{
     sftp_list_dir_watchers, sftp_start_dir_watcher, sftp_stop_dir_watcher,
     sftp_toggle_dir_watcher,
@@ -132,6 +133,7 @@ pub fn run() {
             save_file_dialog,
             pick_and_read_file,
             exit_app,
+            get_system_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

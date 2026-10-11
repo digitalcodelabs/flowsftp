@@ -260,6 +260,129 @@ const handleResetVault = async () => {
   await vaultStore.resetVault()
   showResetVaultConfirm.value = false
 }
+
+// System Fonts Management & Filtering
+const terminalFontSearch = ref('')
+const browserFontSearch = ref('')
+const isManualTerminalFont = ref(false)
+const isManualBrowserFont = ref(false)
+
+onMounted(() => {
+  settingsStore.loadSystemFonts()
+})
+
+watch(
+  () => props.show,
+  (val) => {
+    if (val) {
+      settingsStore.loadSystemFonts()
+    }
+  }
+)
+
+const extractBaseFontName = (stack: string) => {
+  if (!stack) return ''
+  const first = stack.split(',')[0].trim()
+  return first.replace(/^["']|["']$/g, '').trim()
+}
+
+const formatFontValue = (name: string, isMonospace: boolean) => {
+  const quoted = name.includes(' ') ? `"${name}"` : name
+  return isMonospace ? `${quoted}, monospace` : `${quoted}, sans-serif`
+}
+
+const selectedTerminalFontName = computed({
+  get() {
+    return extractBaseFontName(settingsStore.terminalFontFamily)
+  },
+  set(name: string) {
+    if (!name) return
+    const isMono = settingsStore.systemFonts.find((f) => f.name === name)?.is_monospace ?? true
+    settingsStore.terminalFontFamily = formatFontValue(name, isMono)
+  },
+})
+
+const selectedBrowserFontName = computed({
+  get() {
+    return extractBaseFontName(settingsStore.browserFontFamily)
+  },
+  set(name: string) {
+    if (!name) return
+    const isMono = settingsStore.systemFonts.find((f) => f.name === name)?.is_monospace ?? false
+    settingsStore.browserFontFamily = formatFontValue(name, isMono)
+  },
+})
+
+const isCurrentTerminalFontInList = computed(() => {
+  const currentBase = selectedTerminalFontName.value.toLowerCase()
+  return settingsStore.systemFonts.some((f) => f.name.toLowerCase() === currentBase)
+})
+
+const isCurrentBrowserFontInList = computed(() => {
+  const currentBase = selectedBrowserFontName.value.toLowerCase()
+  return settingsStore.systemFonts.some((f) => f.name.toLowerCase() === currentBase)
+})
+
+const terminalMonospaceFonts = computed(() => {
+  const query = terminalFontSearch.value.trim().toLowerCase()
+  return settingsStore.systemFonts
+    .filter((f) => f.is_monospace)
+    .filter((f) => !query || f.name.toLowerCase().includes(query))
+})
+
+const terminalOtherFonts = computed(() => {
+  const query = terminalFontSearch.value.trim().toLowerCase()
+  return settingsStore.systemFonts
+    .filter((f) => !f.is_monospace)
+    .filter((f) => !query || f.name.toLowerCase().includes(query))
+})
+
+const browserUiFonts = computed(() => {
+  const query = browserFontSearch.value.trim().toLowerCase()
+  const commonUi = [
+    'inter',
+    'segoe ui',
+    'system-ui',
+    'roboto',
+    'arial',
+    'helvetica',
+    'sf pro',
+    'cantarell',
+    'ubuntu',
+    'noto sans',
+    'calibri',
+  ]
+  return settingsStore.systemFonts
+    .filter((f) => !f.is_monospace && commonUi.some((ui) => f.name.toLowerCase().includes(ui)))
+    .filter((f) => !query || f.name.toLowerCase().includes(query))
+})
+
+const browserMonospaceFonts = computed(() => {
+  const query = browserFontSearch.value.trim().toLowerCase()
+  return settingsStore.systemFonts
+    .filter((f) => f.is_monospace)
+    .filter((f) => !query || f.name.toLowerCase().includes(query))
+})
+
+const browserOtherFonts = computed(() => {
+  const query = browserFontSearch.value.trim().toLowerCase()
+  const commonUi = [
+    'inter',
+    'segoe ui',
+    'system-ui',
+    'roboto',
+    'arial',
+    'helvetica',
+    'sf pro',
+    'cantarell',
+    'ubuntu',
+    'noto sans',
+    'calibri',
+  ]
+  return settingsStore.systemFonts
+    .filter((f) => !f.is_monospace && !commonUi.some((ui) => f.name.toLowerCase().includes(ui)))
+    .filter((f) => !query || f.name.toLowerCase().includes(query))
+})
 </script>
 
 <template>
@@ -277,6 +400,7 @@ const handleResetVault = async () => {
         :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
       >
         <div class="flex items-center space-x-2.5 select-none">
+          <!-- <img :src="appIcon" alt="FlowSFTP" class="w-5 h-5 rounded-md object-contain shrink-0" /> -->
           <h3 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">Settings</h3>
         </div>
         <button
@@ -715,22 +839,109 @@ const handleResetVault = async () => {
             </div>
 
             <div class="grid grid-cols-2 gap-3">
-              <!-- Terminal Font Family Dropdown -->
+              <!-- Terminal Font Family Selection -->
               <div>
-                <label class="block text-[11px] font-medium mb-1" :style="{ color: 'var(--color-text-muted)' }">Font Family</label>
-                <select
-                  v-model="settingsStore.terminalFontFamily"
-                  class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
-                >
-                  <option
-                    v-for="font in TERMINAL_FONTS"
-                    :key="font.value"
-                    :value="font.value"
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-[11px] font-medium" :style="{ color: 'var(--color-text-muted)' }">
+                    Font Family
+                    <span v-if="settingsStore.systemFonts.length > 0" class="text-[10px] opacity-60 ml-1">
+                      ({{ settingsStore.systemFonts.length }} available)
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    @click="isManualTerminalFont = !isManualTerminalFont"
+                    class="text-[10px] underline opacity-70 hover:opacity-100 transition cursor-pointer"
+                    :style="{ color: 'var(--color-text-muted)' }"
                   >
-                    {{ font.label }}
-                  </option>
-                </select>
+                    {{ isManualTerminalFont ? 'Choose from list' : 'Custom' }}
+                  </button>
+                </div>
+
+                <!-- Custom manual font input mode -->
+                <div v-if="isManualTerminalFont">
+                  <input
+                    v-model="settingsStore.terminalFontFamily"
+                    type="text"
+                    placeholder='e.g. "JetBrainsMono NF", monospace'
+                    class="w-full px-3 py-1.5 rounded-lg border text-xs font-mono input-theme"
+                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  />
+                </div>
+
+                <!-- Dropdown mode with live search -->
+                <div v-else class="space-y-1">
+                  <!-- Search Filter -->
+                  <div v-if="settingsStore.systemFonts.length > 15" class="relative">
+                    <Search class="w-3 h-3 absolute left-2.5 top-2 opacity-40 pointer-events-none" :style="{ color: 'var(--color-text-muted)' }" />
+                    <input
+                      v-model="terminalFontSearch"
+                      type="text"
+                      placeholder="Search installed fonts..."
+                      class="w-full pl-7 pr-6 py-1 rounded-md border text-[11px] input-theme"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    />
+                    <button
+                      v-if="terminalFontSearch"
+                      type="button"
+                      @click="terminalFontSearch = ''"
+                      class="absolute right-2 top-1.5 text-[10px] opacity-40 hover:opacity-100"
+                      :style="{ color: 'var(--color-text-muted)' }"
+                    >
+                      <X class="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+
+                  <select
+                    v-model="selectedTerminalFontName"
+                    class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
+                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  >
+                    <!-- Current custom selection if not matched -->
+                    <option v-if="!isCurrentTerminalFontInList && selectedTerminalFontName" :value="selectedTerminalFontName">
+                      Current: {{ selectedTerminalFontName }}
+                    </option>
+
+                    <!-- Fallback default list if system fonts haven't loaded yet -->
+                    <template v-if="settingsStore.systemFonts.length === 0">
+                      <option
+                        v-for="font in TERMINAL_FONTS"
+                        :key="font.value"
+                        :value="extractBaseFontName(font.value)"
+                      >
+                        {{ font.label }}
+                      </option>
+                    </template>
+
+                    <!-- Monospace & Coding System Fonts -->
+                    <optgroup
+                      v-if="terminalMonospaceFonts.length > 0"
+                      :label="`Monospace & Coding Fonts (${terminalMonospaceFonts.length})`"
+                    >
+                      <option
+                        v-for="font in terminalMonospaceFonts"
+                        :key="font.name"
+                        :value="font.name"
+                      >
+                        {{ font.name }}
+                      </option>
+                    </optgroup>
+
+                    <!-- All Other System Fonts -->
+                    <optgroup
+                      v-if="terminalOtherFonts.length > 0"
+                      :label="`All Other System Fonts (${terminalOtherFonts.length})`"
+                    >
+                      <option
+                        v-for="font in terminalOtherFonts"
+                        :key="font.name"
+                        :value="font.name"
+                      >
+                        {{ font.name }}
+                      </option>
+                    </optgroup>
+                  </select>
+                </div>
               </div>
 
               <!-- Terminal Font Size -->
@@ -816,22 +1027,123 @@ const handleResetVault = async () => {
             </div>
 
             <div class="grid grid-cols-2 gap-3">
-              <!-- Browser Font Family -->
+              <!-- Browser Font Family Selection -->
               <div>
-                <label class="block text-[11px] font-medium mb-1" :style="{ color: 'var(--color-text-muted)' }">Font Family</label>
-                <select
-                  v-model="settingsStore.browserFontFamily"
-                  class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
-                >
-                  <option
-                    v-for="font in BROWSER_FONTS"
-                    :key="font.value"
-                    :value="font.value"
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-[11px] font-medium" :style="{ color: 'var(--color-text-muted)' }">
+                    Font Family
+                    <span v-if="settingsStore.systemFonts.length > 0" class="text-[10px] opacity-60 ml-1">
+                      ({{ settingsStore.systemFonts.length }} available)
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    @click="isManualBrowserFont = !isManualBrowserFont"
+                    class="text-[10px] underline opacity-70 hover:opacity-100 transition cursor-pointer"
+                    :style="{ color: 'var(--color-text-muted)' }"
                   >
-                    {{ font.label }}
-                  </option>
-                </select>
+                    {{ isManualBrowserFont ? 'Choose from list' : 'Custom' }}
+                  </button>
+                </div>
+
+                <!-- Custom manual font input mode -->
+                <div v-if="isManualBrowserFont">
+                  <input
+                    v-model="settingsStore.browserFontFamily"
+                    type="text"
+                    placeholder='e.g. "Segoe UI", sans-serif'
+                    class="w-full px-3 py-1.5 rounded-lg border text-xs font-mono input-theme"
+                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  />
+                </div>
+
+                <!-- Dropdown mode with live search -->
+                <div v-else class="space-y-1">
+                  <!-- Search Filter -->
+                  <div v-if="settingsStore.systemFonts.length > 15" class="relative">
+                    <Search class="w-3 h-3 absolute left-2.5 top-2 opacity-40 pointer-events-none" :style="{ color: 'var(--color-text-muted)' }" />
+                    <input
+                      v-model="browserFontSearch"
+                      type="text"
+                      placeholder="Search installed fonts..."
+                      class="w-full pl-7 pr-6 py-1 rounded-md border text-[11px] input-theme"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    />
+                    <button
+                      v-if="browserFontSearch"
+                      type="button"
+                      @click="browserFontSearch = ''"
+                      class="absolute right-2 top-1.5 text-[10px] opacity-40 hover:opacity-100"
+                      :style="{ color: 'var(--color-text-muted)' }"
+                    >
+                      <X class="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+
+                  <select
+                    v-model="selectedBrowserFontName"
+                    class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
+                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  >
+                    <!-- Current custom selection if not matched -->
+                    <option v-if="!isCurrentBrowserFontInList && selectedBrowserFontName" :value="selectedBrowserFontName">
+                      Current: {{ selectedBrowserFontName }}
+                    </option>
+
+                    <!-- Fallback default list if system fonts haven't loaded yet -->
+                    <template v-if="settingsStore.systemFonts.length === 0">
+                      <option
+                        v-for="font in BROWSER_FONTS"
+                        :key="font.value"
+                        :value="extractBaseFontName(font.value)"
+                      >
+                        {{ font.label }}
+                      </option>
+                    </template>
+
+                    <!-- UI & Clean Fonts -->
+                    <optgroup
+                      v-if="browserUiFonts.length > 0"
+                      :label="`Recommended UI Fonts (${browserUiFonts.length})`"
+                    >
+                      <option
+                        v-for="font in browserUiFonts"
+                        :key="font.name"
+                        :value="font.name"
+                      >
+                        {{ font.name }}
+                      </option>
+                    </optgroup>
+
+                    <!-- Monospace Fonts -->
+                    <optgroup
+                      v-if="browserMonospaceFonts.length > 0"
+                      :label="`Monospace Fonts (${browserMonospaceFonts.length})`"
+                    >
+                      <option
+                        v-for="font in browserMonospaceFonts"
+                        :key="font.name"
+                        :value="font.name"
+                      >
+                        {{ font.name }}
+                      </option>
+                    </optgroup>
+
+                    <!-- All Other System Fonts -->
+                    <optgroup
+                      v-if="browserOtherFonts.length > 0"
+                      :label="`All Other Fonts (${browserOtherFonts.length})`"
+                    >
+                      <option
+                        v-for="font in browserOtherFonts"
+                        :key="font.name"
+                        :value="font.name"
+                      >
+                        {{ font.name }}
+                      </option>
+                    </optgroup>
+                  </select>
+                </div>
               </div>
 
               <!-- Browser Font Size (Quick Segmented Picker) -->

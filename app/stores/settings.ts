@@ -1,11 +1,17 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import {
   DEFAULT_KEYMAPS,
   KEYMAP_PRESETS,
   type KeymapSettings,
   type KeymapAction,
 } from '../utils/keymap'
+
+export interface SystemFont {
+  name: string
+  is_monospace: boolean
+}
 
 export interface TerminalFontOption {
   label: string
@@ -115,6 +121,29 @@ export const useSettingsStore = defineStore('settings', () => {
       ? (localStorage.getItem('flowsftp_browser_density') as any) || 'normal'
       : 'normal'
   )
+
+  // Installed System Fonts
+  const systemFonts = ref<SystemFont[]>([])
+  const isLoadingSystemFonts = ref<boolean>(false)
+
+  async function loadSystemFonts() {
+    if (systemFonts.value.length > 0) return
+    isLoadingSystemFonts.value = true
+    try {
+      const fonts = await invoke<SystemFont[]>('get_system_fonts')
+      if (Array.isArray(fonts) && fonts.length > 0) {
+        systemFonts.value = fonts
+      }
+    } catch (err) {
+      console.warn('Failed to load system fonts:', err)
+    } finally {
+      isLoadingSystemFonts.value = false
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    loadSystemFonts()
+  }
 
   // Keyboard Shortcuts Settings
   const loadSavedKeymaps = (): KeymapSettings => {
@@ -251,6 +280,9 @@ export const useSettingsStore = defineStore('settings', () => {
     resetKeymapAction,
     resetAllKeymaps,
     applyKeymapPreset,
+    systemFonts,
+    isLoadingSystemFonts,
+    loadSystemFonts,
     resetTerminalDefaults,
     resetBrowserDefaults,
   }

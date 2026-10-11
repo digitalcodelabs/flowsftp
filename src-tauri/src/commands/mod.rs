@@ -1,6 +1,7 @@
 pub mod dialog;
 pub mod dir_watcher;
 pub mod external_edit;
+pub mod fonts;
 pub mod ftp;
 pub mod keychain;
 pub mod search;

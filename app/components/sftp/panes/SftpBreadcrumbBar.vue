@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import {
-  ChevronRight,
   Copy,
   Check,
   Edit2,
@@ -67,7 +66,17 @@ const scrollBreadcrumbsToEnd = () => {
 // Parse path into segmented interactive breadcrumb items
 const breadcrumbs = computed<BreadcrumbItem[]>(() => {
   const raw = props.path || (props.pane === 'remote' ? '/' : 'C:/')
-  const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '')
+  let normalized = raw.replace(/\\/g, '/')
+
+  // In remote Unix mode, collapse consecutive slashes (e.g. "//root" -> "/root")
+  if (props.pane === 'remote') {
+    normalized = normalized.replace(/\/+/g, '/')
+  }
+
+  // Preserve single '/' for filesystem root, trim trailing slashes otherwise
+  if (normalized !== '/') {
+    normalized = normalized.replace(/\/+$/, '')
+  }
 
   // 1. WSL UNC paths: //wsl.localhost/Distro/path...
   if (normalized.startsWith('//')) {
@@ -107,7 +116,7 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
 
     const items: BreadcrumbItem[] = [
       {
-        label: `${drive}/`,
+        label: segments.length === 0 ? `${drive}/` : drive,
         path: `${drive}/`,
         isLast: segments.length === 0,
       },
@@ -165,6 +174,14 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
     ? items
     : [{ label: normalized || '/', path: normalized || '/', isLast: true }]
 })
+
+// Determine whether a path divider slash '/' should be rendered before crumb at idx
+const shouldShowDivider = (idx: number) => {
+  if (idx === 0) return false
+  // For Unix / remote absolute paths, crumb 0 is already '/' so omit divider before the first subfolder
+  if (idx === 1 && breadcrumbs.value[0]?.label === '/') return false
+  return true
+}
 
 const startEditing = () => {
   isEditing.value = true
@@ -284,10 +301,10 @@ defineExpose({
         title="Double-click or click pencil to edit full path"
       >
         <template v-for="(crumb, idx) in breadcrumbs" :key="crumb.path + idx">
-          <!-- Chevron Divider -->
+          <!-- Path Slash Divider -->
           <span
-            v-if="idx > 0"
-            class="text-[10px] select-none shrink-0 px-0.5 opacity-40 font-mono"
+            v-if="shouldShowDivider(idx)"
+            class="text-xs select-none shrink-0 px-0.5 opacity-40 font-mono"
             :style="{ color: 'var(--color-text-muted)' }"
           >
             /
@@ -297,12 +314,16 @@ defineExpose({
           <button
             type="button"
             @click.stop="handleCrumbClick(crumb)"
-            class="px-1.5 py-0.5 rounded text-xs font-mono shrink-0 transition-all duration-100 flex items-center cursor-pointer hover:bg-black/10 dark:hover:bg-white/10"
-            :class="crumb.isLast ? 'font-semibold' : 'opacity-80 hover:opacity-100'"
+            class="px-1.5 py-0.5 rounded text-xs font-mono shrink-0 transition-all duration-100 flex items-center"
+            :class="[
+              crumb.isLast
+                ? 'font-semibold cursor-default'
+                : 'opacity-80 hover:opacity-100 cursor-pointer hover:bg-black/10 dark:hover:bg-white/10'
+            ]"
             :style="crumb.isLast
               ? { color: pane === 'local' ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }
               : { color: 'var(--color-text-main)' }"
-            :title="`Jump to: ${crumb.path}`"
+            :title="crumb.isLast ? `Current folder: ${crumb.path}` : `Jump to: ${crumb.path}`"
           >
             <span class="truncate max-w-[140px]">{{ crumb.label }}</span>
           </button>
