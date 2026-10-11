@@ -69,6 +69,38 @@ pub fn should_ignore_file(rel_path: &Path, ignore_patterns: &[String]) -> bool {
     crate::sftp::is_path_ignored(&file_name, &rel_str, &default_pats)
 }
 
+fn collect_dir_files_recursive(
+    dir: &Path,
+    watched_root: &Path,
+    ignores: &[String],
+    results: &mut Vec<PathBuf>,
+) {
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let rel_path = match path.strip_prefix(watched_root) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        if should_ignore_file(rel_path, ignores) {
+            continue;
+        }
+
+        if let Ok(file_type) = entry.file_type() {
+            if file_type.is_dir() {
+                collect_dir_files_recursive(&path, watched_root, ignores, results);
+            } else if file_type.is_file() || file_type.is_symlink() {
+                results.push(path);
+            }
+        }
+    }
+}
+
 pub fn start_directory_watcher(
     app: AppHandle,
     _state: &AppState,
@@ -154,49 +186,57 @@ pub fn start_directory_watcher(
                     Err(_) => continue, // Deleted or temporary lock
                 };
 
-                if !meta.is_file() {
-                    continue;
+                let mut files_to_sync = Vec::new();
+                if meta.is_file() || meta.is_symlink() {
+                    files_to_sync.push(path);
+                } else if meta.is_dir() {
+                    collect_dir_files_recursive(&path, &watched_root, &ignores, &mut files_to_sync);
                 }
 
-                let rel_path = match path.strip_prefix(&watched_root) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
+                for file_path in files_to_sync {
+                    if !is_active_clone.load(Ordering::SeqCst) {
+                        break;
+                    }
 
-                if should_ignore_file(rel_path, &ignores) {
-                    continue;
-                }
+                    let rel_path = match file_path.strip_prefix(&watched_root) {
+                        Ok(r) => r,
+                        Err(_) => continue,
+                    };
 
-                let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-                let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                let remote_target_path = format!("{}/{}", r_dir.trim_end_matches('/'), rel_str);
-                let remote_parent = remote_target_path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
-
-                // Emit syncing status
-                let _ = app_handle.emit(
-                    "dir-watcher:event",
-                    DirWatcherSyncEvent {
-                        watcher_id: w_id.clone(),
-                        session_id: s_id.clone(),
-                        filename: filename.clone(),
-                        relative_path: rel_str.clone(),
-                        remote_path: remote_target_path.clone(),
-                        status: "syncing".to_string(),
-                        error: None,
-                        timestamp: now_epoch_secs(),
-                    },
-                );
-
-                // Small delay to ensure file write handle is completely closed by OS
-                tokio::time::sleep(Duration::from_millis(100)).await;
-
-                let file_data = match tokio::fs::read(&path).await {
-                    Ok(d) => d,
-                    Err(e) => {
-                        log::warn!("[dir-watcher] Failed to read local file '{}': {}", path.display(), e);
+                    if should_ignore_file(rel_path, &ignores) {
                         continue;
                     }
-                };
+
+                    let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+                    let filename = file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let remote_target_path = format!("{}/{}", r_dir.trim_end_matches('/'), rel_str);
+                    let remote_parent = remote_target_path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+
+                    // Emit syncing status
+                    let _ = app_handle.emit(
+                        "dir-watcher:event",
+                        DirWatcherSyncEvent {
+                            watcher_id: w_id.clone(),
+                            session_id: s_id.clone(),
+                            filename: filename.clone(),
+                            relative_path: rel_str.clone(),
+                            remote_path: remote_target_path.clone(),
+                            status: "syncing".to_string(),
+                            error: None,
+                            timestamp: now_epoch_secs(),
+                        },
+                    );
+
+                    // Small delay to ensure file write handle is completely closed by OS
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+
+                    let file_data = match tokio::fs::read(&file_path).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::warn!("[dir-watcher] Failed to read local file '{}': {}", file_path.display(), e);
+                            continue;
+                        }
+                    };
 
                 let state = app_handle.state::<AppState>();
                 let upload_result: Result<(), String> = if let Some(ftp) = state.get_ftp_session(&s_id).await {
@@ -255,7 +295,8 @@ pub fn start_directory_watcher(
                 }
             }
         }
-    });
+    }
+});
 
     Ok(ActiveDirWatcherHandle {
         id: watcher_id,

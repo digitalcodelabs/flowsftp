@@ -981,66 +981,7 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
-  async function collectRemoteDownloadTasks(
-    sessionId: string,
-    items: SftpFileEntry[],
-    targetLocalParent: string,
-    onTaskFound: (task: DownloadTask) => void
-  ): Promise<void> {
-    for (const item of items) {
-      if (isCancellingAll.value) return
-      if (item.is_dir) {
-        const cleanParent = targetLocalParent.replace(/\\/g, '/').replace(/\/+$/, '')
-        const localDirPath = `${cleanParent}/${item.name}`
-        try {
-          await invoke('sftp_create_local_dir', { path: localDirPath })
-          triggerBackgroundLocalRefresh(localDirPath)
-          const [, children] = await invoke<[string, SftpFileEntry[]]>('sftp_list_remote', {
-            sessionId,
-            path: item.path,
-          })
-          await collectRemoteDownloadTasks(sessionId, children, localDirPath, onTaskFound)
-        } catch (err) {
-          console.error(`Failed to scan remote directory ${item.path}:`, err)
-        }
-      } else {
-        const cleanLocalDir = targetLocalParent.replace(/\\/g, '/').replace(/\/+$/, '')
-        const targetLocal = `${cleanLocalDir}/${item.name}`
-        const transferId = `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${Math.floor(Math.random() * 100000)}`
-        onTaskFound({ file: item, targetParent: targetLocalParent, transferId, targetLocal })
-      }
-    }
-  }
 
-  async function collectLocalUploadTasks(
-    sessionId: string,
-    items: LocalFileEntry[],
-    targetRemoteParent: string,
-    onTaskFound: (task: UploadTask) => void
-  ): Promise<void> {
-    for (const item of items) {
-      if (isCancellingAll.value) return
-      if (item.is_dir) {
-        const cleanParent = targetRemoteParent.replace(/\/+$/, '')
-        const remoteDirPath = cleanParent === '' ? item.name : `${cleanParent}/${item.name}`
-        try {
-          await invoke('sftp_create_remote_dir', { sessionId, path: remoteDirPath })
-          triggerBackgroundRemoteRefresh(sessionId, remoteDirPath)
-          const [, children] = await invoke<[string, LocalFileEntry[]]>('sftp_list_local', {
-            dirPath: item.path,
-          })
-          await collectLocalUploadTasks(sessionId, children, remoteDirPath, onTaskFound)
-        } catch (err) {
-          console.error(`Failed to scan local directory ${item.path}:`, err)
-        }
-      } else {
-        const cleanRemoteDir = targetRemoteParent.replace(/\/+$/, '')
-        const targetRemote = cleanRemoteDir === '' ? item.name : `${cleanRemoteDir}/${item.name}`
-        const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${Math.floor(Math.random() * 100000)}`
-        onTaskFound({ file: item, targetParent: targetRemoteParent, transferId, targetRemote })
-      }
-    }
-  }
 
   async function startDownload(
     sessionId: string,
@@ -1365,8 +1306,7 @@ export const useSftpStore = defineStore('sftp', () => {
               })
             }
           } catch (crawlErr) {
-            console.warn('Native remote crawl failed, falling back to JS crawler:', crawlErr)
-            await collectRemoteDownloadTasks(sessionId, dirItems, targetDir, onTaskFound)
+            console.error('Native Rust remote crawl error:', crawlErr)
           }
         }
       } catch (scanErr) {
@@ -1814,10 +1754,9 @@ export const useSftpStore = defineStore('sftp', () => {
               })
             }
           } catch (crawlErr) {
-            console.warn('Native local crawl failed, falling back to JS crawler:', crawlErr)
-            await collectLocalUploadTasks(sessionId, dirItems, targetDir, onTaskFound)
+            console.error('Native Rust local crawl error:', crawlErr)
             if (activeFolderUpload.value) {
-              activeFolderUpload.value.totalFiles = taskQueue.length
+              activeFolderUpload.value.totalFiles = 0
               activeFolderUpload.value.isScanning = false
             }
           }
