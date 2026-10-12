@@ -1864,8 +1864,8 @@ pub async fn extract_remote_archive(
         target_dir.trim()
     };
 
-    let escaped_archive = clean_archive.replace('\'', "'\\''");
-    let escaped_target = clean_target.replace('\'', "'\\''");
+    let escaped_archive = crate::shell::escape_single_quotes(&clean_archive);
+    let escaped_target = crate::shell::escape_single_quotes(&clean_target);
 
     let lower = clean_archive.to_lowercase();
     let extract_cmd = if lower.ends_with(".zip") {
@@ -1955,12 +1955,12 @@ pub async fn compress_remote_archive(
         .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
 
     let clean_parent = if parent_dir.trim().is_empty() { "." } else { parent_dir.trim() };
-    let escaped_parent = clean_parent.replace('\'', "'\\''");
-    let escaped_archive = archive_name.trim().replace('\'', "'\\''");
+    let escaped_parent = crate::shell::escape_single_quotes(&clean_parent);
+    let escaped_archive = crate::shell::escape_single_quotes(&archive_name.trim());
 
     let quoted_items = items
         .iter()
-        .map(|it| format!("'{}'", it.replace('\'', "'\\''")))
+        .map(|it| format!("'{}'", crate::shell::escape_single_quotes(&it)))
         .collect::<Vec<_>>()
         .join(" ");
 
@@ -2119,5 +2119,152 @@ pub async fn compress_local_archive(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    fn pats(p: &[&str]) -> Vec<String> {
+        p.iter().map(|s| s.to_string()).collect()
+    }
 
+    // ---- ignore patterns ----
+
+    #[test]
+    fn no_patterns_ignores_nothing() {
+        assert!(!is_path_ignored("a.txt", "a.txt", &[]));
+    }
+
+    #[test]
+    fn exact_name_matches_case_insensitively() {
+        let p = pats(&["node_modules"]);
+        assert!(is_path_ignored("node_modules", "node_modules", &p));
+        assert!(is_path_ignored("Node_Modules", "Node_Modules", &p));
+    }
+
+    #[test]
+    fn matches_any_segment_of_relative_path() {
+        let p = pats(&[".git"]);
+        assert!(is_path_ignored("config", ".git/config", &p));
+        assert!(is_path_ignored("x", "src/.git/hooks/x", &p));
+        assert!(is_path_ignored("config", ".git\\config", &p), "backslashes are normalised");
+    }
+
+    #[test]
+    fn does_not_match_partial_segment_names() {
+        let p = pats(&["git"]);
+        assert!(!is_path_ignored("digit.txt", "digit.txt", &p));
+        assert!(!is_path_ignored("gitignore", "src/gitignore", &p));
+    }
+
+    #[test]
+    fn wildcard_extension_suffix_and_prefix() {
+        assert!(is_path_ignored("app.log", "logs/app.log", &pats(&["*.log"])));
+        assert!(!is_path_ignored("app.txt", "logs/app.txt", &pats(&["*.log"])));
+        assert!(is_path_ignored("backup~", "backup~", &pats(&["*~"])));
+        assert!(is_path_ignored("tmp_file", "tmp_file", &pats(&["tmp_*"])));
+        assert!(!is_path_ignored("file_tmp", "file_tmp", &pats(&["tmp_*"])));
+    }
+
+    #[test]
+    fn blank_and_whitespace_patterns_are_skipped() {
+        // A blank pattern must never match everything.
+        assert!(!is_path_ignored("a.txt", "a.txt", &pats(&["", "   ", "/"])));
+    }
+
+    #[test]
+    fn leading_slash_in_pattern_is_ignored() {
+        assert!(is_path_ignored("dist", "dist", &pats(&["/dist"])));
+    }
+
+    #[test]
+    fn returns_the_original_pattern_text() {
+        let p = pats(&["Build", "*.LOG"]);
+        assert_eq!(get_matching_ignore_pattern("build", "build", &p), Some("Build".to_string()));
+        assert_eq!(get_matching_ignore_pattern("a.log", "a.log", &p), Some("*.LOG".to_string()));
+        assert_eq!(get_matching_ignore_pattern("a.txt", "a.txt", &p), None);
+    }
+
+    #[test]
+    fn absolute_windows_path_only_checks_last_segment() {
+        // Drive-letter paths are reduced to their final component so a parent folder that
+        // happens to match (e.g. C:/projects/node_modules-backup/..) does not hide everything.
+        let p = pats(&["projects"]);
+        assert!(!is_path_ignored("readme.md", "C:/projects/readme.md", &p));
+    }
+
+    // ---- local path normalisation ----
+
+    #[test]
+    fn empty_path_falls_back_to_default() {
+        let (native, display) = normalize_to_native_path("   ");
+        assert_eq!(display, get_default_local_path());
+        assert_eq!(native, PathBuf::from(&display));
+    }
+
+    #[cfg(windows)]
+    mod windows_paths {
+        use super::*;
+
+        #[test]
+        fn bare_drive_gets_trailing_backslash() {
+            assert_eq!(normalize_to_native_path("c:").1, "c:\\");
+        }
+
+        #[test]
+        fn forward_slashes_become_backslashes() {
+            assert_eq!(normalize_to_native_path("C:/a/b").1, "C:\\a\\b");
+        }
+
+        #[test]
+        fn wsl_mount_paths_map_to_drive_letters() {
+            assert_eq!(normalize_to_native_path("/mnt/c/Users/me").1, "C:\\Users\\me");
+            assert_eq!(normalize_to_native_path("/mnt/d").1, "D:\\");
+        }
+
+        #[test]
+        fn unc_paths_are_preserved() {
+            assert_eq!(normalize_to_native_path("//server/share").1, "\\\\server\\share");
+            assert_eq!(normalize_to_native_path("UNC/server/share").1, "\\\\server\\share");
+        }
+
+        #[test]
+        fn tilde_expands_to_home() {
+            if let Some(home) = dirs::home_dir() {
+                let got = normalize_to_native_path("~/Documents").1;
+                assert!(got.starts_with(home.to_string_lossy().trim_end_matches('\\')));
+                assert!(got.ends_with("\\Documents"));
+            }
+        }
+
+        #[test]
+        fn clean_local_path_strips_verbatim_prefixes() {
+            assert_eq!(clean_local_path(Path::new(r"\\?\C:\Users")), "C:/Users");
+            assert_eq!(clean_local_path(Path::new(r"\\?\UNC\server\share")), "//server/share");
+            assert_eq!(clean_local_path(Path::new(r"C:\a\b")), "C:/a/b");
+        }
+    }
+
+    #[cfg(not(windows))]
+    mod unix_paths {
+        use super::*;
+
+        #[test]
+        fn repeated_and_trailing_slashes_collapse() {
+            assert_eq!(normalize_to_native_path("//var///www/").1, "/var/www");
+            assert_eq!(normalize_to_native_path("/").1, "/");
+            assert_eq!(normalize_to_native_path("///").1, "/");
+        }
+
+        #[test]
+        fn backslashes_become_slashes() {
+            assert_eq!(normalize_to_native_path("\\var\\www").1, "/var/www");
+        }
+
+        #[test]
+        fn clean_local_path_trims_trailing_slash_but_keeps_root() {
+            assert_eq!(clean_local_path(Path::new("/var/www/")), "/var/www");
+            assert_eq!(clean_local_path(Path::new("/")), "/");
+            assert_eq!(clean_local_path(Path::new("")), "/");
+        }
+    }
+}

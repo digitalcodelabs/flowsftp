@@ -1,9 +1,31 @@
 import { defineStore } from 'pinia'
-import { ref, shallowRef, triggerRef, computed, watch } from 'vue'
+import { ref, shallowRef, triggerRef, computed, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useSshStore } from './ssh'
 import { useSettingsStore } from './settings'
+import {
+  getPreCheckAction,
+  getExistingAction,
+  resolveDecision,
+  isPathUnderRoots,
+  canSkipConflictCheck,
+  createConflictBatch,
+  type ConflictPolicy,
+  type ConflictDecision,
+  type ConflictAction,
+  type ConflictBatch,
+} from '../utils/conflict'
+import { TaskPump, type PumpTask } from '../utils/taskPump'
+import {
+  SKIPPED_MESSAGE,
+  buildQueuedItem,
+  buildSkippedItem,
+  buildIgnoredItem,
+  ignoredToastMessage,
+  folderBatchTitle,
+  type TransferSpec,
+} from '../utils/transferItems'
 
 export interface SftpFileEntry {
   name: string
@@ -131,9 +153,6 @@ export interface FileConflictInfo {
   size: number
   modified: number
 }
-
-export type ConflictPolicy = 'ask' | 'overwrite' | 'skip'
-export type ConflictDecision = 'overwrite' | 'skip' | 'overwrite-all' | 'skip-all'
 
 export interface ConflictDialogState {
   show: boolean
@@ -309,8 +328,13 @@ export const useSftpStore = defineStore('sftp', () => {
       newTransfersTimer = null
     }
     if (pendingNewTransfers.length > 0) {
-      activeTransfers.value = [...activeTransfers.value, ...pendingNewTransfers]
+      // A row can finish (or be skipped) before this debounced flush runs; it has already been
+      // moved to the completed/failed list by then and must not be re-added as active.
+      const stillActive = pendingNewTransfers.filter((t) => !t.is_complete)
       pendingNewTransfers = []
+      if (stillActive.length > 0) {
+        activeTransfers.value = [...activeTransfers.value, ...stillActive]
+      }
     }
   }
 
@@ -446,7 +470,8 @@ export const useSftpStore = defineStore('sftp', () => {
 
   // Conflict Resolution
   const conflictPolicy = ref<ConflictPolicy>('ask')
-  const batchConflictOverride = ref<'overwrite' | 'skip' | null>(null)
+  // "Skip All" / "Overwrite All" is NOT stored here: it lives in the ConflictBatch owned by
+  // each transfer operation, so concurrent batches can't affect each other.
   const activeConflictDialog = ref<ConflictDialogState | null>(null)
 
   // Transfer Settings
@@ -544,32 +569,28 @@ export const useSftpStore = defineStore('sftp', () => {
   }
 
   function resolveConflict(decision: ConflictDecision) {
-    if (decision === 'overwrite-all') {
-      batchConflictOverride.value = 'overwrite'
-    } else if (decision === 'skip-all') {
-      batchConflictOverride.value = 'skip'
-    }
-    if (activeConflictDialog.value?.resolveDecision) {
-      activeConflictDialog.value.resolveDecision(decision)
-    }
+    // The dialog's resolver also applies "All" decisions to the batch that asked.
+    activeConflictDialog.value?.resolveDecision?.(decision)
     activeConflictDialog.value = null
   }
 
   let conflictQueue: Promise<void> = Promise.resolve()
 
   async function promptConflictDialog(
-    data: Omit<ConflictDialogState, 'show' | 'resolveDecision'>
+    data: Omit<ConflictDialogState, 'show' | 'resolveDecision'>,
+    batch: ConflictBatch
   ): Promise<ConflictDecision> {
-    if (batchConflictOverride.value === 'overwrite') return 'overwrite'
-    if (batchConflictOverride.value === 'skip') return 'skip'
+    if (batch.override === 'overwrite') return 'overwrite'
+    if (batch.override === 'skip') return 'skip'
 
     return new Promise<ConflictDecision>((resolve) => {
       conflictQueue = conflictQueue.then(async () => {
-        if (batchConflictOverride.value === 'overwrite') {
+        // The user may have answered "All" for this batch while this prompt was waiting.
+        if (batch.override === 'overwrite') {
           resolve('overwrite')
           return
         }
-        if (batchConflictOverride.value === 'skip') {
+        if (batch.override === 'skip') {
           resolve('skip')
           return
         }
@@ -578,6 +599,9 @@ export const useSftpStore = defineStore('sftp', () => {
             ...data,
             show: true,
             resolveDecision: (decision) => {
+              // Set synchronously, before the next queued prompt is looked at.
+              const { batchOverride } = resolveDecision(decision)
+              if (batchOverride) batch.override = batchOverride
               resolve(decision)
               dialogDone()
             },
@@ -949,20 +973,23 @@ export const useSftpStore = defineStore('sftp', () => {
     await fetchLocalDir(localPath.value, { force: true })
   }
 
+  /**
+   * Decides whether to overwrite or skip a file that is about to be transferred, prompting
+   * the user when needed. `batch` carries the sticky "All" answer for the current operation;
+   * callers that transfer several files should share one, single transfers may omit it.
+   */
   async function determineConflictAction(
     direction: 'download' | 'upload' | 'transfer',
     fileName: string,
     sourceMeta: { size: number; modified: number; path: string },
     destinationPath: string,
     sessionId?: string,
-    destinationIsRemote?: boolean
-  ): Promise<'overwrite' | 'skip'> {
-    if (batchConflictOverride.value === 'overwrite') {
-      return 'overwrite'
-    }
-
-    if (conflictPolicy.value === 'overwrite' && !batchConflictOverride.value) {
-      return 'overwrite'
+    destinationIsRemote?: boolean,
+    batch: ConflictBatch = createConflictBatch()
+  ): Promise<ConflictAction> {
+    const known = getPreCheckAction(conflictPolicy.value, batch.override)
+    if (known) {
+      return known
     }
 
     try {
@@ -979,56 +1006,31 @@ export const useSftpStore = defineStore('sftp', () => {
         return 'overwrite'
       }
 
-      if (batchConflictOverride.value === 'skip') {
-        return 'skip'
+      const existing = getExistingAction(conflictPolicy.value, batch.override)
+      if (existing !== 'ask') {
+        return existing
       }
 
-      if (conflictPolicy.value === 'skip') {
-        return 'skip'
-      }
-
-      const decision = await promptConflictDialog({
-        fileName,
-        direction,
-        source: sourceMeta,
-        destination: {
-          size: conflictInfo.size,
-          modified: conflictInfo.modified,
-          path: destinationPath,
+      const decision = await promptConflictDialog(
+        {
+          fileName,
+          direction,
+          source: sourceMeta,
+          destination: {
+            size: conflictInfo.size,
+            modified: conflictInfo.modified,
+            path: destinationPath,
+          },
         },
-      })
+        batch
+      )
 
-      if (decision === 'overwrite-all') {
-        batchConflictOverride.value = 'overwrite'
-        return 'overwrite'
-      } else if (decision === 'skip-all') {
-        batchConflictOverride.value = 'skip'
-        return 'skip'
-      } else if (decision === 'skip') {
-        return 'skip'
-      } else {
-        return 'overwrite'
-      }
+      // A sticky "All" answer was already stored on `batch` by the dialog's resolver.
+      return resolveDecision(decision).action
     } catch (err) {
       console.warn('Failed to check conflict, defaulting to overwrite:', err)
       return 'overwrite'
     }
-  }
-
-  interface DownloadTask {
-    file: SftpFileEntry
-    targetParent: string
-    transferId: string
-    targetLocal: string
-    skipConflictCheck?: boolean
-  }
-
-  interface UploadTask {
-    file: LocalFileEntry
-    targetParent: string
-    transferId: string
-    targetRemote: string
-    skipConflictCheck?: boolean
   }
 
   async function ensureTransferReady() {
@@ -1042,11 +1044,399 @@ export const useSftpStore = defineStore('sftp', () => {
 
 
 
+  // ---------------------------------------------------------------------------
+  // Shared transfer pipeline
+  //
+  // Upload, download and remote-to-remote transfers differ only in WHAT they invoke and
+  // which paths / sessions they use. Everything else (conflict check, queue rows, progress
+  // events, completion bookkeeping, folder batches) is written once, below.
+  // ---------------------------------------------------------------------------
+
+  /** One file waiting in a folder batch. `destination` is the full target path. */
+  interface BatchTask<F> {
+    transferId: string
+    file: F
+    destination: string
+    skipConflictCheck?: boolean
+  }
+
+  let transferIdSeq = 0
+  function newTransferId(prefix: string): string {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${transferIdSeq++}`
+  }
+
+  type TransferFileMeta = { name: string; path: string; size: number; modified?: number }
+
+  function downloadSpec(id: string, sessionId: string, file: TransferFileMeta, targetLocal: string): TransferSpec {
+    return {
+      id,
+      name: file.name,
+      direction: 'download',
+      size: file.size || 0,
+      localPath: targetLocal,
+      remotePath: file.path,
+      sessionId,
+      serverUrl: getServerUrlForSession(sessionId),
+    }
+  }
+
+  function uploadSpec(id: string, sessionId: string, file: TransferFileMeta, targetRemote: string): TransferSpec {
+    return {
+      id,
+      name: file.name,
+      direction: 'upload',
+      size: file.size || 0,
+      localPath: file.path,
+      remotePath: targetRemote,
+      sessionId,
+      serverUrl: getServerUrlForSession(sessionId),
+    }
+  }
+
+  /** Remote-to-remote rows are shown as uploads to the destination server. */
+  function remoteToRemoteSpec(
+    id: string,
+    srcSessionId: string,
+    destSessionId: string,
+    file: TransferFileMeta,
+    targetDest: string
+  ): TransferSpec {
+    return {
+      id,
+      name: file.name,
+      direction: 'upload',
+      size: file.size || 0,
+      localPath: file.path,
+      remotePath: targetDest,
+      sessionId: destSessionId,
+      srcSessionId,
+      serverUrl: getServerUrlForSession(destSessionId),
+    }
+  }
+
+  function crawledRemoteEntry(c: RemoteCrawlTask): SftpFileEntry {
+    return {
+      name: c.file_name,
+      path: c.remote_path,
+      is_dir: false,
+      is_symlink: false,
+      size: c.size,
+      modified: 0,
+      permissions: 0o644,
+    }
+  }
+
+  function crawledLocalEntry(c: LocalCrawlTask): LocalFileEntry {
+    return {
+      name: c.file_name,
+      path: c.local_path,
+      is_dir: false,
+      is_symlink: false,
+      size: c.size,
+      modified: 0,
+    }
+  }
+
+  /** Marks a file that exists at the destination as skipped (shown in the queue, not transferred). */
+  function recordSkippedTransfer(spec: TransferSpec) {
+    const existing = transferMap.get(spec.id)
+    if (existing) {
+      existing.is_complete = true
+      existing.completed_at = Date.now()
+      existing.error = SKIPPED_MESSAGE
+      existing.bytes_transferred = spec.size
+      existing.status = 'failed'
+      activeTransfers.value = activeTransfers.value.filter((t) => t.transfer_id !== spec.id)
+      failedTransfers.value = [existing, ...failedTransfers.value]
+    } else {
+      const item = buildSkippedItem(spec)
+      transferMap.set(spec.id, item)
+      failedTransfers.value = [item, ...failedTransfers.value]
+    }
+    scheduleProgressFlush()
+  }
+
+  async function attachProgressListener(transferId: string, label: string): Promise<() => void> {
+    try {
+      return await listen<TransferItem>(`sftp:progress:${transferId}`, (event) => {
+        const item = transferMap.get(transferId)
+        if (item) {
+          activeRunningIds.add(transferId)
+          item.status = 'transferring'
+          item.bytes_transferred = event.payload.bytes_transferred
+          item.total_bytes = event.payload.total_bytes || item.total_bytes
+          item.speed_bytes_per_sec = event.payload.speed_bytes_per_sec
+          if (event.payload.error) {
+            item.error = event.payload.error
+            item.status = 'failed'
+          }
+          scheduleProgressFlush()
+        }
+      })
+    } catch (listenErr) {
+      console.warn(`Failed to attach ${label} progress listener:`, listenErr)
+      return () => {}
+    }
+  }
+
+  interface TransferRun {
+    spec: TransferSpec
+    /** True when the queue row already exists (folder-batch workers, requeue). */
+    preEnqueued: boolean
+    /** How to decide between overwrite and skip for this file. */
+    conflict: {
+      direction: 'download' | 'upload' | 'transfer'
+      sourceMeta: { size: number; modified: number; path: string }
+      destinationPath: string
+      /** Session that owns the destination (ignored for local destinations). */
+      sessionId?: string
+      destinationIsRemote?: boolean
+      /** Skip the destination check entirely (known-new folder, or overwrite-all). */
+      skipCheck?: boolean
+      batch?: ConflictBatch
+    }
+    /** Used in log messages, e.g. "download". */
+    label: string
+    /** The actual Tauri call. */
+    perform: (conflictAction: ConflictAction) => Promise<unknown>
+    /** Runs after the transfer succeeded, e.g. to refresh a directory listing. */
+    afterSuccess?: () => Promise<void> | void
+  }
+
+  /**
+   * Runs ONE file transfer end to end: conflict decision, queue row, progress events,
+   * the transfer itself and completion/failure bookkeeping. Rethrows transfer errors.
+   */
+  async function executeTransfer(run: TransferRun): Promise<void> {
+    const { spec, conflict } = run
+
+    const conflictAction: ConflictAction = conflict.skipCheck
+      ? 'overwrite'
+      : await determineConflictAction(
+          conflict.direction,
+          spec.name,
+          conflict.sourceMeta,
+          conflict.destinationPath,
+          conflict.sessionId,
+          conflict.destinationIsRemote,
+          conflict.batch
+        )
+
+    if (conflictAction === 'skip') {
+      recordSkippedTransfer(spec)
+      return
+    }
+
+    if (!run.preEnqueued) {
+      const item = buildQueuedItem(spec)
+      transferMap.set(spec.id, item)
+      activeTransfers.value = [item, ...activeTransfers.value]
+      scheduleProgressFlush()
+    }
+
+    const unlisten = await attachProgressListener(spec.id, run.label)
+    try {
+      const currentItem = transferMap.get(spec.id)
+      if (currentItem) {
+        currentItem.status = 'transferring'
+        currentItem.started_at = Date.now()
+        activeRunningIds.add(spec.id)
+        scheduleProgressFlush()
+      }
+
+      await run.perform(conflictAction)
+
+      completeTransferItem(spec.id, spec.size)
+      await run.afterSuccess?.()
+    } catch (err: any) {
+      failTransferItem(spec.id, err?.message || String(err))
+      throw err
+    } finally {
+      unlisten()
+    }
+  }
+
+  // ----- folder-batch building blocks -----
+
+  /** Whether the per-file destination check can be skipped for this batch right now. */
+  function skipCheckFor(batch: ConflictBatch, isChildOfBrandNew: boolean): boolean {
+    return canSkipConflictCheck({
+      isChildOfBrandNew,
+      policy: conflictPolicy.value,
+      batchOverride: batch.override,
+    })
+  }
+
+  /**
+   * Of the given destination folders, returns those that do not exist yet. Every file inside
+   * them is guaranteed new, so the per-file destination check can be skipped. A failed
+   * check counts as "new", matching the overwrite fallback in determineConflictAction.
+   */
+  async function findBrandNewRoots(
+    paths: string[],
+    destination: { sessionId?: string; isRemote: boolean }
+  ): Promise<Set<string>> {
+    const brandNew = new Set<string>()
+    await Promise.all(
+      paths.map(async (path) => {
+        try {
+          const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
+            sessionId: destination.isRemote ? destination.sessionId ?? null : null,
+            path,
+            isRemote: destination.isRemote,
+          })
+          if (!check.exists) brandNew.add(path)
+        } catch {
+          brandNew.add(path)
+        }
+      })
+    )
+    return brandNew
+  }
+
+  /**
+   * Applies the user's transfer ignore filter to the root items of a batch. Ignored items are
+   * recorded in the queue (so the user can see why they were not transferred) and dropped
+   * from the returned list.
+   */
+  function filterIgnoredRoots<T extends { name: string; is_dir: boolean }>(
+    files: T[],
+    makeSpec: (file: T) => TransferSpec
+  ): T[] {
+    const settingsStore = useSettingsStore()
+    if (!settingsStore.enableTransferIgnoreFilter) return files
+
+    const kept: T[] = []
+    const ignoredNames: string[] = []
+    for (const f of files) {
+      if (!settingsStore.isPatternIgnored(f.name)) {
+        kept.push(f)
+        continue
+      }
+      const pattern = settingsStore.getMatchedIgnorePattern(f.name) || f.name
+      const spec = makeSpec(f)
+      const item = buildIgnoredItem({ ...spec, size: f.is_dir ? 0 : spec.size }, pattern, f.is_dir)
+      transferMap.set(item.transfer_id, item)
+      failedTransfers.value = [item, ...failedTransfers.value]
+      ignoredNames.push(f.name)
+    }
+    if (ignoredNames.length > 0) {
+      triggerTransferToast(ignoredToastMessage(ignoredNames.length, ignoredNames[0]!))
+    }
+    return kept
+  }
+
+  function currentIgnorePatterns(): string[] {
+    const settingsStore = useSettingsStore()
+    return settingsStore.enableTransferIgnoreFilter ? settingsStore.transferIgnorePatterns : []
+  }
+
+  function beginFolderProgress(
+    target: Ref<ActiveFolderTransferInfo | null>,
+    idPrefix: string,
+    folderNames: string[]
+  ) {
+    if (folderNames.length === 0) return
+    target.value = {
+      id: `${idPrefix}-${Date.now()}`,
+      folderName: folderBatchTitle(folderNames),
+      totalFiles: 0,
+      totalFolders: folderNames.length,
+      completedFiles: 0,
+      isScanning: true,
+      isStopping: false,
+      isComplete: false,
+    }
+  }
+
+  function endFolderScan(target: Ref<ActiveFolderTransferInfo | null>, totalFiles: number) {
+    if (target.value) {
+      target.value.totalFiles = totalFiles
+      target.value.isScanning = false
+    }
+  }
+
+  /**
+   * Drives one folder batch: runs the scan (which feeds the pump) while a worker pool
+   * transfers whatever has been found so far, then tidies up the progress banner.
+   */
+  async function runBatch<T extends PumpTask>(opts: {
+    pump: TaskPump<T>
+    /** Pushes tasks into the pump. Errors are logged; the batch still finishes. */
+    scan: () => Promise<void>
+    process: (task: T) => Promise<void>
+    folder: Ref<ActiveFolderTransferInfo | null>
+    /** How long the "complete" banner stays visible. */
+    lingerMs: number
+    label: string
+  }): Promise<void> {
+    const { pump, folder } = opts
+    activeWorkersNotifiers.add(pump.notify)
+
+    const scanPromise = (async () => {
+      try {
+        await opts.scan()
+      } catch (scanErr) {
+        console.error(`${opts.label} scan error:`, scanErr)
+      } finally {
+        pump.finishScanning()
+      }
+    })()
+
+    const concurrency = Math.max(1, Math.min(maxSimultaneousTransfers.value || 3, 10))
+    const workersPromise = pump.runWorkers(
+      concurrency,
+      async (task) => {
+        await opts.process(task)
+        if (folder.value) folder.value.completedFiles++
+      },
+      {
+        shouldStop: () => isCancellingAll.value,
+        beforeTask: waitIfQueuePaused,
+        onTaskError: (_task, err) => console.error(`${opts.label} worker error:`, err),
+      }
+    )
+
+    try {
+      await Promise.all([scanPromise, workersPromise])
+    } finally {
+      flushNewTransfersNow()
+      activeWorkersNotifiers.delete(pump.notify)
+      if (folder.value && !folder.value.isStopping && !isCancellingAll.value) {
+        folder.value.isComplete = true
+        setTimeout(() => {
+          if (folder.value?.isComplete) {
+            folder.value = null
+          }
+        }, opts.lingerMs)
+      } else {
+        folder.value = null
+      }
+    }
+  }
+
+  function newBatchPump<F extends TransferFileMeta>(
+    toSpec: (task: BatchTask<F>) => TransferSpec
+  ): TaskPump<BatchTask<F>> {
+    return new TaskPump<BatchTask<F>>({
+      onEnqueue: (task) => scheduleNewTransfersFlush(buildQueuedItem(toSpec(task))),
+      onFinishScanning: flushNewTransfersNow,
+    })
+  }
+
+  // ----- download -----
+
   async function startDownload(
     sessionId: string,
     remoteFile: SftpFileEntry,
     targetLocalParent?: string,
-    options: { skipRefresh?: boolean; preEnqueuedTransferId?: string; exactLocalPath?: string; skipConflictCheck?: boolean } = {}
+    options: {
+      skipRefresh?: boolean
+      preEnqueuedTransferId?: string
+      exactLocalPath?: string
+      skipConflictCheck?: boolean
+      batch?: ConflictBatch
+    } = {}
   ) {
     if (remoteFile.is_dir) {
       return startBatchDownload(sessionId, [remoteFile], targetLocalParent)
@@ -1066,133 +1456,39 @@ export const useSftpStore = defineStore('sftp', () => {
 
     const cleanLocalDir = baseLocal.replace(/\\/g, '/').replace(/\/+$/, '')
     const targetLocal = options.exactLocalPath || `${cleanLocalDir}/${remoteFile.name}`
-    const transferId = options.preEnqueuedTransferId || `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+    const transferId = options.preEnqueuedTransferId || newTransferId('dl')
 
-    const conflictAction = options.skipConflictCheck
-      ? 'overwrite'
-      : await determineConflictAction(
-          'download',
-          remoteFile.name,
-          { size: remoteFile.size, modified: remoteFile.modified, path: remoteFile.path },
-          targetLocal
-        )
-
-    if (conflictAction === 'skip') {
-      let item = transferMap.get(transferId)
-      if (item) {
-        item.is_complete = true
-        item.completed_at = Date.now()
-        item.error = 'Skipped (file exists)'
-        item.bytes_transferred = remoteFile.size
-        item.status = 'failed'
-        activeTransfers.value = activeTransfers.value.filter((t) => t.transfer_id !== transferId)
-        failedTransfers.value = [item, ...failedTransfers.value]
-      } else {
-        item = {
-          transfer_id: transferId,
-          file_name: remoteFile.name,
-          direction: 'download',
-          bytes_transferred: remoteFile.size,
-          total_bytes: remoteFile.size,
-          speed_bytes_per_sec: 0,
-          is_complete: true,
-          error: 'Skipped (file exists)',
-          local_path: targetLocal,
-          remote_path: remoteFile.path,
-          session_id: sessionId,
-          server_url: getServerUrlForSession(sessionId),
-          priority: 'Normal',
-          started_at: Date.now(),
-          completed_at: Date.now(),
-          status: 'failed',
-        }
-        transferMap.set(transferId, item)
-        failedTransfers.value = [item, ...failedTransfers.value]
-      }
-      scheduleProgressFlush()
-      return
-    }
-
-    if (!options.preEnqueuedTransferId) {
-      const item: TransferItem = {
-        transfer_id: transferId,
-        file_name: remoteFile.name,
+    await executeTransfer({
+      spec: downloadSpec(transferId, sessionId, remoteFile, targetLocal),
+      preEnqueued: !!options.preEnqueuedTransferId,
+      conflict: {
         direction: 'download',
-        bytes_transferred: 0,
-        total_bytes: remoteFile.size,
-        speed_bytes_per_sec: 0,
-        is_complete: false,
-        local_path: targetLocal,
-        remote_path: remoteFile.path,
-        session_id: sessionId,
-        server_url: getServerUrlForSession(sessionId),
-        priority: 'Normal',
-        started_at: Date.now(),
-        status: 'queued',
-      }
-      transferMap.set(transferId, item)
-      activeTransfers.value = [item, ...activeTransfers.value]
-      scheduleProgressFlush()
-    }
+        sourceMeta: { size: remoteFile.size, modified: remoteFile.modified, path: remoteFile.path },
+        destinationPath: targetLocal,
+        skipCheck: options.skipConflictCheck,
+        batch: options.batch,
+      },
+      label: 'download',
+      perform: (conflictAction) =>
+        invoke('sftp_download', {
+          sessionId,
+          transferId,
+          remotePath: remoteFile.path,
+          localPath: targetLocal,
+          fileSize: remoteFile.size || null,
+          conflictAction,
+        }),
+      afterSuccess: async () => {
+        // Smooth background refresh of local folder during downloads
+        triggerBackgroundLocalRefresh(targetLocal)
 
-    let unlisten: (() => void) | null = null
-    try {
-      unlisten = await listen<TransferItem>(`sftp:progress:${transferId}`, (event) => {
-        const item = transferMap.get(transferId)
-        if (item) {
-          activeRunningIds.add(transferId)
-          item.status = 'transferring'
-          item.bytes_transferred = event.payload.bytes_transferred
-          item.total_bytes = event.payload.total_bytes || item.total_bytes
-          item.speed_bytes_per_sec = event.payload.speed_bytes_per_sec
-          if (event.payload.error) {
-            item.error = event.payload.error
-            item.status = 'failed'
-          }
-          scheduleProgressFlush()
+        if (!options.skipRefresh && localPath.value) {
+          invalidateLocalCache(targetLocal)
+          invalidateLocalCache(localPath.value)
+          await fetchLocalDir(localPath.value, { force: true })
         }
-      })
-    } catch (listenErr) {
-      console.warn('Failed to attach download progress listener:', listenErr)
-    }
-
-    try {
-      const currentItem = transferMap.get(transferId)
-      if (currentItem) {
-        currentItem.status = 'transferring'
-        currentItem.started_at = Date.now()
-        activeRunningIds.add(transferId)
-        scheduleProgressFlush()
-      }
-
-      await invoke('sftp_download', {
-        sessionId,
-        transferId,
-        remotePath: remoteFile.path,
-        localPath: targetLocal,
-        fileSize: remoteFile.size || null,
-        conflictAction,
-      })
-
-      completeTransferItem(transferId, remoteFile.size)
-
-      // Smooth background refresh of local folder during downloads
-      triggerBackgroundLocalRefresh(targetLocal)
-
-      if (!options.skipRefresh && localPath.value) {
-        invalidateLocalCache(targetLocal)
-        invalidateLocalCache(localPath.value)
-        await fetchLocalDir(localPath.value, { force: true })
-      }
-    } catch (err: any) {
-      failTransferItem(transferId, err?.message || String(err))
-      throw err
-    } finally {
-      if (unlisten) {
-        unlisten()
-        unlisten = null
-      }
-    }
+      },
+    })
   }
 
   async function startBatchDownload(sessionId: string, files: SftpFileEntry[], destinationDir?: string) {
@@ -1200,286 +1496,75 @@ export const useSftpStore = defineStore('sftp', () => {
       await initLocal()
     }
     const targetDir = destinationDir || localPath.value
-    batchConflictOverride.value = null
+    const batch = createConflictBatch()
     await ensureTransferReady()
 
-    const taskQueue: DownloadTask[] = []
-    const queuedIds = new Set<string>()
-    let isScanning = true
-    const waitingWorkers: (() => void)[] = []
+    const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+    const localTargetFor = (name: string) => `${cleanTargetDir}/${name}`
 
-    function notifyWorkers() {
-      while (waitingWorkers.length > 0) {
-        const resolve = waitingWorkers.shift()
-        if (resolve) resolve()
-      }
-    }
+    const pump = newBatchPump<SftpFileEntry>((t) =>
+      downloadSpec(t.transferId, sessionId, t.file, t.destination)
+    )
 
-    activeWorkersNotifiers.add(notifyWorkers)
-
-    function onTaskFound(task: DownloadTask) {
-      if (queuedIds.has(task.transferId)) return
-      queuedIds.add(task.transferId)
-      taskQueue.push(task)
-
-      const newItem: TransferItem = {
-        transfer_id: task.transferId,
-        file_name: task.file.name,
-        direction: 'download',
-        bytes_transferred: 0,
-        total_bytes: task.file.size || 0,
-        speed_bytes_per_sec: 0,
-        is_complete: false,
-        local_path: task.targetLocal,
-        remote_path: task.file.path,
-        session_id: sessionId,
-        server_url: getServerUrlForSession(sessionId),
-        priority: 'Normal',
-        started_at: Date.now(),
-        status: 'queued',
-      }
-      scheduleNewTransfersFlush(newItem)
-      notifyWorkers()
-    }
-
-    function finishScanning() {
-      isScanning = false
-      flushNewTransfersNow()
-      notifyWorkers()
-    }
-
-    const settingsStore = useSettingsStore()
-    const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
-    const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
-
-    // 1. Immediately enqueue only root-level regular files (recording ignored files if enabled)
-    const ignoredDirectDownloads: { name: string; is_dir: boolean; pattern: string }[] = []
-    for (const f of files) {
+    // 1. Root level: drop ignored items, enqueue regular files immediately.
+    const roots = filterIgnoredRoots(files, (f) =>
+      downloadSpec(newTransferId('ign-dl'), sessionId, f, localTargetFor(f.name))
+    )
+    for (const f of roots) {
       if (!f.is_dir) {
-        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
-          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
-          const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-          const targetLocal = `${cleanLocalDir}/${f.name}`
-          const transferId = `ign-dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
-          const ignoredItem: TransferItem = {
-            transfer_id: transferId,
-            file_name: f.name,
-            direction: 'download',
-            bytes_transferred: 0,
-            total_bytes: f.size || 0,
-            speed_bytes_per_sec: 0,
-            is_complete: true,
-            is_dir: false,
-            error: `Ignored (filter rule: ${matchedPat})`,
-            local_path: targetLocal,
-            remote_path: f.path,
-            session_id: sessionId,
-            server_url: getServerUrlForSession(sessionId),
-            priority: 'Normal',
-            started_at: Date.now(),
-            completed_at: Date.now(),
-            status: 'failed',
-          }
-          transferMap.set(transferId, ignoredItem)
-          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
-          ignoredDirectDownloads.push({ name: f.name, is_dir: false, pattern: matchedPat })
-          continue
-        }
-        const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-        const targetLocal = `${cleanLocalDir}/${f.name}`
-        const transferId = `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-        onTaskFound({ file: f, targetParent: targetDir, transferId, targetLocal })
+        pump.push({ transferId: newTransferId('dl'), file: f, destination: localTargetFor(f.name) })
       }
     }
 
-    // 2. Filter directories: if a root directory itself is ignored, record it as ignored
-    const dirItems: SftpFileEntry[] = []
-    for (const f of files) {
-      if (f.is_dir) {
-        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
-          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
-          const cleanLocalDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-          const targetLocal = `${cleanLocalDir}/${f.name}`
-          const transferId = `ign-dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
-          const ignoredItem: TransferItem = {
-            transfer_id: transferId,
-            file_name: f.name,
-            direction: 'download',
-            bytes_transferred: 0,
-            total_bytes: 0,
-            speed_bytes_per_sec: 0,
-            is_complete: true,
-            is_dir: true,
-            error: `Ignored (filter rule: ${matchedPat})`,
-            local_path: targetLocal,
-            remote_path: f.path,
-            session_id: sessionId,
-            server_url: getServerUrlForSession(sessionId),
-            priority: 'Normal',
-            started_at: Date.now(),
-            completed_at: Date.now(),
-            status: 'failed',
-          }
-          transferMap.set(transferId, ignoredItem)
-          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
-          ignoredDirectDownloads.push({ name: f.name, is_dir: true, pattern: matchedPat })
-          continue
-        }
-        dirItems.push(f)
-      }
-    }
+    // 2. Folders are crawled natively in the background while files already transfer.
+    const dirItems = roots.filter((f) => f.is_dir)
+    beginFolderProgress(activeFolderDownload, 'folder-dl', dirItems.map((d) => d.name))
 
-    if (ignoredDirectDownloads.length > 0) {
-      const folders = ignoredDirectDownloads.filter((i) => i.is_dir)
-      const count = ignoredDirectDownloads.length
-      const sample = ignoredDirectDownloads[0].name
-      triggerTransferToast(`Transfer filter: Ignored ${count} item${count > 1 ? 's' : ''} (${sample}${count > 1 ? '…' : ''})`)
-    }
-
-    if (dirItems.length > 0) {
-      const folderTitle = dirItems.length > 1
-        ? `${dirItems[0].name} (+${dirItems.length - 1} folders)`
-        : dirItems[0].name
-
-      activeFolderDownload.value = {
-        id: `folder-dl-${Date.now()}`,
-        folderName: folderTitle,
-        totalFiles: 0,
-        totalFolders: dirItems.length,
-        completedFiles: 0,
-        isScanning: true,
-        isStopping: false,
-        isComplete: false,
-      }
-    }
-
-    const scanPromise = (async () => {
-      try {
-        if (dirItems.length > 0) {
-          try {
-            // Fast Native Remote Crawler: walks remote tree in Rust
-            const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
-              sessionId,
-              paths: dirItems.map((d) => d.path),
-              targetLocalDir: targetDir,
-              ignorePatterns,
-            })
-
-            if (activeFolderDownload.value) {
-              activeFolderDownload.value.totalFiles = crawled.length
-              activeFolderDownload.value.isScanning = false
-            }
-
-            // Detect brand-new local folders to skip unnecessary stat calls
-            const brandNewRootFolders = new Set<string>()
-            const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-            await Promise.all(
-              dirItems.map(async (d) => {
-                const rootLocal = cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`
-                try {
-                  const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
-                    path: rootLocal,
-                    isRemote: false,
-                  })
-                  if (!check.exists) {
-                    brandNewRootFolders.add(rootLocal)
-                  }
-                } catch {
-                  brandNewRootFolders.add(rootLocal)
-                }
-              })
-            )
-
-            for (let i = 0; i < crawled.length; i++) {
-              if (isCancellingAll.value) break
-              const c = crawled[i]
-              const transferId = `dl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-              const fileEntry: SftpFileEntry = {
-                name: c.file_name,
-                path: c.remote_path,
-                is_dir: false,
-                is_symlink: false,
-                size: c.size,
-                modified: 0,
-                permissions: 0o644,
-              }
-              const isChildOfBrandNew = Array.from(brandNewRootFolders).some(
-                (rf) => c.local_path === rf || c.local_path.startsWith(rf + '/') || c.local_path.startsWith(rf + '\\')
-              )
-              onTaskFound({
-                file: fileEntry,
-                targetParent: targetDir,
-                transferId,
-                targetLocal: c.local_path,
-                skipConflictCheck: isChildOfBrandNew || conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
-              })
-            }
-          } catch (crawlErr) {
-            console.error('Native Rust remote crawl error:', crawlErr)
-            if (activeFolderDownload.value) {
-              activeFolderDownload.value.totalFiles = 0
-              activeFolderDownload.value.isScanning = false
-            }
-          }
-        }
-      } catch (scanErr) {
-        console.error('Directory scanning error:', scanErr)
-      } finally {
-        finishScanning()
-      }
-    })()
-
-    // 3. Worker implementation
-    async function worker(): Promise<void> {
-      while (true) {
-        if (isCancellingAll.value) break
-        await waitIfQueuePaused()
-        if (isCancellingAll.value) break
-        if (taskQueue.length > 0) {
-          const task = taskQueue.shift()!
-          try {
-            await startDownload(sessionId, task.file, task.targetParent, {
-              skipRefresh: true,
-              preEnqueuedTransferId: task.transferId,
-              exactLocalPath: task.targetLocal,
-              skipConflictCheck: task.skipConflictCheck,
-            })
-            if (activeFolderDownload.value) {
-              activeFolderDownload.value.completedFiles++
-            }
-          } catch (err) {
-            console.error('Download worker error:', err)
-          }
-        } else if (!isScanning) {
-          break
-        } else {
-          await new Promise<void>((resolve) => {
-            waitingWorkers.push(resolve)
+    await runBatch({
+      pump,
+      folder: activeFolderDownload,
+      lingerMs: 3200,
+      label: 'Download',
+      scan: async () => {
+        if (dirItems.length === 0) return
+        try {
+          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+            sessionId,
+            paths: dirItems.map((d) => d.path),
+            targetLocalDir: targetDir,
+            ignorePatterns: currentIgnorePatterns(),
           })
-        }
-      }
-    }
+          endFolderScan(activeFolderDownload, crawled.length)
 
-    const concurrency = Math.max(1, Math.min(maxSimultaneousTransfers.value || 3, 10))
-    const workerPromises = Array.from({ length: concurrency }, () => worker())
+          // Local folders that don't exist yet can't contain conflicts.
+          const brandNew = await findBrandNewRoots(
+            dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
+            { isRemote: false }
+          )
 
-    try {
-      await Promise.all([scanPromise, ...workerPromises])
-    } finally {
-      flushNewTransfersNow()
-      activeWorkersNotifiers.delete(notifyWorkers)
-      batchConflictOverride.value = null
-      if (activeFolderDownload.value && !activeFolderDownload.value.isStopping && !isCancellingAll.value) {
-        activeFolderDownload.value.isComplete = true
-        setTimeout(() => {
-          if (activeFolderDownload.value?.isComplete) {
-            activeFolderDownload.value = null
+          for (const c of crawled) {
+            if (isCancellingAll.value) break
+            pump.push({
+              transferId: newTransferId('dl'),
+              file: crawledRemoteEntry(c),
+              destination: c.local_path,
+              skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.local_path, brandNew)),
+            })
           }
-        }, 3200)
-      } else {
-        activeFolderDownload.value = null
-      }
-    }
+        } catch (crawlErr) {
+          console.error('Native Rust remote crawl error:', crawlErr)
+          endFolderScan(activeFolderDownload, 0)
+        }
+      },
+      process: (task) =>
+        startDownload(sessionId, task.file, targetDir, {
+          skipRefresh: true,
+          preEnqueuedTransferId: task.transferId,
+          exactLocalPath: task.destination,
+          skipConflictCheck: task.skipConflictCheck,
+          batch,
+        }),
+    })
 
     // Refresh directory ONCE at the end of the batch (FileZilla style)
     if (localPath.value) {
@@ -1489,11 +1574,19 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
+  // ----- upload -----
+
   async function startUpload(
     sessionId: string,
     localFile: LocalFileEntry,
     targetRemoteParent?: string,
-    options: { skipRefresh?: boolean; preEnqueuedTransferId?: string; exactRemotePath?: string; skipConflictCheck?: boolean } = {}
+    options: {
+      skipRefresh?: boolean
+      preEnqueuedTransferId?: string
+      exactRemotePath?: string
+      skipConflictCheck?: boolean
+      batch?: ConflictBatch
+    } = {}
   ) {
     if (localFile.is_dir) {
       return startBatchUpload(sessionId, [localFile], targetRemoteParent)
@@ -1504,478 +1597,166 @@ export const useSftpStore = defineStore('sftp', () => {
     const baseRemote = targetRemoteParent || remotePath.value || '.'
     const cleanRemoteDir = baseRemote.replace(/\/+$/, '')
     const targetRemote = options.exactRemotePath || (cleanRemoteDir === '' ? localFile.name : `${cleanRemoteDir}/${localFile.name}`)
-    const transferId = options.preEnqueuedTransferId || `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+    const transferId = options.preEnqueuedTransferId || newTransferId('ul')
 
-    const conflictAction = options.skipConflictCheck
-      ? 'overwrite'
-      : await determineConflictAction(
-          'upload',
-          localFile.name,
-          { size: localFile.size, modified: localFile.modified, path: localFile.path },
-          targetRemote,
-          sessionId
-        )
-
-    if (conflictAction === 'skip') {
-      let item = transferMap.get(transferId)
-      if (item) {
-        item.is_complete = true
-        item.completed_at = Date.now()
-        item.error = 'Skipped (file exists)'
-        item.bytes_transferred = localFile.size
-        item.status = 'failed'
-        activeTransfers.value = activeTransfers.value.filter((t) => t.transfer_id !== transferId)
-        failedTransfers.value = [item, ...failedTransfers.value]
-      } else {
-        item = {
-          transfer_id: transferId,
-          file_name: localFile.name,
-          direction: 'upload',
-          bytes_transferred: localFile.size,
-          total_bytes: localFile.size,
-          speed_bytes_per_sec: 0,
-          is_complete: true,
-          error: 'Skipped (file exists)',
-          local_path: localFile.path,
-          remote_path: targetRemote,
-          session_id: sessionId,
-          server_url: getServerUrlForSession(sessionId),
-          priority: 'Normal',
-          started_at: Date.now(),
-          completed_at: Date.now(),
-          status: 'failed',
-        }
-        transferMap.set(transferId, item)
-        failedTransfers.value = [item, ...failedTransfers.value]
-      }
-      scheduleProgressFlush()
-      return
-    }
-
-    if (!options.preEnqueuedTransferId) {
-      const item: TransferItem = {
-        transfer_id: transferId,
-        file_name: localFile.name,
+    await executeTransfer({
+      spec: uploadSpec(transferId, sessionId, localFile, targetRemote),
+      preEnqueued: !!options.preEnqueuedTransferId,
+      conflict: {
         direction: 'upload',
-        bytes_transferred: 0,
-        total_bytes: localFile.size,
-        speed_bytes_per_sec: 0,
-        is_complete: false,
-        local_path: localFile.path,
-        remote_path: targetRemote,
-        session_id: sessionId,
-        server_url: getServerUrlForSession(sessionId),
-        priority: 'Normal',
-        started_at: Date.now(),
-        status: 'queued',
-      }
-      transferMap.set(transferId, item)
-      activeTransfers.value = [item, ...activeTransfers.value]
-      scheduleProgressFlush()
-    }
-
-    let unlisten: (() => void) | null = null
-    try {
-      unlisten = await listen<TransferItem>(`sftp:progress:${transferId}`, (event) => {
-        const item = transferMap.get(transferId)
-        if (item) {
-          activeRunningIds.add(transferId)
-          item.status = 'transferring'
-          item.bytes_transferred = event.payload.bytes_transferred
-          item.total_bytes = event.payload.total_bytes || item.total_bytes
-          item.speed_bytes_per_sec = event.payload.speed_bytes_per_sec
-          if (event.payload.error) {
-            item.error = event.payload.error
-            item.status = 'failed'
-          }
-          scheduleProgressFlush()
-        }
-      })
-    } catch (listenErr) {
-      console.warn('Failed to attach upload progress listener:', listenErr)
-    }
-
-    try {
-      const currentItem = transferMap.get(transferId)
-      if (currentItem) {
-        currentItem.status = 'transferring'
-        currentItem.started_at = Date.now()
-        activeRunningIds.add(transferId)
-        scheduleProgressFlush()
-      }
-
-      await invoke('sftp_upload', {
+        sourceMeta: { size: localFile.size, modified: localFile.modified, path: localFile.path },
+        destinationPath: targetRemote,
         sessionId,
-        transferId,
-        localPath: localFile.path,
-        remotePath: targetRemote,
-        fileSize: localFile.size || null,
-        conflictAction,
-      })
+        skipCheck: options.skipConflictCheck,
+        batch: options.batch,
+      },
+      label: 'upload',
+      perform: (conflictAction) =>
+        invoke('sftp_upload', {
+          sessionId,
+          transferId,
+          localPath: localFile.path,
+          remotePath: targetRemote,
+          fileSize: localFile.size || null,
+          conflictAction,
+        }),
+      afterSuccess: async () => {
+        // Smooth background refresh of remote folder during uploads
+        triggerBackgroundRemoteRefresh(sessionId, targetRemote)
 
-      completeTransferItem(transferId, localFile.size)
-
-      // Smooth background refresh of remote folder during uploads
-      triggerBackgroundRemoteRefresh(sessionId, targetRemote)
-
-      if (!options.skipRefresh && remotePath.value) {
-        invalidateRemoteCache(sessionId, targetRemote)
-        invalidateRemoteCache(sessionId, remotePath.value)
-        await fetchRemoteDir(sessionId, remotePath.value, { force: true })
-      }
-    } catch (err: any) {
-      failTransferItem(transferId, err?.message || String(err))
-      throw err
-    } finally {
-      if (unlisten) {
-        unlisten()
-        unlisten = null
-      }
-    }
+        if (!options.skipRefresh && remotePath.value) {
+          invalidateRemoteCache(sessionId, targetRemote)
+          invalidateRemoteCache(sessionId, remotePath.value)
+          await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+        }
+      },
+    })
   }
 
   async function startBatchUpload(sessionId: string, files: LocalFileEntry[], destinationDir?: string) {
     const targetDir = destinationDir || remotePath.value
-    batchConflictOverride.value = null
+    const batch = createConflictBatch()
     await ensureTransferReady()
 
-    const taskQueue: UploadTask[] = []
-    const queuedIds = new Set<string>()
-    let isScanning = true
-    const waitingWorkers: (() => void)[] = []
+    const cleanTargetDir = targetDir.replace(/\/+$/, '')
+    const remoteTargetFor = (name: string) =>
+      cleanTargetDir === '' ? (targetDir.startsWith('/') ? `/${name}` : name) : `${cleanTargetDir}/${name}`
 
-    function notifyWorkers() {
-      while (waitingWorkers.length > 0) {
-        const resolve = waitingWorkers.shift()
-        if (resolve) resolve()
-      }
-    }
+    const pump = newBatchPump<LocalFileEntry>((t) =>
+      uploadSpec(t.transferId, sessionId, t.file, t.destination)
+    )
 
-    activeWorkersNotifiers.add(notifyWorkers)
-
-    function onTaskFound(task: UploadTask) {
-      if (queuedIds.has(task.transferId)) return
-      queuedIds.add(task.transferId)
-      taskQueue.push(task)
-
-      const newItem: TransferItem = {
-        transfer_id: task.transferId,
-        file_name: task.file.name,
-        direction: 'upload',
-        bytes_transferred: 0,
-        total_bytes: task.file.size || 0,
-        speed_bytes_per_sec: 0,
-        is_complete: false,
-        local_path: task.file.path,
-        remote_path: task.targetRemote,
-        session_id: sessionId,
-        server_url: getServerUrlForSession(sessionId),
-        priority: 'Normal',
-        started_at: Date.now(),
-        status: 'queued',
-      }
-      scheduleNewTransfersFlush(newItem)
-      notifyWorkers()
-    }
-
-    function finishScanning() {
-      isScanning = false
-      flushNewTransfersNow()
-      notifyWorkers()
-    }
-
-    const settingsStore = useSettingsStore()
-    const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
-    const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
-
-    // 1. Immediately enqueue only root-level regular files (recording ignored files if enabled)
-    const ignoredDirectUploads: { name: string; is_dir: boolean; pattern: string }[] = []
-    for (const f of files) {
+    // 1. Root level: drop ignored items, enqueue regular files immediately.
+    const roots = filterIgnoredRoots(files, (f) =>
+      uploadSpec(newTransferId('ign-ul'), sessionId, f, remoteTargetFor(f.name))
+    )
+    for (const f of roots) {
       if (!f.is_dir) {
-        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
-          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
-          const cleanRemoteDir = targetDir.replace(/\/+$/, '')
-          const targetRemote = cleanRemoteDir === ''
-            ? (targetDir.startsWith('/') ? `/${f.name}` : f.name)
-            : `${cleanRemoteDir}/${f.name}`
-          const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
-          const ignoredItem: TransferItem = {
-            transfer_id: transferId,
-            file_name: f.name,
-            direction: 'upload',
-            bytes_transferred: 0,
-            total_bytes: f.size || 0,
-            speed_bytes_per_sec: 0,
-            is_complete: true,
-            is_dir: false,
-            error: `Ignored (filter rule: ${matchedPat})`,
-            local_path: f.path,
-            remote_path: targetRemote,
-            session_id: sessionId,
-            server_url: getServerUrlForSession(sessionId),
-            priority: 'Normal',
-            started_at: Date.now(),
-            completed_at: Date.now(),
-            status: 'failed',
+        pump.push({ transferId: newTransferId('ul'), file: f, destination: remoteTargetFor(f.name) })
+      }
+    }
+
+    // 2. Folders are crawled natively in the background while files already transfer.
+    const dirItems = roots.filter((f) => f.is_dir)
+    beginFolderProgress(activeFolderUpload, 'folder-ul', dirItems.map((d) => d.name))
+
+    await runBatch({
+      pump,
+      folder: activeFolderUpload,
+      lingerMs: 3200,
+      label: 'Upload',
+      scan: async () => {
+        if (dirItems.length === 0) return
+        try {
+          // Fast native crawler: scans 10k+ files in ~20ms in parallel on local disk
+          const crawled = await invoke<LocalCrawlResult | LocalCrawlTask[]>('sftp_crawl_local_paths', {
+            paths: dirItems.map((d) => d.path),
+            targetRemoteDir: targetDir,
+            ignorePatterns: currentIgnorePatterns(),
+          })
+
+          const filesList: LocalCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
+          const dirsList: LocalCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
+          const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
+
+          endFolderScan(activeFolderUpload, filesList.length)
+          if (activeFolderUpload.value) {
+            activeFolderUpload.value.totalFolders = Math.max(dirsList.length, dirItems.length)
           }
-          transferMap.set(transferId, ignoredItem)
-          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
-          ignoredDirectUploads.push({ name: f.name, is_dir: false, pattern: matchedPat })
-          continue
-        }
-        const cleanRemoteDir = targetDir.replace(/\/+$/, '')
-        const targetRemote = cleanRemoteDir === ''
-          ? (targetDir.startsWith('/') ? `/${f.name}` : f.name)
-          : `${cleanRemoteDir}/${f.name}`
-        const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-        onTaskFound({ file: f, targetParent: targetDir, transferId, targetRemote })
-      }
-    }
 
-    // 2. Filter directories: if a root directory itself is ignored (e.g. node_modules), record it as ignored
-    const dirItems: LocalFileEntry[] = []
-    for (const f of files) {
-      if (f.is_dir) {
-        if (ignoreFilterActive && settingsStore.isPatternIgnored(f.name)) {
-          const matchedPat = settingsStore.getMatchedIgnorePattern(f.name) || f.name
-          const cleanRemoteDir = targetDir.replace(/\/+$/, '')
-          const targetRemote = cleanRemoteDir === ''
-            ? (targetDir.startsWith('/') ? `/${f.name}` : f.name)
-            : `${cleanRemoteDir}/${f.name}`
-          const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
-          const ignoredItem: TransferItem = {
-            transfer_id: transferId,
-            file_name: f.name,
-            direction: 'upload',
-            bytes_transferred: 0,
-            total_bytes: 0,
-            speed_bytes_per_sec: 0,
-            is_complete: true,
-            is_dir: true,
-            error: `Ignored (filter rule: ${matchedPat})`,
-            local_path: f.path,
-            remote_path: targetRemote,
-            session_id: sessionId,
-            server_url: getServerUrlForSession(sessionId),
-            priority: 'Normal',
-            started_at: Date.now(),
-            completed_at: Date.now(),
-            status: 'failed',
-          }
-          transferMap.set(transferId, ignoredItem)
-          failedTransfers.value = [ignoredItem, ...failedTransfers.value]
-          ignoredDirectUploads.push({ name: f.name, is_dir: true, pattern: matchedPat })
-          continue
-        }
-        dirItems.push(f)
-      }
-    }
+          // If a remote folder didn't exist before this upload, 100% of its files are new,
+          // so the per-file conflict check can be skipped.
+          const brandNew = await findBrandNewRoots(
+            dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
+            { sessionId, isRemote: true }
+          )
 
-    if (ignoredDirectUploads.length > 0) {
-      const folders = ignoredDirectUploads.filter((i) => i.is_dir)
-      const count = ignoredDirectUploads.length
-      const sample = ignoredDirectUploads[0].name
-      triggerTransferToast(`Transfer filter: Ignored ${count} item${count > 1 ? 's' : ''} (${sample}${count > 1 ? '…' : ''})`)
-    }
-
-    if (dirItems.length > 0) {
-      const folderTitle = dirItems.length > 1
-        ? `${dirItems[0].name} (+${dirItems.length - 1} folders)`
-        : dirItems[0].name
-
-      activeFolderUpload.value = {
-        id: `folder-ul-${Date.now()}`,
-        folderName: folderTitle,
-        totalFiles: 0,
-        totalFolders: dirItems.length,
-        completedFiles: 0,
-        isScanning: true,
-        isStopping: false,
-        isComplete: false,
-      }
-    }
-
-    const scanPromise = (async () => {
-      try {
-        if (dirItems.length > 0) {
-          try {
-            // Fast Native Crawler: scans 10k+ files in ~20ms in parallel on local disk
-            const crawled = await invoke<LocalCrawlResult | LocalCrawlTask[]>('sftp_crawl_local_paths', {
-              paths: dirItems.map((d) => d.path),
-              targetRemoteDir: targetDir,
-              ignorePatterns,
+          // Enqueue all crawled files so workers start transferring right away.
+          for (const c of filesList) {
+            if (isCancellingAll.value) break
+            pump.push({
+              transferId: newTransferId('ul'),
+              file: crawledLocalEntry(c),
+              destination: c.remote_path,
+              skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.remote_path, brandNew)),
             })
+          }
 
-            const filesList: LocalCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
-            const dirsList: LocalCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
-            const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
-
-            if (activeFolderUpload.value) {
-              activeFolderUpload.value.totalFiles = filesList.length
-              activeFolderUpload.value.totalFolders = Math.max(dirsList.length, dirItems.length)
-              activeFolderUpload.value.isScanning = false
-            }
-
-            // Detect brand-new remote folders (FileZilla-grade optimization):
-            // If the remote folder didn't exist before this upload, 100% of child files are new.
-            // We can skip checking remote conflicts for every single file!
-            const brandNewRootFolders = new Set<string>()
-            const cleanTargetDir = targetDir.replace(/\/+$/, '')
-            await Promise.all(
-              dirItems.map(async (d) => {
-                const rootRemote = cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`
-                try {
-                  const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
-                    sessionId,
-                    path: rootRemote,
-                    isRemote: true,
-                  })
-                  if (!check.exists) {
-                    brandNewRootFolders.add(rootRemote)
-                  }
-                } catch {
-                  brandNewRootFolders.add(rootRemote)
-                }
-              })
-            )
-
-            // Step A: Immediately enqueue all crawled files so upload workers start transferring INSTANTLY!
-            for (let i = 0; i < filesList.length; i++) {
-              if (isCancellingAll.value) break
-              const c = filesList[i]
-              const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-              const fileEntry: LocalFileEntry = {
-                name: c.file_name,
-                path: c.local_path,
-                is_dir: false,
-                is_symlink: false,
-                size: c.size,
-                modified: 0,
-              }
-              const isChildOfBrandNew = Array.from(brandNewRootFolders).some(
-                (rf) => c.remote_path === rf || c.remote_path.startsWith(rf + '/')
-              )
-              onTaskFound({
-                file: fileEntry,
-                targetParent: targetDir,
-                transferId,
-                targetRemote: c.remote_path,
-                skipConflictCheck: isChildOfBrandNew || conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
-              })
-            }
-
-            // Step B: Record all ignored subfolders/files in the failed/skipped transfers queue so users see them
-            for (const ign of ignoredList) {
-              if (isCancellingAll.value) break
-              const transferId = `ign-ul-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
-              const ignoredItem: TransferItem = {
-                transfer_id: transferId,
-                file_name: ign.item_name,
+          // Record ignored subfolders/files so users can see why they were not uploaded.
+          for (const ign of ignoredList) {
+            if (isCancellingAll.value) break
+            const item = buildIgnoredItem(
+              {
+                id: newTransferId('ign-ul'),
+                name: ign.item_name,
                 direction: 'upload',
-                bytes_transferred: 0,
-                total_bytes: 0,
-                speed_bytes_per_sec: 0,
-                is_complete: true,
-                is_dir: ign.is_dir,
-                error: `Ignored (filter rule: ${ign.matched_pattern})`,
-                local_path: ign.local_path,
-                remote_path: ign.remote_path,
-                session_id: sessionId,
-                server_url: getServerUrlForSession(sessionId),
-                priority: 'Normal',
-                started_at: Date.now(),
-                completed_at: Date.now(),
-                status: 'failed',
-              }
-              transferMap.set(transferId, ignoredItem)
-              failedTransfers.value = [ignoredItem, ...failedTransfers.value]
-            }
+                size: 0,
+                localPath: ign.local_path,
+                remotePath: ign.remote_path,
+                sessionId,
+                serverUrl: getServerUrlForSession(sessionId),
+              },
+              ign.matched_pattern,
+              ign.is_dir
+            )
+            transferMap.set(item.transfer_id, item)
+            failedTransfers.value = [item, ...failedTransfers.value]
+          }
 
-            if (ignoredList.length > 0) {
-              const folders = ignoredList.filter((i) => i.is_dir)
-              const sampleFolder = folders.length > 0 ? folders[0].item_name : ''
-              const msg = folders.length > 0
+          if (ignoredList.length > 0) {
+            const folders = ignoredList.filter((i) => i.is_dir)
+            const sampleFolder = folders[0]?.item_name ?? ''
+            triggerTransferToast(
+              folders.length > 0
                 ? `Transfer filter: Ignored ${folders.length} folder${folders.length > 1 ? 's' : ''} (${sampleFolder}${folders.length > 1 ? '…' : ''}) in upload`
                 : `Transfer filter: Ignored ${ignoredList.length} item(s) matching ignore rules`
-              triggerTransferToast(msg)
-            }
-
-            // Step C: Ensure all remote directories and empty subfolders exist asynchronously in the background.
-            // This runs in native Rust in the background so it never blocks active file uploads!
-            if (dirsList.length > 0) {
-              invoke('sftp_batch_create_remote_dirs', {
-                sessionId,
-                paths: dirsList.map((d) => d.remote_path),
-              }).catch((dirErr) => {
-                console.warn('Background remote directory creation warning:', dirErr)
-              })
-            }
-          } catch (crawlErr) {
-            console.error('Native Rust local crawl error:', crawlErr)
-            if (activeFolderUpload.value) {
-              activeFolderUpload.value.totalFiles = 0
-              activeFolderUpload.value.isScanning = false
-            }
+            )
           }
-        }
-      } catch (scanErr) {
-        console.error('Local directory scanning error:', scanErr)
-      } finally {
-        finishScanning()
-      }
-    })()
 
-    // 3. Worker implementation
-    async function worker(): Promise<void> {
-      while (true) {
-        if (isCancellingAll.value) break
-        await waitIfQueuePaused()
-        if (isCancellingAll.value) break
-        if (taskQueue.length > 0) {
-          const task = taskQueue.shift()!
-          try {
-            await startUpload(sessionId, task.file, task.targetParent, {
-              skipRefresh: true,
-              preEnqueuedTransferId: task.transferId,
-              exactRemotePath: task.targetRemote,
-              skipConflictCheck: task.skipConflictCheck,
+          // Create remote directories (including empty ones) in native Rust, in the background,
+          // so it never blocks active file uploads.
+          if (dirsList.length > 0) {
+            invoke('sftp_batch_create_remote_dirs', {
+              sessionId,
+              paths: dirsList.map((d) => d.remote_path),
+            }).catch((dirErr) => {
+              console.warn('Background remote directory creation warning:', dirErr)
             })
-            if (activeFolderUpload.value) {
-              activeFolderUpload.value.completedFiles++
-            }
-          } catch (err) {
-            console.error('Upload worker error:', err)
           }
-        } else if (!isScanning) {
-          break
-        } else {
-          await new Promise<void>((resolve) => {
-            waitingWorkers.push(resolve)
-          })
+        } catch (crawlErr) {
+          console.error('Native Rust local crawl error:', crawlErr)
+          endFolderScan(activeFolderUpload, 0)
         }
-      }
-    }
-
-    const concurrency = Math.max(1, Math.min(maxSimultaneousTransfers.value || 3, 10))
-    const workerPromises = Array.from({ length: concurrency }, () => worker())
-
-    try {
-      await Promise.all([scanPromise, ...workerPromises])
-    } finally {
-      flushNewTransfersNow()
-      activeWorkersNotifiers.delete(notifyWorkers)
-      batchConflictOverride.value = null
-      if (activeFolderUpload.value && !activeFolderUpload.value.isStopping && !isCancellingAll.value) {
-        activeFolderUpload.value.isComplete = true
-        setTimeout(() => {
-          if (activeFolderUpload.value?.isComplete) {
-            activeFolderUpload.value = null
-          }
-        }, 3200)
-      } else {
-        activeFolderUpload.value = null
-      }
-    }
+      },
+      process: (task) =>
+        startUpload(sessionId, task.file, targetDir, {
+          skipRefresh: true,
+          preEnqueuedTransferId: task.transferId,
+          exactRemotePath: task.destination,
+          skipConflictCheck: task.skipConflictCheck,
+          batch,
+        }),
+    })
 
     // Refresh directory ONCE at the end of the batch (FileZilla style)
     if (sessionId && remotePath.value) {
@@ -1992,20 +1773,20 @@ export const useSftpStore = defineStore('sftp', () => {
     await fetchRemoteDir(sessionId, cleanTarget, { force: true })
   }
 
-  interface RemoteToRemoteTask {
-    transferId: string
-    file: SftpFileEntry
-    targetDest: string
-    targetParent?: string
-    skipConflictCheck?: boolean
-  }
+  // ----- remote -> remote -----
 
   async function transferRemoteToRemote(
     srcSessionId: string,
     destSessionId: string,
     srcFile: SftpFileEntry,
     targetDestParent?: string,
-    options: { preEnqueuedTransferId?: string; exactDestPath?: string; skipRefresh?: boolean; skipConflictCheck?: boolean } = {}
+    options: {
+      preEnqueuedTransferId?: string
+      exactDestPath?: string
+      skipRefresh?: boolean
+      skipConflictCheck?: boolean
+      batch?: ConflictBatch
+    } = {}
   ) {
     if (srcFile.is_dir) {
       return startBatchRemoteToRemoteTransfer(srcSessionId, destSessionId, [srcFile], targetDestParent)
@@ -2018,133 +1799,37 @@ export const useSftpStore = defineStore('sftp', () => {
     const baseDest = targetDestParent || sessionRemotePaths.value[destSessionId] || remotePath.value || '/'
     const cleanDestDir = baseDest.replace(/\\/g, '/').replace(/\/+$/, '')
     const targetDest = options.exactDestPath || (cleanDestDir === '' ? `/${srcFile.name}` : `${cleanDestDir}/${srcFile.name}`)
-    const transferId = options.preEnqueuedTransferId || `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+    const transferId = options.preEnqueuedTransferId || newTransferId('r2r')
 
-    const conflictAction = options.skipConflictCheck
-      ? 'overwrite'
-      : await determineConflictAction(
-          'transfer',
-          srcFile.name,
-          { size: srcFile.size, modified: srcFile.modified, path: srcFile.path },
-          targetDest,
+    await executeTransfer({
+      spec: remoteToRemoteSpec(transferId, srcSessionId, destSessionId, srcFile, targetDest),
+      preEnqueued: !!options.preEnqueuedTransferId,
+      conflict: {
+        direction: 'transfer',
+        sourceMeta: { size: srcFile.size, modified: srcFile.modified, path: srcFile.path },
+        destinationPath: targetDest,
+        sessionId: destSessionId,
+        destinationIsRemote: true,
+        skipCheck: options.skipConflictCheck,
+        batch: options.batch,
+      },
+      label: 'remote-to-remote',
+      perform: () =>
+        invoke('sftp_transfer_remote_to_remote', {
+          srcSessionId,
           destSessionId,
-          true
-        )
-
-    if (conflictAction === 'skip') {
-      let item = transferMap.get(transferId)
-      if (item) {
-        item.is_complete = true
-        item.completed_at = Date.now()
-        item.error = 'Skipped (file exists)'
-        item.bytes_transferred = srcFile.size
-        item.status = 'failed'
-        activeTransfers.value = activeTransfers.value.filter((t) => t.transfer_id !== transferId)
-        failedTransfers.value = [item, ...failedTransfers.value]
-      } else {
-        item = {
-          transfer_id: transferId,
-          file_name: srcFile.name,
-          direction: 'upload',
-          bytes_transferred: srcFile.size,
-          total_bytes: srcFile.size,
-          speed_bytes_per_sec: 0,
-          is_complete: true,
-          error: 'Skipped (file exists)',
-          local_path: srcFile.path,
-          remote_path: targetDest,
-          session_id: destSessionId,
-          src_session_id: srcSessionId,
-          server_url: getServerUrlForSession(destSessionId),
-          priority: 'Normal',
-          started_at: Date.now(),
-          completed_at: Date.now(),
-          status: 'failed',
+          transferId,
+          srcPath: srcFile.path,
+          destPath: targetDest,
+          fileSize: srcFile.size || null,
+        }),
+      afterSuccess: async () => {
+        if (!options.skipRefresh) {
+          invalidateRemoteCache(destSessionId, cleanDestDir)
+          await fetchRemoteDir(destSessionId, cleanDestDir, { force: true })
         }
-        transferMap.set(transferId, item)
-        failedTransfers.value = [item, ...failedTransfers.value]
-      }
-      scheduleProgressFlush()
-      return
-    }
-
-    if (!options.preEnqueuedTransferId) {
-      const item: TransferItem = {
-        transfer_id: transferId,
-        file_name: srcFile.name,
-        direction: 'upload',
-        bytes_transferred: 0,
-        total_bytes: srcFile.size,
-        speed_bytes_per_sec: 0,
-        is_complete: false,
-        local_path: srcFile.path,
-        remote_path: targetDest,
-        session_id: destSessionId,
-        src_session_id: srcSessionId,
-        server_url: getServerUrlForSession(destSessionId),
-        priority: 'Normal',
-        started_at: Date.now(),
-        status: 'queued',
-      }
-      transferMap.set(transferId, item)
-      activeTransfers.value = [item, ...activeTransfers.value]
-      scheduleProgressFlush()
-    }
-
-    let unlisten: (() => void) | null = null
-    try {
-      unlisten = await listen<TransferItem>(`sftp:progress:${transferId}`, (event) => {
-        const item = transferMap.get(transferId)
-        if (item) {
-          activeRunningIds.add(transferId)
-          item.status = 'transferring'
-          item.bytes_transferred = event.payload.bytes_transferred
-          item.total_bytes = event.payload.total_bytes || item.total_bytes
-          item.speed_bytes_per_sec = event.payload.speed_bytes_per_sec
-          if (event.payload.error) {
-            item.error = event.payload.error
-            item.status = 'failed'
-          }
-          scheduleProgressFlush()
-        }
-      })
-    } catch (listenErr) {
-      console.warn('Failed to attach remote-to-remote progress listener:', listenErr)
-    }
-
-    try {
-      const currentItem = transferMap.get(transferId)
-      if (currentItem) {
-        currentItem.status = 'transferring'
-        currentItem.started_at = Date.now()
-        activeRunningIds.add(transferId)
-        scheduleProgressFlush()
-      }
-
-      await invoke('sftp_transfer_remote_to_remote', {
-        srcSessionId,
-        destSessionId,
-        transferId,
-        srcPath: srcFile.path,
-        destPath: targetDest,
-        fileSize: srcFile.size || null,
-      })
-
-      completeTransferItem(transferId, srcFile.size)
-
-      if (!options.skipRefresh) {
-        invalidateRemoteCache(destSessionId, cleanDestDir)
-        await fetchRemoteDir(destSessionId, cleanDestDir, { force: true })
-      }
-    } catch (err: any) {
-      failTransferItem(transferId, err?.message || String(err))
-      throw err
-    } finally {
-      if (unlisten) {
-        unlisten()
-        unlisten = null
-      }
-    }
+      },
+    })
   }
 
   async function startBatchRemoteToRemoteTransfer(
@@ -2157,231 +1842,77 @@ export const useSftpStore = defineStore('sftp', () => {
     const targetDir = destinationDir || sessionRemotePaths.value[destSessionId] || remotePath.value || '/'
 
     await ensureTransferReady()
+    const batch = createConflictBatch()
 
-    batchConflictOverride.value = null
+    const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+    const destFor = (name: string) => (cleanTargetDir === '' ? `/${name}` : `${cleanTargetDir}/${name}`)
 
-    const taskQueue: RemoteToRemoteTask[] = []
-    const queuedIds = new Set<string>()
-    let isScanning = true
-    const waitingWorkers: (() => void)[] = []
+    const pump = newBatchPump<SftpFileEntry>((t) =>
+      remoteToRemoteSpec(t.transferId, srcSessionId, destSessionId, t.file, t.destination)
+    )
 
-    function notifyWorkers() {
-      while (waitingWorkers.length > 0) {
-        const resolve = waitingWorkers.shift()
-        if (resolve) resolve()
-      }
-    }
-
-    activeWorkersNotifiers.add(notifyWorkers)
-
-    function onTaskFound(task: RemoteToRemoteTask) {
-      if (queuedIds.has(task.transferId)) return
-      queuedIds.add(task.transferId)
-      taskQueue.push(task)
-
-      const newItem: TransferItem = {
-        transfer_id: task.transferId,
-        file_name: task.file.name,
-        direction: 'upload',
-        bytes_transferred: 0,
-        total_bytes: task.file.size || 0,
-        speed_bytes_per_sec: 0,
-        is_complete: false,
-        local_path: task.file.path,
-        remote_path: task.targetDest,
-        session_id: destSessionId,
-        src_session_id: srcSessionId,
-        server_url: getServerUrlForSession(destSessionId),
-        priority: 'Normal',
-        started_at: Date.now(),
-        status: 'queued',
-      }
-      scheduleNewTransfersFlush(newItem)
-      notifyWorkers()
-    }
-
-    function finishScanning() {
-      isScanning = false
-      flushNewTransfersNow()
-      notifyWorkers()
-    }
-
-    const settingsStore = useSettingsStore()
-    const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
-    const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
-
-    // 1. Root level files
+    // 1. Root level files are enqueued immediately.
     for (const f of files) {
       if (!f.is_dir) {
-        const cleanDestDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-        const targetDest = cleanDestDir === '' ? `/${f.name}` : `${cleanDestDir}/${f.name}`
-        const transferId = `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-        onTaskFound({
-          transferId,
-          file: f,
-          targetDest,
-          targetParent: targetDir,
-          skipConflictCheck: conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
-        })
+        pump.push({ transferId: newTransferId('r2r'), file: f, destination: destFor(f.name) })
       }
     }
 
-    // 2. Directory crawling
+    // 2. Folders are crawled on the source server in the background.
     const dirItems = files.filter((f) => f.is_dir)
-    if (dirItems.length > 0) {
-      const folderTitle = dirItems.length > 1
-        ? `${dirItems[0].name} (+${dirItems.length - 1} folders)`
-        : dirItems[0].name
+    beginFolderProgress(activeFolderUpload, 'folder-r2r', dirItems.map((d) => d.name))
 
-      activeFolderUpload.value = {
-        id: `folder-r2r-${Date.now()}`,
-        folderName: folderTitle,
-        totalFiles: 0,
-        totalFolders: dirItems.length,
-        completedFiles: 0,
-        isScanning: true,
-        isStopping: false,
-        isComplete: false,
-      }
-    }
-
-    const scanPromise = (async () => {
-      try {
-        if (dirItems.length > 0) {
-          try {
-            const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
-              sessionId: srcSessionId,
-              paths: dirItems.map((d) => d.path),
-              targetLocalDir: targetDir,
-              ignorePatterns,
-            })
-
-            if (activeFolderUpload.value) {
-              activeFolderUpload.value.totalFiles = crawled.length
-              activeFolderUpload.value.isScanning = false
-            }
-
-            // Detect brand-new destination root folders to skip unnecessary stat calls
-            const brandNewRootFolders = new Set<string>()
-            const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-            await Promise.all(
-              dirItems.map(async (d) => {
-                const rootDest = cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`
-                try {
-                  const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
-                    sessionId: destSessionId,
-                    path: rootDest,
-                    isRemote: true,
-                  })
-                  if (!check.exists) {
-                    brandNewRootFolders.add(rootDest)
-                  }
-                } catch {
-                  brandNewRootFolders.add(rootDest)
-                }
-              })
-            )
-
-            for (let i = 0; i < crawled.length; i++) {
-              if (isCancellingAll.value) break
-              const c = crawled[i]
-              const transferId = `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
-              const fileEntry: SftpFileEntry = {
-                name: c.file_name,
-                path: c.remote_path,
-                is_dir: false,
-                is_symlink: false,
-                size: c.size,
-                modified: 0,
-                permissions: 0o644,
-              }
-
-              const isChildOfBrandNew = Array.from(brandNewRootFolders).some(
-                (rf) => c.local_path === rf || c.local_path.startsWith(rf + '/') || c.local_path.startsWith(rf + '\\')
-              )
-
-              onTaskFound({
-                transferId,
-                file: fileEntry,
-                targetDest: c.local_path,
-                targetParent: targetDir,
-                skipConflictCheck: isChildOfBrandNew || conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
-              })
-            }
-          } catch (crawlErr) {
-            console.error('Remote-to-remote crawl error:', crawlErr)
-            if (activeFolderUpload.value) {
-              activeFolderUpload.value.totalFiles = 0
-              activeFolderUpload.value.isScanning = false
-            }
-          }
-        }
-      } catch (scanErr) {
-        console.error('Remote crawl error:', scanErr)
-      } finally {
-        finishScanning()
-      }
-    })()
-
-    // 3. Worker implementation
-    async function worker(): Promise<void> {
-      while (true) {
-        if (isCancellingAll.value) break
-        await waitIfQueuePaused()
-        if (isCancellingAll.value) break
-        if (taskQueue.length > 0) {
-          const task = taskQueue.shift()!
-          try {
-            await transferRemoteToRemote(srcSessionId, destSessionId, task.file, task.targetParent, {
-              skipRefresh: true,
-              preEnqueuedTransferId: task.transferId,
-              exactDestPath: task.targetDest,
-              skipConflictCheck: task.skipConflictCheck,
-            })
-            if (activeFolderUpload.value) {
-              activeFolderUpload.value.completedFiles++
-            }
-          } catch (err) {
-            console.error('Remote-to-remote worker error:', err)
-          }
-        } else if (!isScanning) {
-          break
-        } else {
-          await new Promise<void>((resolve) => {
-            waitingWorkers.push(resolve)
+    await runBatch({
+      pump,
+      folder: activeFolderUpload,
+      lingerMs: 3500,
+      label: 'Remote-to-remote',
+      scan: async () => {
+        if (dirItems.length === 0) return
+        try {
+          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+            sessionId: srcSessionId,
+            paths: dirItems.map((d) => d.path),
+            targetLocalDir: targetDir,
+            ignorePatterns: currentIgnorePatterns(),
           })
-        }
-      }
-    }
+          endFolderScan(activeFolderUpload, crawled.length)
 
-    const concurrency = Math.max(1, Math.min(maxSimultaneousTransfers.value || 3, 10))
-    const workerPromises = Array.from({ length: concurrency }, () => worker())
+          // Destination folders that don't exist yet can't contain conflicts.
+          const brandNew = await findBrandNewRoots(
+            dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
+            { sessionId: destSessionId, isRemote: true }
+          )
 
-    try {
-      await Promise.all([scanPromise, ...workerPromises])
-    } finally {
-      batchConflictOverride.value = null
-      flushNewTransfersNow()
-      activeWorkersNotifiers.delete(notifyWorkers)
-      if (activeFolderUpload.value && !activeFolderUpload.value.isStopping && !isCancellingAll.value) {
-        activeFolderUpload.value.isComplete = true
-        setTimeout(() => {
-          if (activeFolderUpload.value?.isComplete) {
-            activeFolderUpload.value = null
+          for (const c of crawled) {
+            if (isCancellingAll.value) break
+            // The crawler reports the destination path in `local_path`.
+            pump.push({
+              transferId: newTransferId('r2r'),
+              file: crawledRemoteEntry(c),
+              destination: c.local_path,
+              skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.local_path, brandNew)),
+            })
           }
-        }, 3500)
-      } else {
-        activeFolderUpload.value = null
-      }
-    }
+        } catch (crawlErr) {
+          console.error('Remote-to-remote crawl error:', crawlErr)
+          endFolderScan(activeFolderUpload, 0)
+        }
+      },
+      process: (task) =>
+        transferRemoteToRemote(srcSessionId, destSessionId, task.file, targetDir, {
+          skipRefresh: true,
+          preEnqueuedTransferId: task.transferId,
+          exactDestPath: task.destination,
+          skipConflictCheck: task.skipConflictCheck,
+          batch,
+        }),
+    })
 
     // Refresh destination directory ONCE at the end of the batch
     invalidateRemoteCache(destSessionId, targetDir)
     await fetchRemoteDir(destSessionId, targetDir, { force: true })
-    triggerTransferToast(
-      `Finished remote-to-remote transfer of ${files.length} item(s)`,
-      'success'
-    )
+    triggerTransferToast(`Finished remote-to-remote transfer of ${files.length} item(s)`)
   }
 
 
@@ -2484,13 +2015,22 @@ export const useSftpStore = defineStore('sftp', () => {
     }, 350)
   }
 
-  async function retryTransfer(item: TransferItem) {
+  /**
+   * Re-runs a recorded transfer row through the normal pipeline (download, upload or
+   * remote-to-remote, whichever the row describes).
+   * `reuseRow` keeps the existing queue row instead of creating a new one.
+   */
+  async function rerunTransferItem(
+    item: TransferItem,
+    opts: { skipRefresh?: boolean; reuseRow?: boolean; batch?: ConflictBatch } = {}
+  ) {
     if (!item.session_id) return
-    removeTransfer(item.transfer_id)
-    await ensureTransferReady()
+    const preEnqueuedTransferId = opts.reuseRow ? item.transfer_id : undefined
 
     if (item.direction === 'download' && item.remote_path) {
-      const parentDir = item.local_path ? item.local_path.substring(0, Math.max(item.local_path.lastIndexOf('/'), item.local_path.lastIndexOf('\\'))) : undefined
+      const parentDir = item.local_path
+        ? item.local_path.substring(0, Math.max(item.local_path.lastIndexOf('/'), item.local_path.lastIndexOf('\\')))
+        : undefined
       const fileEntry: SftpFileEntry = {
         name: item.file_name,
         path: item.remote_path,
@@ -2500,9 +2040,32 @@ export const useSftpStore = defineStore('sftp', () => {
         modified: 0,
         permissions: 0o644,
       }
-      await startDownload(item.session_id, fileEntry, parentDir)
+      await startDownload(item.session_id, fileEntry, parentDir, {
+        skipRefresh: opts.skipRefresh,
+        preEnqueuedTransferId,
+        batch: opts.batch,
+      })
+    } else if (item.src_session_id && item.src_session_id !== item.session_id && item.local_path) {
+      // Remote-to-remote rows keep the SOURCE path in `local_path`.
+      const fileEntry: SftpFileEntry = {
+        name: item.file_name,
+        path: item.local_path,
+        is_dir: !!item.is_dir,
+        is_symlink: false,
+        size: item.total_bytes,
+        modified: 0,
+        permissions: 0o644,
+      }
+      await transferRemoteToRemote(item.src_session_id, item.session_id, fileEntry, undefined, {
+        preEnqueuedTransferId,
+        exactDestPath: item.remote_path,
+        skipRefresh: opts.skipRefresh,
+        batch: opts.batch,
+      })
     } else if (item.direction === 'upload' && item.local_path) {
-      const parentDir = item.remote_path ? item.remote_path.substring(0, item.remote_path.lastIndexOf('/')) : undefined
+      const parentDir = item.remote_path
+        ? item.remote_path.substring(0, item.remote_path.lastIndexOf('/'))
+        : undefined
       const fileEntry: LocalFileEntry = {
         name: item.file_name,
         path: item.local_path,
@@ -2511,8 +2074,19 @@ export const useSftpStore = defineStore('sftp', () => {
         size: item.total_bytes,
         modified: 0,
       }
-      await startUpload(item.session_id, fileEntry, parentDir)
+      await startUpload(item.session_id, fileEntry, parentDir, {
+        skipRefresh: opts.skipRefresh,
+        preEnqueuedTransferId,
+        batch: opts.batch,
+      })
     }
+  }
+
+  async function retryTransfer(item: TransferItem) {
+    if (!item.session_id) return
+    removeTransfer(item.transfer_id)
+    await ensureTransferReady()
+    await rerunTransferItem(item)
   }
 
   async function retryAllFailed() {
@@ -2522,36 +2096,14 @@ export const useSftpStore = defineStore('sftp', () => {
     }
     await ensureTransferReady()
 
+    // One shared batch: "Overwrite All" / "Skip All" applies to the whole retry.
+    const batch = createConflictBatch()
     await runWithConcurrency(
       toRetry,
       maxSimultaneousTransfers.value,
       async (item) => {
         try {
-          if (!item.session_id) return
-          if (item.direction === 'download' && item.remote_path) {
-            const parentDir = item.local_path ? item.local_path.substring(0, Math.max(item.local_path.lastIndexOf('/'), item.local_path.lastIndexOf('\\'))) : undefined
-            const fileEntry: SftpFileEntry = {
-              name: item.file_name,
-              path: item.remote_path,
-              is_dir: false,
-              is_symlink: false,
-              size: item.total_bytes,
-              modified: 0,
-              permissions: 0o644,
-            }
-            await startDownload(item.session_id, fileEntry, parentDir, { skipRefresh: true })
-          } else if (item.direction === 'upload' && item.local_path) {
-            const parentDir = item.remote_path ? item.remote_path.substring(0, item.remote_path.lastIndexOf('/')) : undefined
-            const fileEntry: LocalFileEntry = {
-              name: item.file_name,
-              path: item.local_path,
-              is_dir: false,
-              is_symlink: false,
-              size: item.total_bytes,
-              modified: 0,
-            }
-            await startUpload(item.session_id, fileEntry, parentDir, { skipRefresh: true })
-          }
+          await rerunTransferItem(item, { skipRefresh: true, batch })
         } catch (err) {
           console.error('Failed to retry transfer:', item.file_name, err)
         }
@@ -2587,61 +2139,7 @@ export const useSftpStore = defineStore('sftp', () => {
     await ensureTransferReady()
     try {
       await waitIfQueuePaused()
-      if (item.direction === 'download' && item.remote_path) {
-        const parentDir = item.local_path
-          ? item.local_path.substring(0, Math.max(item.local_path.lastIndexOf('/'), item.local_path.lastIndexOf('\\')))
-          : undefined
-        const fileEntry: SftpFileEntry = {
-          name: item.file_name,
-          path: item.remote_path,
-          is_dir: false,
-          is_symlink: false,
-          size: item.total_bytes,
-          modified: 0,
-          permissions: 0o644,
-        }
-        await startDownload(item.session_id, fileEntry, parentDir, {
-          skipRefresh: true,
-          preEnqueuedTransferId: item.transfer_id,
-        })
-      } else if (item.src_session_id && item.session_id && item.src_session_id !== item.session_id && item.local_path) {
-        const fileEntry: SftpFileEntry = {
-          name: item.file_name,
-          path: item.local_path,
-          is_dir: !!item.is_dir,
-          is_symlink: false,
-          size: item.total_bytes,
-          modified: 0,
-          permissions: 0o644,
-        }
-        await transferRemoteToRemote(
-          item.src_session_id,
-          item.session_id,
-          fileEntry,
-          undefined,
-          {
-            preEnqueuedTransferId: item.transfer_id,
-            exactDestPath: item.remote_path,
-            skipRefresh: true,
-          }
-        )
-      } else if (item.direction === 'upload' && item.local_path) {
-        const parentDir = item.remote_path
-          ? item.remote_path.substring(0, item.remote_path.lastIndexOf('/'))
-          : undefined
-        const fileEntry: LocalFileEntry = {
-          name: item.file_name,
-          path: item.local_path,
-          is_dir: false,
-          is_symlink: false,
-          size: item.total_bytes,
-          modified: 0,
-        }
-        await startUpload(item.session_id, fileEntry, parentDir, {
-          skipRefresh: true,
-          preEnqueuedTransferId: item.transfer_id,
-        })
-      }
+      await rerunTransferItem(item, { skipRefresh: true, reuseRow: true })
     } catch (err) {
       console.error('Failed to requeue transfer:', item.file_name, err)
     }
@@ -2669,44 +2167,12 @@ export const useSftpStore = defineStore('sftp', () => {
     scheduleProgressFlush()
 
     await ensureTransferReady()
+    // One shared batch: "Overwrite All" / "Skip All" applies to the whole requeue.
+    const batch = createConflictBatch()
     await runWithConcurrency(items, maxSimultaneousTransfers.value || 3, async (item) => {
       await waitIfQueuePaused()
       try {
-        if (!item.session_id) return
-        if (item.direction === 'download' && item.remote_path) {
-          const parentDir = item.local_path
-            ? item.local_path.substring(0, Math.max(item.local_path.lastIndexOf('/'), item.local_path.lastIndexOf('\\')))
-            : undefined
-          const fileEntry: SftpFileEntry = {
-            name: item.file_name,
-            path: item.remote_path,
-            is_dir: false,
-            is_symlink: false,
-            size: item.total_bytes,
-            modified: 0,
-            permissions: 0o644,
-          }
-          await startDownload(item.session_id, fileEntry, parentDir, {
-            skipRefresh: true,
-            preEnqueuedTransferId: item.transfer_id,
-          })
-        } else if (item.direction === 'upload' && item.local_path) {
-          const parentDir = item.remote_path
-            ? item.remote_path.substring(0, item.remote_path.lastIndexOf('/'))
-            : undefined
-          const fileEntry: LocalFileEntry = {
-            name: item.file_name,
-            path: item.local_path,
-            is_dir: false,
-            is_symlink: false,
-            size: item.total_bytes,
-            modified: 0,
-          }
-          await startUpload(item.session_id, fileEntry, parentDir, {
-            skipRefresh: true,
-            preEnqueuedTransferId: item.transfer_id,
-          })
-        }
+        await rerunTransferItem(item, { skipRefresh: true, reuseRow: true, batch })
       } catch (err) {
         console.error('Failed to execute requeued transfer:', item.file_name, err)
       }
@@ -2996,6 +2462,7 @@ export const useSftpStore = defineStore('sftp', () => {
     overallProgressPercent,
     conflictPolicy,
     activeConflictDialog,
+    determineConflictAction,
     maxSimultaneousTransfers,
     isCancellingAll,
     isQueueProcessing,

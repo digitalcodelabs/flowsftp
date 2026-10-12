@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import type { ConflictPolicy } from '../../../stores/sftp'
+import type { ConflictPolicy } from '../../../utils/conflict'
 
 const props = defineProps<{
   show: boolean

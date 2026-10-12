@@ -2,6 +2,7 @@ pub mod commands;
 pub mod ftp;
 pub mod keychain;
 pub mod sftp;
+pub mod shell;
 pub mod ssh;
 pub mod state;
 
@@ -41,7 +42,8 @@ use commands::sftp::{
     sftp_calculate_remote_checksum, sftp_calculate_local_checksum,
 };
 use commands::ssh::{
-    ssh_connect, ssh_disconnect, ssh_get_history, ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
+    ssh_connect, ssh_disconnect, ssh_get_history, ssh_host_key_respond, ssh_list_sessions,
+    ssh_resize_pty, ssh_write_stdin,
 };
 use state::AppState;
 
@@ -66,6 +68,7 @@ pub fn run() {
             ssh_disconnect,
             ssh_list_sessions,
             ssh_get_history,
+            ssh_host_key_respond,
             // FTP Commands
             ftp_connect,
             // SFTP File Browser Commands

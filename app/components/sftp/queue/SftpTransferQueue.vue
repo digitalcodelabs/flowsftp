@@ -20,8 +20,8 @@ import {
   getServerUrlForSession,
   type TransferItem,
   type TransferPriority,
-  type ConflictPolicy,
 } from '../../../stores/sftp'
+import type { ConflictPolicy } from '../../../utils/conflict'
 import { useSshStore } from '../../../stores/ssh'
 import { useSettingsStore } from '../../../stores/settings'
 import { formatBytes } from '../../../utils/formatters'

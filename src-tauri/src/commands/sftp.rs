@@ -196,7 +196,7 @@ pub async fn sftp_remove_remote_dir(
             if use_fast_rm.unwrap_or(false) {
                 log::info!("Attempting fast rm -rf for remote directory '{}'", clean_path);
                 eprintln!("[FLOWSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
-                let escaped_path = clean_path.replace('\'', "'\\''");
+                let escaped_path = crate::shell::escape_single_quotes(&clean_path);
                 let cmd = format!("rm -rf -- '{}'", escaped_path);
 
                 let exec_result: Result<(), String> = async {
@@ -725,7 +725,7 @@ pub async fn sftp_get_remote_git_status(
 
     let cmd = format!(
         "cd '{}' 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null && git branch --show-current 2>/dev/null && echo '---FLOWSFTP_GIT_SEPARATOR---' && git status --porcelain=v1 -uall 2>/dev/null",
-        path.replace('\'', "'\\''")
+        crate::shell::escape_single_quotes(&path)
     );
     if channel.exec(true, cmd).await.is_err() {
         return Ok(GitRepoStatus::default());
@@ -1467,11 +1467,11 @@ pub async fn sftp_copy_remote_paths(
 
     if let Some(session) = state.get_session(&session_id).await {
         let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
-        let escaped_dest = dest_dir.replace('\'', "'\\''");
+        let escaped_dest = crate::shell::escape_single_quotes(&dest_dir);
         let mut files_escaped = String::new();
         for p in &paths {
             let clean = p.trim().replace('\\', "/");
-            files_escaped.push_str(&format!(" '{}'", clean.replace('\'', "'\\''")));
+            files_escaped.push_str(&format!(" '{}'", crate::shell::escape_single_quotes(&clean)));
         }
         let cmd = format!("cp -a -t '{}'{} 2>&1 || cp -r -t '{}'{} 2>&1", escaped_dest, files_escaped, escaped_dest, files_escaped);
         channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
@@ -1530,38 +1530,50 @@ pub async fn sftp_transfer_remote_to_remote(
     );
 
     if src_session_id == dest_session_id {
+        // Same server: let the server copy the file itself, which avoids a round trip of the
+        // data through this machine. Any problem other than a hang falls back to streaming.
         if let Some(session) = state.get_session(&src_session_id).await {
-            if let Ok(channel) = session.handle.channel_open_session().await {
-                let escaped_src = clean_src.replace('\'', "'\\''");
-                let escaped_dest = clean_dest.replace('\'', "'\\''");
-                let parent = clean_dest.rfind('/').map(|i| &clean_dest[..i]).unwrap_or("");
-                let escaped_parent = parent.replace('\'', "'\\''");
-                let cmd = if !parent.is_empty() {
-                    format!("mkdir -p '{}' && cp -a '{}' '{}' 2>&1", escaped_parent, escaped_src, escaped_dest)
-                } else {
-                    format!("cp -a '{}' '{}' 2>&1", escaped_src, escaped_dest)
-                };
-                if channel.exec(true, cmd).await.is_ok() {
-                    let mut stream = channel.into_stream();
-                    let mut out = Vec::new();
-                    let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
-                    let out_str = String::from_utf8_lossy(&out);
-                    if !out_str.contains("cannot") && !out_str.contains("No such file") && !out_str.contains("Permission denied") {
-                        let _ = app.emit(
-                            &event_name,
-                            crate::sftp::TransferProgress {
-                                transfer_id: transfer_id.clone(),
-                                file_name: file_name.clone(),
-                                direction: "upload".to_string(),
-                                bytes_transferred: total_bytes,
-                                total_bytes,
-                                speed_bytes_per_sec: 0,
-                                is_complete: true,
-                                error: None,
-                            },
-                        );
-                        return Ok(());
-                    }
+            let escaped_src = crate::shell::escape_single_quotes(&clean_src);
+            let escaped_dest = crate::shell::escape_single_quotes(&clean_dest);
+            let parent = clean_dest.rfind('/').map(|i| &clean_dest[..i]).unwrap_or("");
+            let escaped_parent = crate::shell::escape_single_quotes(&parent);
+            let cmd = if !parent.is_empty() {
+                format!("mkdir -p '{}' && cp -a '{}' '{}'", escaped_parent, escaped_src, escaped_dest)
+            } else {
+                format!("cp -a '{}' '{}'", escaped_src, escaped_dest)
+            };
+
+            match crate::ssh::exec::run_command(&session.handle, cmd, std::time::Duration::from_secs(900)).await {
+                Ok(result) if result.succeeded() => {
+                    let _ = app.emit(
+                        &event_name,
+                        crate::sftp::TransferProgress {
+                            transfer_id: transfer_id.clone(),
+                            file_name: file_name.clone(),
+                            direction: "upload".to_string(),
+                            bytes_transferred: total_bytes,
+                            total_bytes,
+                            speed_bytes_per_sec: 0,
+                            is_complete: true,
+                            error: None,
+                        },
+                    );
+                    return Ok(());
+                }
+                Ok(result) if result.outcome == crate::ssh::exec::ExecOutcome::TimedOut => {
+                    // The copy may still be running on the server; starting a second one
+                    // (the streaming fallback) would race with it.
+                    return Err(format!("Server-side copy of '{}' timed out", clean_src));
+                }
+                Ok(result) => {
+                    log::warn!(
+                        "Server-side copy failed ({:?}): {}. Falling back to streaming copy.",
+                        result.outcome,
+                        result.output.trim()
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Server-side copy unavailable ({}). Falling back to streaming copy.", e);
                 }
             }
         }
@@ -1748,8 +1760,8 @@ pub async fn sftp_duplicate_remote_path(
 
     if let Some(session) = state.get_session(&session_id).await {
         let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
-        let escaped_src = clean_path.replace('\'', "'\\''");
-        let escaped_dst = new_path.replace('\'', "'\\''");
+        let escaped_src = crate::shell::escape_single_quotes(&clean_path);
+        let escaped_dst = crate::shell::escape_single_quotes(&new_path);
         let cmd = format!("cp -a '{}' '{}' 2>&1 || cp -r '{}' '{}' 2>&1", escaped_src, escaped_dst, escaped_src, escaped_dst);
         channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
         let mut stream = channel.into_stream();
@@ -1785,8 +1797,8 @@ pub async fn sftp_create_remote_symlink(
 
     if let Some(session) = state.get_session(&session_id).await {
         let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
-        let escaped_tgt = clean_target.replace('\'', "'\\''");
-        let escaped_lnk = clean_link.replace('\'', "'\\''");
+        let escaped_tgt = crate::shell::escape_single_quotes(&clean_target);
+        let escaped_lnk = crate::shell::escape_single_quotes(&clean_link);
         let cmd = format!("ln -s '{}' '{}'", escaped_tgt, escaped_lnk);
         channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
         let mut stream = channel.into_stream();
@@ -1813,7 +1825,7 @@ pub async fn sftp_get_remote_dir_size(
 
     if let Some(session) = state.get_session(&session_id).await {
         let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
-        let escaped = clean_path.replace('\'', "'\\''");
+        let escaped = crate::shell::escape_single_quotes(&clean_path);
         let cmd = format!("du -sb '{}' 2>/dev/null || du -sk '{}' 2>/dev/null", escaped, escaped);
         channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
         let mut stream = channel.into_stream();
@@ -1845,7 +1857,7 @@ pub async fn sftp_calculate_remote_checksum(
 
     if let Some(session) = state.get_session(&session_id).await {
         let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
-        let escaped = clean_path.replace('\'', "'\\''");
+        let escaped = crate::shell::escape_single_quotes(&clean_path);
         let cmd = if algorithm.eq_ignore_ascii_case("md5") {
             format!("md5sum '{}' 2>/dev/null || md5 -q '{}' 2>/dev/null", escaped, escaped)
         } else {

@@ -19,7 +19,11 @@
     "postinstall": "nuxt prepare",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "typecheck": "nuxt typecheck"
   },
   "dependencies": {
     "@codemirror/language-data": "^6.5.2",
@@ -44,6 +48,9 @@
     "@tauri-apps/cli": "^2.12.1",
     "autoprefixer": "^10.6.1",
     "postcss": "^8.5.29",
-    "tailwindcss": "^3.4.19"
+    "tailwindcss": "^3.4.19",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.4",
+    "vue-tsc": "^3.3.13"
   }
 }

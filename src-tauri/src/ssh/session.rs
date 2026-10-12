@@ -118,15 +118,50 @@ pub async fn spawn_ssh_session(
     log::info!("Connecting to SSH server at {}:{} as '{}'", host_str, port, username);
     let _ = app.emit("ssh:connect_log", format!("Connecting to SSH server at {}:{}...", host_str, port));
 
-    // 1. Establish TCP & SSH handshake with a 10-second timeout
+    // 1. Establish TCP & SSH handshake. The 10-second budget does not tick while we are
+    //    waiting for the user to accept/reject an unknown or changed host key.
     let _ = app.emit("ssh:connect_log", "Establishing TCP socket & SSH transport handshake...");
-    let mut handle = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        russh::client::connect(client_config, (host_str.as_str(), port), SshClientHandler),
-    )
-    .await
-    .map_err(|_| format!("Connection to {}:{} timed out after 10 seconds", host_str, port))?
-    .map_err(|e| format!("Failed to connect to {}:{}: {}", host_str, port, e))?;
+    let handler = SshClientHandler::new(app.clone(), host_str.clone(), port);
+    let prompting = handler.prompting.clone();
+    let failure = handler.failure.clone();
+
+    const CONNECT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+    const TICK: std::time::Duration = std::time::Duration::from_millis(100);
+
+    let connect_result = {
+        let connect_fut = russh::client::connect(client_config, (host_str.as_str(), port), handler);
+        tokio::pin!(connect_fut);
+        let mut remaining = CONNECT_BUDGET;
+
+        loop {
+            tokio::select! {
+                res = &mut connect_fut => break Some(res),
+                _ = tokio::time::sleep(TICK) => {
+                    if !prompting.load(Ordering::SeqCst) {
+                        remaining = remaining.saturating_sub(TICK);
+                        if remaining.is_zero() {
+                            break None;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    let mut handle = match connect_result {
+        None => return Err(format!("Connection to {}:{} timed out after 10 seconds", host_str, port)),
+        Some(Ok(handle)) => handle,
+        Some(Err(e)) => {
+            let reason = failure.lock().unwrap_or_else(|p| p.into_inner()).take();
+            return Err(match reason {
+                Some(reason) => {
+                    let _ = app.emit("ssh:connect_log", reason.clone());
+                    reason
+                }
+                None => format!("Failed to connect to {}:{}: {}", host_str, port, e),
+            });
+        }
+    };
 
     // 2. Authenticate
     let auth_desc = match &config.auth {

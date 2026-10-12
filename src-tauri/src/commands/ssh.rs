@@ -1,9 +1,16 @@
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
+use crate::ssh::client::resolve_host_key_prompt;
 use crate::ssh::session::spawn_ssh_session;
 use crate::ssh::types::{SessionInfo, SshConnectConfig};
 use crate::state::AppState;
+
+/// Answers a pending `ssh:host_key_prompt` event. Returns whether a waiting connection received it.
+#[tauri::command]
+pub async fn ssh_host_key_respond(request_id: String, accept: bool) -> Result<bool, String> {
+    Ok(resolve_host_key_prompt(&request_id, accept))
+}
 
 #[tauri::command]
 pub async fn ssh_connect(

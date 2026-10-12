@@ -93,8 +93,8 @@ async fn search_via_ssh_exec(
         .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
 
     // Escape query for bash shell safety
-    let safe_query = req.query.replace('\'', "'\\''");
-    let safe_base = base_path.replace('\'', "'\\''");
+    let safe_query = crate::shell::escape_single_quotes(&req.query);
+    let safe_base = crate::shell::escape_single_quotes(&base_path);
 
     let cmd = if req.search_type == "content" {
         // Grep text content inside files

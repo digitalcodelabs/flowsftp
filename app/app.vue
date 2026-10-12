@@ -29,6 +29,7 @@ import SftpBrowser from './components/SftpBrowser.vue'
 import ConnectionManagerModal from './components/ConnectionManagerModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import MasterPasswordModal from './components/MasterPasswordModal.vue'
+import HostKeyPromptModal from './components/HostKeyPromptModal.vue'
 import CatppuccinIcon from './components/CatppuccinIcon.vue'
 import WindowControls from './components/WindowControls.vue'
 import appIcon from '~/assets/icon.png'
@@ -682,5 +683,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
     <!-- Master Password Modal (Global Prompt) -->
     <MasterPasswordModal />
+
+    <!-- SSH Host Key Verification Prompt (Global) -->
+    <HostKeyPromptModal />
   </div>
 </template>
