@@ -62,6 +62,10 @@ export interface UseSftpKeyboardNavOptions {
   onNewFolder?: (pane: 'local' | 'remote') => void
   onNavigateBack?: (pane: 'local' | 'remote') => void
   onNavigateForward?: (pane: 'local' | 'remote') => void
+  onCopy?: (pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) => void
+  onCut?: (pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) => void
+  onPaste?: (pane: 'local' | 'remote') => void
+  onDuplicate?: (pane: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => void
   isAnyModalOpen: () => boolean
 }
 
@@ -474,8 +478,12 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       const pane = options.activePane.value
       const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
       if (files.length > 0) {
-        sftpStore.copyToClipboard(pane, files)
-        sftpStore.triggerTransferToast(`Copied ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+        if (options.onCopy) {
+          options.onCopy(pane, files)
+        } else {
+          sftpStore.copyToClipboard(pane, files)
+          sftpStore.triggerTransferToast(`Copied ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+        }
       }
       return
     }
@@ -489,8 +497,12 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       const pane = options.activePane.value
       const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
       if (files.length > 0) {
-        sftpStore.cutToClipboard(pane, files)
-        sftpStore.triggerTransferToast(`Cut ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+        if (options.onCut) {
+          options.onCut(pane, files)
+        } else {
+          sftpStore.cutToClipboard(pane, files)
+          sftpStore.triggerTransferToast(`Cut ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+        }
       }
       return
     }
@@ -503,11 +515,15 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       e.stopPropagation()
       if (sftpStore.clipboard && sftpStore.clipboard.files.length > 0) {
         const pane = options.activePane.value
-        sftpStore.pasteFromClipboard(pane).then(() => {
-          sftpStore.triggerTransferToast('Pasted items successfully')
-        }).catch((err: any) => {
-          sftpStore.triggerTransferToast(`Paste failed: ${err?.message || err}`)
-        })
+        if (options.onPaste) {
+          options.onPaste(pane)
+        } else {
+          sftpStore.pasteFromClipboard(pane).then(() => {
+            sftpStore.triggerTransferToast('Pasted items successfully')
+          }).catch((err: any) => {
+            sftpStore.triggerTransferToast(`Paste failed: ${err?.message || err}`)
+          })
+        }
       }
       return
     }
@@ -521,11 +537,15 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       const pane = options.activePane.value
       const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
       if (files.length === 1) {
-        sftpStore.duplicateItem(pane, files[0]).then(() => {
-          sftpStore.triggerTransferToast(`Duplicated ${files[0].name}`)
-        }).catch((err: any) => {
-          sftpStore.triggerTransferToast(`Duplicate failed: ${err?.message || err}`)
-        })
+        if (options.onDuplicate) {
+          options.onDuplicate(pane, files[0])
+        } else {
+          sftpStore.duplicateItem(pane, files[0]).then(() => {
+            sftpStore.triggerTransferToast(`Duplicated ${files[0].name}`)
+          }).catch((err: any) => {
+            sftpStore.triggerTransferToast(`Duplicate failed: ${err?.message || err}`)
+          })
+        }
       }
       return
     }

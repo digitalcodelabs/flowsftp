@@ -67,6 +67,9 @@ const props = defineProps<{
   allowSwitchSource?: boolean
   currentSource?: string
   isLeftPane?: boolean
+  isLoading?: boolean
+  remoteError?: string | null
+  totalCount?: number
 }>()
 
 const emit = defineEmits<{
@@ -197,12 +200,18 @@ const startEditPath = () => {
   breadcrumbBarRef.value?.startEditing()
 }
 
+const focusFilterInput = () => {
+  filterInputRef.value?.focus()
+  filterInputRef.value?.select()
+}
+
 defineExpose({
   rootEl,
   filterInputRef,
   syncInputPath,
   closeAllDropdowns,
   startEditPath,
+  focusFilterInput,
 })
 </script>
 
@@ -315,7 +324,7 @@ defineExpose({
         </div>
 
         <span v-if="sessionId" class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
-          ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${isLeftPane ? (sftpStore.sessionRemoteFiles[sessionId]?.length ?? filteredFiles.length) : sftpStore.remoteFiles.length}` : `${filteredFiles.length}` }} items)
+          ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${totalCount ?? (isLeftPane ? filteredFiles.length : sftpStore.remoteFiles.length)}` : `${totalCount ?? filteredFiles.length}` }} items)
         </span>
         <span v-else class="text-[11px] text-amber-500 font-medium">(Disconnected)</span>
       </div>
@@ -423,7 +432,7 @@ defineExpose({
           <CatppuccinIcon
             name="refresh"
             :size="15"
-            :class="{ 'animate-spin': sftpStore.isBackgroundRefreshingRemote || sftpStore.isLoadingRemote }"
+            :class="{ 'animate-spin': isLeftPane ? isLoading : (sftpStore.isBackgroundRefreshingRemote || sftpStore.isLoadingRemote) }"
           />
         </button>
 
@@ -629,16 +638,16 @@ defineExpose({
           Start or select an active SSH connection to browse and manage remote SFTP files.
         </p>
       </div>
-      <div v-else-if="sftpStore.isLoadingRemote" class="flex items-center justify-center p-8 text-xs" :style="{ color: 'var(--color-text-muted)' }">
+      <div v-else-if="isLeftPane ? isLoading : sftpStore.isLoadingRemote" class="flex items-center justify-center p-8 text-xs" :style="{ color: 'var(--color-text-muted)' }">
         <span class="animate-spin w-4 h-4 border-2 border-slate-600 rounded-full mr-2" :style="{ borderTopColor: 'var(--color-accent-secondary)' }" />
         Reading remote directory...
       </div>
-      <div v-else-if="sftpStore.remoteError" class="flex flex-col items-center justify-center p-8 text-center">
+      <div v-else-if="isLeftPane ? remoteError : sftpStore.remoteError" class="flex flex-col items-center justify-center p-8 text-center">
         <div class="w-10 h-10 rounded-xl bg-red-950/60 border border-red-800/60 flex items-center justify-center text-red-400 mb-2">
           ⚠️
         </div>
         <p class="text-xs font-semibold text-red-300 mb-1">Failed to read remote directory</p>
-        <p class="text-[11px] text-red-400/80 max-w-sm mb-4 font-mono break-all">{{ sftpStore.remoteError }}</p>
+        <p class="text-[11px] text-red-400/80 max-w-sm mb-4 font-mono break-all">{{ isLeftPane ? remoteError : sftpStore.remoteError }}</p>
         <div class="flex items-center space-x-2">
           <button
             @click="emit('reconnect')"
@@ -749,7 +758,7 @@ defineExpose({
           <!-- FileZilla-style Parent Directory Entry (📁 ..) -->
           <tr
             v-if="canNavigateUp"
-            id="remote-row-parent"
+            :id="isLeftPane ? 'local-row-parent' : 'remote-row-parent'"
             @dblclick="emit('navigate-up')"
             @click="emit('parent-click')"
             @contextmenu.prevent.stop="emit('close-context-menu')"
@@ -796,7 +805,7 @@ defineExpose({
                 </button>
               </template>
               <template v-else-if="isComparing && hideIdenticalFiles">
-                All {{ isLeftPane ? (sftpStore.sessionRemoteFiles[sessionId || '']?.length ?? filteredFiles.length) : sftpStore.remoteFiles.length }} files match local (identical files are hidden)
+                All {{ totalCount ?? (isLeftPane ? filteredFiles.length : sftpStore.remoteFiles.length) }} files match local (identical files are hidden)
                 <button @click="$emit('toggle-comparison')" class="ml-2 underline text-xs not-italic cursor-pointer hover:opacity-80" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }">
                   Show all files
                 </button>
@@ -809,7 +818,7 @@ defineExpose({
           <tr
             v-for="(file, index) in filteredFiles"
             :key="file.path"
-            :id="`remote-row-${index}`"
+            :id="isLeftPane ? `local-row-${index}` : `remote-row-${index}`"
             draggable="true"
             @dragstart="emit('dragstart', $event, file)"
             @dragend="emit('dragend')"

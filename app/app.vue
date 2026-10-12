@@ -66,11 +66,15 @@ const handleDisconnect = async () => {
   }
 }
 
-const handleOpenTerminal = async (dirPath: string) => {
-  if (sshStore.activeSessionId) {
+const handleOpenTerminal = async (dirPath: string, targetSessionId?: string) => {
+  const sid = targetSessionId || sshStore.activeSessionId
+  if (sid) {
+    if (sshStore.activeSessionId !== sid) {
+      selectSession(sid)
+    }
     currentTab.value = 'terminal'
     await invoke('ssh_write_stdin', {
-      sessionId: sshStore.activeSessionId,
+      sessionId: sid,
       data: `cd "${dirPath}"\n`,
     })
   }

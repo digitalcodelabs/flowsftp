@@ -138,7 +138,7 @@ export type ConflictDecision = 'overwrite' | 'skip' | 'overwrite-all' | 'skip-al
 export interface ConflictDialogState {
   show: boolean
   fileName: string
-  direction: 'download' | 'upload'
+  direction: 'download' | 'upload' | 'transfer'
   source: { size: number; modified: number; path: string }
   destination: { size: number; modified: number; path: string }
   resolveDecision?: (decision: ConflictDecision) => void
@@ -845,22 +845,24 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
-  async function createRemoteFolder(sessionId: string, name: string) {
-    const target = remotePath.value.endsWith('/')
-      ? `${remotePath.value}${name}`
-      : `${remotePath.value}/${name}`
+  async function createRemoteFolder(sessionId: string, name: string, parentDir?: string) {
+    const basePath = parentDir || sessionRemotePaths.value[sessionId] || remotePath.value
+    const target = basePath.endsWith('/')
+      ? `${basePath}${name}`
+      : `${basePath}/${name}`
     await invoke('sftp_create_remote_dir', { sessionId, path: target })
-    invalidateRemoteCache(sessionId, remotePath.value)
-    await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+    invalidateRemoteCache(sessionId, basePath)
+    await fetchRemoteDir(sessionId, basePath, { force: true })
   }
 
-  async function createRemoteFile(sessionId: string, name: string, overwrite: boolean = false) {
-    const target = remotePath.value.endsWith('/')
-      ? `${remotePath.value}${name}`
-      : `${remotePath.value}/${name}`
+  async function createRemoteFile(sessionId: string, name: string, overwrite: boolean = false, parentDir?: string) {
+    const basePath = parentDir || sessionRemotePaths.value[sessionId] || remotePath.value
+    const target = basePath.endsWith('/')
+      ? `${basePath}${name}`
+      : `${basePath}/${name}`
     await invoke('sftp_create_remote_file', { sessionId, path: target, overwrite })
-    invalidateRemoteCache(sessionId, remotePath.value)
-    await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+    invalidateRemoteCache(sessionId, basePath)
+    await fetchRemoteDir(sessionId, basePath, { force: true })
   }
 
   async function createLocalFolder(name: string) {
@@ -930,12 +932,13 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
-  async function renameRemoteItem(sessionId: string, oldPath: string, newPath: string) {
+  async function renameRemoteItem(sessionId: string, oldPath: string, newPath: string, parentDir?: string) {
     await invoke('sftp_rename_remote', { sessionId, oldPath, newPath })
-    invalidateRemoteCache(sessionId, remotePath.value)
+    const basePath = parentDir || sessionRemotePaths.value[sessionId] || remotePath.value
+    invalidateRemoteCache(sessionId, basePath)
     invalidateRemoteCache(sessionId, oldPath)
     invalidateRemoteCache(sessionId, newPath)
-    await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+    await fetchRemoteDir(sessionId, basePath, { force: true })
   }
 
   async function renameLocalItem(oldPath: string, newPath: string) {
@@ -947,11 +950,12 @@ export const useSftpStore = defineStore('sftp', () => {
   }
 
   async function determineConflictAction(
-    direction: 'download' | 'upload',
+    direction: 'download' | 'upload' | 'transfer',
     fileName: string,
     sourceMeta: { size: number; modified: number; path: string },
     destinationPath: string,
-    sessionId?: string
+    sessionId?: string,
+    destinationIsRemote?: boolean
   ): Promise<'overwrite' | 'skip'> {
     if (batchConflictOverride.value === 'overwrite') {
       return 'overwrite'
@@ -962,7 +966,9 @@ export const useSftpStore = defineStore('sftp', () => {
     }
 
     try {
-      const isRemote = direction === 'upload'
+      const isRemote = destinationIsRemote !== undefined
+        ? destinationIsRemote
+        : (direction === 'upload' || direction === 'transfer')
       const conflictInfo = await invoke<FileConflictInfo>('sftp_check_conflict', {
         sessionId: isRemote ? (sessionId || null) : null,
         path: destinationPath,
@@ -1991,6 +1997,7 @@ export const useSftpStore = defineStore('sftp', () => {
     file: SftpFileEntry
     targetDest: string
     targetParent?: string
+    skipConflictCheck?: boolean
   }
 
   async function transferRemoteToRemote(
@@ -1998,7 +2005,7 @@ export const useSftpStore = defineStore('sftp', () => {
     destSessionId: string,
     srcFile: SftpFileEntry,
     targetDestParent?: string,
-    options: { preEnqueuedTransferId?: string; exactDestPath?: string; skipRefresh?: boolean } = {}
+    options: { preEnqueuedTransferId?: string; exactDestPath?: string; skipRefresh?: boolean; skipConflictCheck?: boolean } = {}
   ) {
     if (srcFile.is_dir) {
       return startBatchRemoteToRemoteTransfer(srcSessionId, destSessionId, [srcFile], targetDestParent)
@@ -2012,6 +2019,54 @@ export const useSftpStore = defineStore('sftp', () => {
     const cleanDestDir = baseDest.replace(/\\/g, '/').replace(/\/+$/, '')
     const targetDest = options.exactDestPath || (cleanDestDir === '' ? `/${srcFile.name}` : `${cleanDestDir}/${srcFile.name}`)
     const transferId = options.preEnqueuedTransferId || `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+
+    const conflictAction = options.skipConflictCheck
+      ? 'overwrite'
+      : await determineConflictAction(
+          'transfer',
+          srcFile.name,
+          { size: srcFile.size, modified: srcFile.modified, path: srcFile.path },
+          targetDest,
+          destSessionId,
+          true
+        )
+
+    if (conflictAction === 'skip') {
+      let item = transferMap.get(transferId)
+      if (item) {
+        item.is_complete = true
+        item.completed_at = Date.now()
+        item.error = 'Skipped (file exists)'
+        item.bytes_transferred = srcFile.size
+        item.status = 'failed'
+        activeTransfers.value = activeTransfers.value.filter((t) => t.transfer_id !== transferId)
+        failedTransfers.value = [item, ...failedTransfers.value]
+      } else {
+        item = {
+          transfer_id: transferId,
+          file_name: srcFile.name,
+          direction: 'upload',
+          bytes_transferred: srcFile.size,
+          total_bytes: srcFile.size,
+          speed_bytes_per_sec: 0,
+          is_complete: true,
+          error: 'Skipped (file exists)',
+          local_path: srcFile.path,
+          remote_path: targetDest,
+          session_id: destSessionId,
+          src_session_id: srcSessionId,
+          server_url: getServerUrlForSession(destSessionId),
+          priority: 'Normal',
+          started_at: Date.now(),
+          completed_at: Date.now(),
+          status: 'failed',
+        }
+        transferMap.set(transferId, item)
+        failedTransfers.value = [item, ...failedTransfers.value]
+      }
+      scheduleProgressFlush()
+      return
+    }
 
     if (!options.preEnqueuedTransferId) {
       const item: TransferItem = {
@@ -2101,18 +2156,9 @@ export const useSftpStore = defineStore('sftp', () => {
     if (!files || files.length === 0) return
     const targetDir = destinationDir || sessionRemotePaths.value[destSessionId] || remotePath.value || '/'
 
-    // If source session and destination session are identical, perform same-server remote copy
-    if (srcSessionId === destSessionId) {
-      const paths = files.map((f) => f.path)
-      await copyRemotePaths(srcSessionId, paths, targetDir)
-      triggerTransferToast(
-        `Copied ${files.length} item(s) to ${targetDir.split('/').pop() || targetDir}`,
-        'success'
-      )
-      return
-    }
-
     await ensureTransferReady()
+
+    batchConflictOverride.value = null
 
     const taskQueue: RemoteToRemoteTask[] = []
     const queuedIds = new Set<string>()
@@ -2175,12 +2221,30 @@ export const useSftpStore = defineStore('sftp', () => {
           file: f,
           targetDest,
           targetParent: targetDir,
+          skipConflictCheck: conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
         })
       }
     }
 
     // 2. Directory crawling
     const dirItems = files.filter((f) => f.is_dir)
+    if (dirItems.length > 0) {
+      const folderTitle = dirItems.length > 1
+        ? `${dirItems[0].name} (+${dirItems.length - 1} folders)`
+        : dirItems[0].name
+
+      activeFolderUpload.value = {
+        id: `folder-r2r-${Date.now()}`,
+        folderName: folderTitle,
+        totalFiles: 0,
+        totalFolders: dirItems.length,
+        completedFiles: 0,
+        isScanning: true,
+        isStopping: false,
+        isComplete: false,
+      }
+    }
+
     const scanPromise = (async () => {
       try {
         if (dirItems.length > 0) {
@@ -2191,6 +2255,32 @@ export const useSftpStore = defineStore('sftp', () => {
               targetLocalDir: targetDir,
               ignorePatterns,
             })
+
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.totalFiles = crawled.length
+              activeFolderUpload.value.isScanning = false
+            }
+
+            // Detect brand-new destination root folders to skip unnecessary stat calls
+            const brandNewRootFolders = new Set<string>()
+            const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+            await Promise.all(
+              dirItems.map(async (d) => {
+                const rootDest = cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`
+                try {
+                  const check = await invoke<FileConflictInfo>('sftp_check_conflict', {
+                    sessionId: destSessionId,
+                    path: rootDest,
+                    isRemote: true,
+                  })
+                  if (!check.exists) {
+                    brandNewRootFolders.add(rootDest)
+                  }
+                } catch {
+                  brandNewRootFolders.add(rootDest)
+                }
+              })
+            )
 
             for (let i = 0; i < crawled.length; i++) {
               if (isCancellingAll.value) break
@@ -2206,15 +2296,24 @@ export const useSftpStore = defineStore('sftp', () => {
                 permissions: 0o644,
               }
 
+              const isChildOfBrandNew = Array.from(brandNewRootFolders).some(
+                (rf) => c.local_path === rf || c.local_path.startsWith(rf + '/') || c.local_path.startsWith(rf + '\\')
+              )
+
               onTaskFound({
                 transferId,
                 file: fileEntry,
                 targetDest: c.local_path,
                 targetParent: targetDir,
+                skipConflictCheck: isChildOfBrandNew || conflictPolicy.value === 'overwrite' || batchConflictOverride.value === 'overwrite',
               })
             }
           } catch (crawlErr) {
             console.error('Remote-to-remote crawl error:', crawlErr)
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.totalFiles = 0
+              activeFolderUpload.value.isScanning = false
+            }
           }
         }
       } catch (scanErr) {
@@ -2237,7 +2336,11 @@ export const useSftpStore = defineStore('sftp', () => {
               skipRefresh: true,
               preEnqueuedTransferId: task.transferId,
               exactDestPath: task.targetDest,
+              skipConflictCheck: task.skipConflictCheck,
             })
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.completedFiles++
+            }
           } catch (err) {
             console.error('Remote-to-remote worker error:', err)
           }
@@ -2257,8 +2360,19 @@ export const useSftpStore = defineStore('sftp', () => {
     try {
       await Promise.all([scanPromise, ...workerPromises])
     } finally {
+      batchConflictOverride.value = null
       flushNewTransfersNow()
       activeWorkersNotifiers.delete(notifyWorkers)
+      if (activeFolderUpload.value && !activeFolderUpload.value.isStopping && !isCancellingAll.value) {
+        activeFolderUpload.value.isComplete = true
+        setTimeout(() => {
+          if (activeFolderUpload.value?.isComplete) {
+            activeFolderUpload.value = null
+          }
+        }, 3500)
+      } else {
+        activeFolderUpload.value = null
+      }
     }
 
     // Refresh destination directory ONCE at the end of the batch
@@ -2721,23 +2835,23 @@ export const useSftpStore = defineStore('sftp', () => {
   // File Clipboard (Copy / Cut / Paste)
   const clipboard = ref<FileClipboardItem | null>(null)
 
-  function copyToClipboard(pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) {
+  function copyToClipboard(pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[], sessionId?: string) {
     if (!files || files.length === 0) return
     clipboard.value = {
       files: [...files],
       sourcePane: pane,
       mode: 'copy',
-      sessionId: pane === 'remote' ? currentSessionId.value : undefined,
+      sessionId: pane === 'remote' ? (sessionId || currentSessionId.value) : undefined,
     }
   }
 
-  function cutToClipboard(pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) {
+  function cutToClipboard(pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[], sessionId?: string) {
     if (!files || files.length === 0) return
     clipboard.value = {
       files: [...files],
       sourcePane: pane,
       mode: 'cut',
-      sessionId: pane === 'remote' ? currentSessionId.value : undefined,
+      sessionId: pane === 'remote' ? (sessionId || currentSessionId.value) : undefined,
     }
   }
 
@@ -2760,17 +2874,13 @@ export const useSftpStore = defineStore('sftp', () => {
         await fetchLocalDir(localPath.value, { force: true })
       } else if (clip.sourcePane === 'remote' && targetPane === 'remote' && destSessionId) {
         const srcSessionId = clip.sessionId || destSessionId
-        if (srcSessionId === destSessionId) {
+        if (srcSessionId === destSessionId && clip.mode === 'cut') {
           const paths = clip.files.map((f) => f.path)
-          if (clip.mode === 'cut') {
-            await invoke('sftp_move_remote_paths', { sessionId: destSessionId, paths, targetDir: dest })
-            clipboard.value = null
-          } else {
-            await copyRemotePaths(destSessionId, paths, dest)
-          }
+          await invoke('sftp_move_remote_paths', { sessionId: destSessionId, paths, targetDir: dest })
+          clipboard.value = null
           await fetchRemoteDir(destSessionId, dest, { force: true })
         } else {
-          // Cross-session remote transfer!
+          // Cross-session remote transfer or same-server copy with conflict resolution!
           await startBatchRemoteToRemoteTransfer(srcSessionId, destSessionId, clip.files as SftpFileEntry[], dest)
           if (clip.mode === 'cut') {
             for (const f of clip.files) {
@@ -2803,48 +2913,64 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
-  async function duplicateItem(pane: 'local' | 'remote', item: LocalFileEntry | SftpFileEntry) {
+  async function duplicateItem(pane: 'local' | 'remote', item: LocalFileEntry | SftpFileEntry, sessionId?: string, parentDir?: string) {
     if (pane === 'local') {
       await invoke('sftp_duplicate_local_path', { path: item.path, newName: null })
       await fetchLocalDir(localPath.value, { force: true })
-    } else if (currentSessionId.value) {
-      await invoke('sftp_duplicate_remote_path', { sessionId: currentSessionId.value, path: item.path, newName: null })
-      await fetchRemoteDir(currentSessionId.value, remotePath.value, { force: true })
+    } else {
+      const sid = sessionId || currentSessionId.value
+      if (sid) {
+        await invoke('sftp_duplicate_remote_path', { sessionId: sid, path: item.path, newName: null })
+        const dir = parentDir || sessionRemotePaths.value[sid] || remotePath.value
+        invalidateRemoteCache(sid, dir)
+        await fetchRemoteDir(sid, dir, { force: true })
+      }
     }
   }
 
   // Calculated Directory Sizes
   const calculatedDirSizes = ref<Record<string, number>>({})
 
-  async function calculateDirSize(pane: 'local' | 'remote', path: string): Promise<number> {
+  async function calculateDirSize(pane: 'local' | 'remote', path: string, sessionId?: string): Promise<number> {
     if (pane === 'local') {
       const size = await invoke<number>('sftp_get_local_dir_size', { path })
       calculatedDirSizes.value[path] = size
       return size
-    } else if (currentSessionId.value) {
-      const size = await invoke<number>('sftp_get_remote_dir_size', { sessionId: currentSessionId.value, path })
-      calculatedDirSizes.value[path] = size
-      return size
+    } else {
+      const sid = sessionId || currentSessionId.value
+      if (sid) {
+        const size = await invoke<number>('sftp_get_remote_dir_size', { sessionId: sid, path })
+        calculatedDirSizes.value[path] = size
+        return size
+      }
     }
     return 0
   }
 
-  async function calculateChecksum(pane: 'local' | 'remote', path: string, algorithm: 'md5' | 'sha256'): Promise<string> {
+  async function calculateChecksum(pane: 'local' | 'remote', path: string, algorithm: 'md5' | 'sha256', sessionId?: string): Promise<string> {
     if (pane === 'local') {
       return await invoke<string>('sftp_calculate_local_checksum', { path, algorithm })
-    } else if (currentSessionId.value) {
-      return await invoke<string>('sftp_calculate_remote_checksum', { sessionId: currentSessionId.value, path, algorithm })
+    } else {
+      const sid = sessionId || currentSessionId.value
+      if (sid) {
+        return await invoke<string>('sftp_calculate_remote_checksum', { sessionId: sid, path, algorithm })
+      }
     }
     throw new Error('No active session')
   }
 
-  async function createSymlink(pane: 'local' | 'remote', target: string, linkPath: string): Promise<void> {
+  async function createSymlink(pane: 'local' | 'remote', target: string, linkPath: string, sessionId?: string): Promise<void> {
     if (pane === 'local') {
       await invoke('sftp_create_local_symlink', { target, linkPath })
       await fetchLocalDir(localPath.value, { force: true })
-    } else if (currentSessionId.value) {
-      await invoke('sftp_create_remote_symlink', { sessionId: currentSessionId.value, target, linkPath })
-      await fetchRemoteDir(currentSessionId.value, remotePath.value, { force: true })
+    } else {
+      const sid = sessionId || currentSessionId.value
+      if (sid) {
+        await invoke('sftp_create_remote_symlink', { sessionId: sid, target, linkPath })
+        const dir = sessionRemotePaths.value[sid] || remotePath.value
+        invalidateRemoteCache(sid, dir)
+        await fetchRemoteDir(sid, dir, { force: true })
+      }
     }
   }
 

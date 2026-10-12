@@ -9,6 +9,7 @@ const props = defineProps<{
   show: boolean
   target: 'local' | 'remote'
   file: LocalFileEntry | SftpFileEntry | null
+  sessionId?: string
 }>()
 
 const emit = defineEmits<{
@@ -39,7 +40,7 @@ async function calculateHashes() {
 
   // Compute MD5
   sftpStore
-    .calculateChecksum(props.target, props.file.path, 'md5')
+    .calculateChecksum(props.target, props.file.path, 'md5', props.sessionId)
     .then((hash) => {
       md5Hash.value = hash
     })
@@ -52,7 +53,7 @@ async function calculateHashes() {
 
   // Compute SHA-256
   sftpStore
-    .calculateChecksum(props.target, props.file.path, 'sha256')
+    .calculateChecksum(props.target, props.file.path, 'sha256', props.sessionId)
     .then((hash) => {
       sha256Hash.value = hash
     })

@@ -1530,21 +1530,41 @@ pub async fn sftp_transfer_remote_to_remote(
     );
 
     if src_session_id == dest_session_id {
-        sftp_copy_remote_paths(state, src_session_id, vec![clean_src], clean_dest).await?;
-        let _ = app.emit(
-            &event_name,
-            crate::sftp::TransferProgress {
-                transfer_id: transfer_id.clone(),
-                file_name: file_name.clone(),
-                direction: "upload".to_string(),
-                bytes_transferred: total_bytes,
-                total_bytes,
-                speed_bytes_per_sec: 0,
-                is_complete: true,
-                error: None,
-            },
-        );
-        return Ok(());
+        if let Some(session) = state.get_session(&src_session_id).await {
+            if let Ok(channel) = session.handle.channel_open_session().await {
+                let escaped_src = clean_src.replace('\'', "'\\''");
+                let escaped_dest = clean_dest.replace('\'', "'\\''");
+                let parent = clean_dest.rfind('/').map(|i| &clean_dest[..i]).unwrap_or("");
+                let escaped_parent = parent.replace('\'', "'\\''");
+                let cmd = if !parent.is_empty() {
+                    format!("mkdir -p '{}' && cp -a '{}' '{}' 2>&1", escaped_parent, escaped_src, escaped_dest)
+                } else {
+                    format!("cp -a '{}' '{}' 2>&1", escaped_src, escaped_dest)
+                };
+                if channel.exec(true, cmd).await.is_ok() {
+                    let mut stream = channel.into_stream();
+                    let mut out = Vec::new();
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+                    let out_str = String::from_utf8_lossy(&out);
+                    if !out_str.contains("cannot") && !out_str.contains("No such file") && !out_str.contains("Permission denied") {
+                        let _ = app.emit(
+                            &event_name,
+                            crate::sftp::TransferProgress {
+                                transfer_id: transfer_id.clone(),
+                                file_name: file_name.clone(),
+                                direction: "upload".to_string(),
+                                bytes_transferred: total_bytes,
+                                total_bytes,
+                                speed_bytes_per_sec: 0,
+                                is_complete: true,
+                                error: None,
+                            },
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     let src_is_ftp = state.get_ftp_session(&src_session_id).await.is_some();

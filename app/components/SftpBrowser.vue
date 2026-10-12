@@ -61,7 +61,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'open-terminal', dirPath: string): void
+  (e: 'open-terminal', dirPath: string, sessionId?: string): void
 }>()
 
 const sftpStore = useSftpStore()
@@ -156,16 +156,21 @@ const remoteInputPath = ref('')
 // Action dialogs
 const showNewFolderModal = ref(false)
 const newFolderTarget = ref<'local' | 'remote'>('remote')
+const newFolderSessionId = ref<string | null>(null)
+const newFolderParentDir = ref<string | undefined>(undefined)
 const newFolderName = ref('')
 const newFolderInputRef = ref<HTMLInputElement | null>(null)
 
 const showNewFileModal = ref(false)
 const newFileTarget = ref<'local' | 'remote'>('remote')
+const newFileSessionId = ref<string | null>(null)
+const newFileParentDir = ref<string | undefined>(undefined)
 const newFileName = ref('')
 const newFileInputRef = ref<HTMLInputElement | null>(null)
 
 const showRenameModal = ref(false)
 const renameTarget = ref<'local' | 'remote'>('remote')
+const renameSessionId = ref<string | null>(null)
 const renameItem = ref<LocalFileEntry | SftpFileEntry | null>(null)
 const renameNewName = ref('')
 const renameInputRef = ref<HTMLInputElement | null>(null)
@@ -174,6 +179,7 @@ const renameInputRef = ref<HTMLInputElement | null>(null)
 interface FileDeleteTarget {
   pane: 'local' | 'remote'
   files: (LocalFileEntry | SftpFileEntry)[]
+  sessionId?: string | null
 }
 
 interface ActiveDeletion {
@@ -183,6 +189,7 @@ interface ActiveDeletion {
   totalCount: number
   completedCount: number
   isCancelling: boolean
+  sessionId?: string | null
 }
 
 const showDeleteConfirmModal = ref(false)
@@ -194,6 +201,8 @@ const useFastRm = ref(false)
 
 const showCompressModal = ref(false)
 const compressTarget = ref<'local' | 'remote'>('remote')
+const compressSessionId = ref<string | null>(null)
+const compressParentPath = ref<string | undefined>(undefined)
 const compressSelectedItems = ref<(LocalFileEntry | SftpFileEntry)[]>([])
 const compressArchiveName = ref('')
 const compressFormat = ref<'.tar.gz' | '.zip'>('.tar.gz')
@@ -202,6 +211,8 @@ const compressInputRef = ref<HTMLInputElement | null>(null)
 
 const showExtractModal = ref(false)
 const extractTarget = ref<'local' | 'remote'>('remote')
+const extractSessionId = ref<string | null>(null)
+const extractParentPath = ref<string | undefined>(undefined)
 const extractArchiveFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
 const extractSubfolderName = ref('')
 const isExtractingArchive = ref(false)
@@ -215,10 +226,17 @@ const newSymlinkItem = ref<LocalFileEntry | SftpFileEntry | null>(null)
 // Checksum Modal State
 const showChecksumModal = ref(false)
 const checksumTarget = ref<'local' | 'remote'>('remote')
+const checksumSessionId = ref<string | null>(null)
 const checksumFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
 
-const openNewSymlink = (target: 'local' | 'remote', item?: LocalFileEntry | SftpFileEntry) => {
-  newSymlinkTarget.value = target
+const newSymlinkSessionId = ref<string | null>(null)
+const newSymlinkParentDir = ref<string | undefined>(undefined)
+
+const openNewSymlink = (target: 'local' | 'remote', item?: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  newSymlinkTarget.value = isTargetLeftRemote ? 'remote' : target
+  newSymlinkSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
+  newSymlinkParentDir.value = isTargetLeftRemote ? leftRemotePath.value : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
   newSymlinkItem.value = item || null
   showNewSymlinkModal.value = true
 }
@@ -226,26 +244,34 @@ const openNewSymlink = (target: 'local' | 'remote', item?: LocalFileEntry | Sftp
 const submitNewSymlink = async (data: { target: string; linkName: string }) => {
   showNewSymlinkModal.value = false
   try {
-    const parentPath = newSymlinkTarget.value === 'local' ? sftpStore.localPath : sftpStore.remotePath
+    const parentPath = newSymlinkParentDir.value || (newSymlinkTarget.value === 'local' ? sftpStore.localPath : sftpStore.remotePath)
     const cleanParent = parentPath.replace(/\\/g, '/').replace(/\/+$/, '')
     const linkFullPath = `${cleanParent}/${data.linkName}`
-    await sftpStore.createSymlink(newSymlinkTarget.value, data.target, linkFullPath)
+    await sftpStore.createSymlink(newSymlinkTarget.value, data.target, linkFullPath, false, newSymlinkSessionId.value || undefined)
+    if (newSymlinkSessionId.value && newSymlinkSessionId.value === leftPaneSource.value) {
+      await fetchLeftRemoteDir(newSymlinkSessionId.value, leftRemotePath.value, { force: true })
+    }
     sftpStore.triggerTransferToast(`Created symlink: ${data.linkName}`)
   } catch (err: any) {
     showArchiveToast(`Failed to create symlink: ${err?.message || err}`, true)
   }
 }
 
-const openChecksum = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
-  checksumTarget.value = target
+const openChecksum = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  checksumTarget.value = isTargetLeftRemote ? 'remote' : target
+  checksumSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   checksumFile.value = file
   showChecksumModal.value = true
 }
 
 const handleCalculateDirSize = async (target: 'local' | 'remote', path: string) => {
   try {
+    const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+    const actualTarget = isTargetLeftRemote ? 'remote' : target
+    const sid = isTargetLeftRemote ? leftPaneSource.value : (actualTarget === 'remote' ? props.sessionId || undefined : undefined)
     sftpStore.triggerTransferToast('Calculating folder size...')
-    const size = await sftpStore.calculateDirSize(target, path)
+    const size = await sftpStore.calculateDirSize(actualTarget, path, sid)
     sftpStore.triggerTransferToast(`Folder size: ${formatBytes(size)}`)
   } catch (err: any) {
     showArchiveToast(`Failed to calculate directory size: ${err?.message || err}`, true)
@@ -254,7 +280,13 @@ const handleCalculateDirSize = async (target: 'local' | 'remote', path: string) 
 
 const handleDuplicate = async (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
   try {
-    await sftpStore.duplicateItem(target, file)
+    const isTargetLeftRemote = (target === 'local' || (activePane.value === 'local' && contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+    const actualTarget = isTargetLeftRemote ? 'remote' : target
+    const sid = isTargetLeftRemote ? leftPaneSource.value : (actualTarget === 'remote' ? props.sessionId || undefined : undefined)
+    await sftpStore.duplicateItem(actualTarget, file, sid)
+    if (isTargetLeftRemote && leftPaneSource.value !== 'local') {
+      await fetchLeftRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true })
+    }
     sftpStore.triggerTransferToast(`Duplicated ${file.name}`)
   } catch (err: any) {
     showArchiveToast(`Failed to duplicate: ${err?.message || err}`, true)
@@ -360,11 +392,14 @@ const folderDownloadBottomOffset = computed(() => {
 // File Editor State
 const showEditorModal = ref(false)
 const editorTarget = ref<'local' | 'remote'>('remote')
+const editorSessionId = ref<string | null>(null)
 const editorFilePath = ref('')
 const editorFileName = ref('')
 
-const openEditor = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
-  editorTarget.value = target
+const openEditor = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  editorTarget.value = isTargetLeftRemote ? 'remote' : target
+  editorSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   editorFilePath.value = file.path
   editorFileName.value = file.name
   showEditorModal.value = true
@@ -372,9 +407,15 @@ const openEditor = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileE
 }
 
 const handleEditorSaved = () => {
-  if (editorTarget.value === 'remote' && props.sessionId) {
-    sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
-    sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true })
+  if (editorTarget.value === 'remote') {
+    if (editorSessionId.value && editorSessionId.value === leftPaneSource.value) {
+      sftpStore.invalidateRemoteCache(editorSessionId.value, leftRemotePath.value)
+      fetchLeftRemoteDir(editorSessionId.value, leftRemotePath.value, { force: true })
+    }
+    if (props.sessionId && (editorSessionId.value === props.sessionId || !editorSessionId.value)) {
+      sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
+      sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true })
+    }
   } else {
     sftpStore.invalidateLocalCache(sftpStore.localPath)
     sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
@@ -384,6 +425,7 @@ const handleEditorSaved = () => {
 // Permissions Modal State
 const showPermissionsModal = ref(false)
 const permissionsItem = ref<SftpFileEntry | null>(null)
+const permissionsSessionId = ref<string | null>(null)
 
 // -------------------------------------------------------------
 // Quick Look / Instant Preview State (Spacebar)
@@ -391,6 +433,7 @@ const permissionsItem = ref<SftpFileEntry | null>(null)
 const showQuickLook = ref(false)
 const quickLookFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
 const quickLookTarget = ref<'local' | 'remote'>('remote')
+const quickLookSessionId = ref<string | null>(null)
 
 // -------------------------------------------------------------
 // Git Status Helper
@@ -565,7 +608,7 @@ const handleRefresh = async (target?: 'local' | 'remote' | 'both') => {
     if (leftPaneSource.value === 'local') {
       promises.push(sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }))
     } else {
-      promises.push(sftpStore.fetchRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true }))
+      promises.push(fetchLeftRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true }))
     }
     if (props.sessionId) {
       promises.push(handleRemoteRefresh())
@@ -582,21 +625,26 @@ const handleRefresh = async (target?: 'local' | 'remote' | 'both') => {
     }
   } else {
     if (leftPaneSource.value !== 'local') {
-      await sftpStore.fetchRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true })
+      await fetchLeftRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true })
     } else {
       await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
     }
   }
 }
 
-const openPermissions = (item: SftpFileEntry) => {
+const openPermissions = (item: SftpFileEntry, targetSessionId?: string | null) => {
   permissionsItem.value = item
+  permissionsSessionId.value = targetSessionId || (contextMenu.value.pane === 'local' && leftPaneSource.value !== 'local' ? leftPaneSource.value : props.sessionId)
   showPermissionsModal.value = true
   closeContextMenu()
 }
 
 const handlePermissionsUpdated = () => {
-  if (props.sessionId) {
+  if (permissionsSessionId.value && permissionsSessionId.value === leftPaneSource.value) {
+    sftpStore.invalidateRemoteCache(permissionsSessionId.value, leftRemotePath.value)
+    fetchLeftRemoteDir(permissionsSessionId.value, leftRemotePath.value, { force: true })
+  }
+  if (props.sessionId && (permissionsSessionId.value === props.sessionId || !permissionsSessionId.value)) {
     sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
     sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true })
   }
@@ -738,6 +786,35 @@ const filteredRemoteFiles = computed(() => {
 // -------------------------------------------------------------
 // Left Remote Pane State & Logic (Dual-Remote Browsing)
 // -------------------------------------------------------------
+const leftRemotePath = ref<string>('/')
+const leftRemoteRawFiles = ref<SftpFileEntry[]>([])
+const isLoadingLeftRemote = ref<boolean>(false)
+const leftRemoteError = ref<string | null>(null)
+
+const fetchLeftRemoteDir = async (
+  sessionId: string,
+  path?: string,
+  options?: { force?: boolean }
+) => {
+  if (!sessionId || sessionId === 'local') return
+  isLoadingLeftRemote.value = true
+  leftRemoteError.value = null
+  try {
+    const targetPath = path !== undefined ? path : (leftRemotePath.value || '.')
+    const [canonical, entries] = await invoke<[string, SftpFileEntry[]]>('sftp_list_remote', {
+      sessionId,
+      path: targetPath,
+    })
+    leftRemotePath.value = canonical
+    leftRemoteRawFiles.value = entries
+  } catch (err: any) {
+    console.error('Failed to fetch left remote dir:', err)
+    leftRemoteError.value = err?.message || String(err)
+  } finally {
+    isLoadingLeftRemote.value = false
+  }
+}
+
 const handleLeftSwitchSource = async (newSource: 'local' | string) => {
   leftPaneSource.value = newSource
   selectedLeftRemotePaths.value.clear()
@@ -747,9 +824,8 @@ const handleLeftSwitchSource = async (newSource: 'local' | string) => {
   isLeftRemoteParentSelected.value = false
   isLocalParentSelected.value = false
   if (newSource !== 'local') {
-    if (!sftpStore.sessionRemoteFiles[newSource] || !sftpStore.sessionRemotePaths[newSource]) {
-      await sftpStore.fetchRemoteDir(newSource, '.')
-    }
+    const startPath = leftRemotePath.value && leftRemotePath.value !== '/' ? leftRemotePath.value : '.'
+    await fetchLeftRemoteDir(newSource, startPath)
   }
 }
 
@@ -785,16 +861,6 @@ const handleLeftRemoteSort = (field: FileSortField) => {
     leftRemoteSortOrder.value = 'asc'
   }
 }
-
-const leftRemotePath = computed(() => {
-  if (leftPaneSource.value === 'local') return ''
-  return sftpStore.sessionRemotePaths[leftPaneSource.value] || '/'
-})
-
-const leftRemoteRawFiles = computed<SftpFileEntry[]>(() => {
-  if (leftPaneSource.value === 'local') return []
-  return sftpStore.sessionRemoteFiles[leftPaneSource.value] || []
-})
 
 const filteredLeftRemoteFiles = computed<SftpFileEntry[]>(() => {
   let list = leftRemoteRawFiles.value
@@ -861,7 +927,7 @@ watch(
 
 const navigateLeftRemoteUp = () => {
   if (leftPaneSource.value === 'local' || !leftRemoteParentPath.value) return
-  sftpStore.fetchRemoteDir(leftPaneSource.value, leftRemoteParentPath.value)
+  fetchLeftRemoteDir(leftPaneSource.value, leftRemoteParentPath.value)
 }
 
 const navigateLeftRemoteBack = () => {
@@ -870,7 +936,7 @@ const navigateLeftRemoteBack = () => {
   leftRemoteHistoryIndex.value--
   const target = leftRemoteHistory.value[leftRemoteHistoryIndex.value]
   if (target) {
-    sftpStore.fetchRemoteDir(leftPaneSource.value, target)
+    fetchLeftRemoteDir(leftPaneSource.value, target)
   }
 }
 
@@ -880,7 +946,7 @@ const navigateLeftRemoteForward = () => {
   leftRemoteHistoryIndex.value++
   const target = leftRemoteHistory.value[leftRemoteHistoryIndex.value]
   if (target) {
-    sftpStore.fetchRemoteDir(leftPaneSource.value, target)
+    fetchLeftRemoteDir(leftPaneSource.value, target)
   }
 }
 
@@ -915,9 +981,9 @@ const handleLeftRemoteRowClick = (event: MouseEvent, file: SftpFileEntry, index:
 
 const handleLeftRemoteRowDoubleClick = (entry: SftpFileEntry) => {
   if (entry.is_dir && leftPaneSource.value !== 'local') {
-    sftpStore.fetchRemoteDir(leftPaneSource.value, entry.path)
+    fetchLeftRemoteDir(leftPaneSource.value, entry.path)
   } else if (!entry.is_dir) {
-    openEditor('remote', entry)
+    openEditor('remote', entry, leftPaneSource.value)
   }
 }
 
@@ -1060,6 +1126,22 @@ const navigateQuickLook = (direction: 'prev' | 'next') => {
 const toggleFilter = (pane: 'local' | 'remote') => {
   const isLocal = pane === 'local'
   if (isLocal) {
+    if (leftPaneSource.value !== 'local') {
+      if (showLeftRemoteFilter.value) {
+        if (leftRemoteSearchQuery.value) {
+          leftRemotePaneComp.value?.focusFilterInput?.()
+        } else {
+          showLeftRemoteFilter.value = false
+        }
+        return
+      }
+      showLeftRemoteFilter.value = true
+      activePane.value = 'local'
+      nextTick(() => {
+        leftRemotePaneComp.value?.focusFilterInput?.()
+      })
+      return
+    }
     if (showLocalFilter.value && document.activeElement === localFilterInputRef.value) {
       if (localSearchQuery.value) {
         localFilterInputRef.value?.select()
@@ -1098,6 +1180,14 @@ const toggleFilter = (pane: 'local' | 'remote') => {
 
 const handleFilterEsc = (pane: 'local' | 'remote') => {
   if (pane === 'local') {
+    if (leftPaneSource.value !== 'local') {
+      if (leftRemoteSearchQuery.value) {
+        leftRemoteSearchQuery.value = ''
+      } else {
+        showLeftRemoteFilter.value = false
+      }
+      return
+    }
     if (localSearchQuery.value) {
       localSearchQuery.value = ''
     } else {
@@ -1163,7 +1253,7 @@ const toggleLocalBookmark = (path?: string) => {
 }
 
 const toggleRemoteBookmark = (path?: string) => {
-  const p = path || sftpStore.remotePath
+  const p = path || (contextMenu.value.pane === 'local' && leftPaneSource.value !== 'local' ? leftRemotePath.value : sftpStore.remotePath)
   if (!p) return
   if (remoteBookmarks.value.includes(p)) {
     remoteBookmarks.value = remoteBookmarks.value.filter((b) => b !== p)
@@ -1175,10 +1265,11 @@ const toggleRemoteBookmark = (path?: string) => {
 }
 
 // Open in Terminal
-const handleOpenInTerminal = (path?: string) => {
-  const p = path || sftpStore.remotePath
+const handleOpenInTerminal = (path?: string, targetSessionId?: string | null) => {
+  const sid = targetSessionId || (contextMenu.value.pane === 'local' && leftPaneSource.value !== 'local' ? leftPaneSource.value : props.sessionId)
+  const p = path || (sid === leftPaneSource.value ? leftRemotePath.value : sftpStore.remotePath)
   closeContextMenu()
-  emit('open-terminal', p)
+  emit('open-terminal', p, sid || undefined)
 }
 
 // Open in Default App (Local)
@@ -1192,15 +1283,16 @@ const handleOpenInDefaultApp = async (path: string) => {
 }
 
 // Open in External Editor with Live Sync (Remote)
-const handleOpenInExternalEditor = async (file: SftpFileEntry) => {
+const handleOpenInExternalEditor = async (file: SftpFileEntry, targetSessionId?: string | null) => {
   closeContextMenu()
-  if (!props.sessionId) return
+  const sid = targetSessionId || (contextMenu.value.pane === 'local' && leftPaneSource.value !== 'local' ? leftPaneSource.value : props.sessionId)
+  if (!sid) return
   try {
     const editor = settingsStore.preferredExternalEditor === 'custom'
       ? settingsStore.customExternalEditorCommand
       : settingsStore.preferredExternalEditor
     showArchiveToast(`Opening ${file.name} in external editor...`, false, true, 2500)
-    await externalEditStore.startEdit(props.sessionId, file.path, editor)
+    await externalEditStore.startEdit(sid, file.path, editor)
     showArchiveToast(`Watching ${file.name} for external edits (auto-upload on save)`, false, false, 3500)
   } catch (err: any) {
     console.error('Failed to start external edit:', err)
@@ -1211,10 +1303,15 @@ const handleOpenInExternalEditor = async (file: SftpFileEntry) => {
 watch(
   () => externalEditStore.lastSyncNotification,
   (notif) => {
-    if (notif && props.sessionId) {
+    if (notif) {
       showArchiveToast(`Auto-uploaded: ${notif.filename} (${notif.time})`, false, false, 3000)
-      sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
-      sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+      if (leftPaneSource.value !== 'local') {
+        fetchLeftRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true }).catch(() => {})
+      }
+      if (props.sessionId) {
+        sftpStore.invalidateRemoteCache(props.sessionId, sftpStore.remotePath)
+        sftpStore.fetchRemoteDir(props.sessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+      }
     }
   }
 )
@@ -1237,8 +1334,11 @@ const openDirWatcherModal = (localDir?: string, remoteDir?: string) => {
   closeContextMenu()
 }
 
-const openSearchModal = (remoteDir?: string) => {
-  searchInitialDir.value = remoteDir || sftpStore.remotePath || '/'
+const searchSessionId = ref<string | null>(null)
+
+const openSearchModal = (remoteDir?: string, targetSessionId?: string | null) => {
+  searchSessionId.value = targetSessionId || (contextMenu.value.pane === 'local' && leftPaneSource.value !== 'local' ? leftPaneSource.value : props.sessionId)
+  searchInitialDir.value = remoteDir || (searchSessionId.value === leftPaneSource.value ? leftRemotePath.value : sftpStore.remotePath) || '/'
   showSearchModal.value = true
   closeContextMenu()
 }
@@ -1938,6 +2038,8 @@ const {
   filteredLeftRemoteFiles,
   lastLeftRemoteClickedIndex,
   leftPaneSource,
+  leftRemotePath,
+  leftRemoteParentPath,
   lastLocalClickedIndex,
   lastRemoteClickedIndex,
   onBatchUpload: (files, dest) => handleBatchUpload(files, dest),
@@ -2067,9 +2169,13 @@ const {
   onRefresh: (pane, both) => handleRefresh(both ? 'both' : pane),
   onTransferCopy: () => handleTransferCopy(),
   onTransferMove: () => handleTransferMove(),
-  onNewFolder: (pane) => openNewFolder(pane),
+  onNewFolder: (pane) => (pane === 'local' && leftPaneSource.value !== 'local' ? openNewFolder('remote', leftPaneSource.value, leftRemotePath.value) : openNewFolder(pane)),
   onNavigateBack: (pane) => (pane === 'local' ? (leftPaneSource.value === 'local' ? navigateLocalBack() : navigateLeftRemoteBack()) : navigateRemoteBack()),
   onNavigateForward: (pane) => (pane === 'local' ? (leftPaneSource.value === 'local' ? navigateLocalForward() : navigateLeftRemoteForward()) : navigateRemoteForward()),
+  onCopy: (pane, files) => handleCopy(pane, files),
+  onCut: (pane, files) => handleCut(pane, files),
+  onPaste: (pane) => handlePaste(pane),
+  onDuplicate: (pane, file) => handleDuplicate(pane, file),
   isAnyModalOpen,
 })
 
@@ -2110,6 +2216,7 @@ const handleBatchDownload = async (files?: SftpFileEntry[], destinationDir?: str
     if (leftPaneSource.value !== 'local') {
       const dest = destinationDir || leftRemotePath.value
       await sftpStore.startBatchRemoteToRemoteTransfer(props.sessionId, leftPaneSource.value, targetFiles, dest)
+      await fetchLeftRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true })
     } else {
       await sftpStore.startBatchDownload(props.sessionId, targetFiles, destinationDir)
     }
@@ -2183,20 +2290,20 @@ const handleTransferMove = async () => {
         filesToMove,
         sftpStore.remotePath
       )
-      openDeleteConfirm('remote', filesToMove)
+      openDeleteConfirm('remote', filesToMove, leftPaneSource.value)
     }
   } else {
     if (selectedRemoteFiles.value.length === 0) return
     const filesToMove = [...selectedRemoteFiles.value]
     await handleBatchDownload(filesToMove)
-    openDeleteConfirm('remote', filesToMove)
+    openDeleteConfirm('remote', filesToMove, props.sessionId)
   }
 }
 
 // -------------------------------------------------------------
 // Batch Delete Operations (Custom Lightbox Confirmation Modal)
 // -------------------------------------------------------------
-const openDeleteConfirm = (pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) => {
+const openDeleteConfirm = (pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[], sessionId?: string | null) => {
   if (!files || files.length === 0) return
   if (activeDeletion.value) {
     showArchiveToast('A deletion is already running in the background. Please wait or cancel it first.', true, false, 4000)
@@ -2204,7 +2311,7 @@ const openDeleteConfirm = (pane: 'local' | 'remote', files: (LocalFileEntry | Sf
   }
   closeContextMenu()
   useFastRm.value = false
-  deleteTarget.value = { pane, files: [...files] }
+  deleteTarget.value = { pane, files: [...files], sessionId }
   showDeleteConfirmModal.value = true
 }
 
@@ -2220,6 +2327,7 @@ const cancelActiveDeletion = async () => {
   const cancellingDelId = activeDeletion.value.id
   const cancellingTitle = activeDeletion.value.title
   const cancellingPane = activeDeletion.value.pane
+  const cancellingSessionId = activeDeletion.value.sessionId
 
   showArchiveToast(`Cancelling deletion of ${cancellingTitle}...`, false, true, 2500)
 
@@ -2236,9 +2344,12 @@ const cancelActiveDeletion = async () => {
       activeDeletion.value = null
       isDeletingFiles.value = false
       showArchiveToast(`Deletion of ${cancellingTitle} was cancelled`, false, false, 3500)
-      const targetSessionId = props.sessionId || sftpStore.currentSessionId
-      if (cancellingPane === 'remote' && targetSessionId) {
-        sftpStore.fetchRemoteDir(targetSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+      if (cancellingPane === 'remote' && cancellingSessionId) {
+        if (cancellingSessionId === leftPaneSource.value && leftPaneSource.value !== 'local') {
+          fetchLeftRemoteDir(cancellingSessionId, leftRemotePath.value, { force: true }).catch(() => {})
+        } else {
+          sftpStore.fetchRemoteDir(cancellingSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+        }
       } else if (cancellingPane === 'local') {
         sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }).catch(() => {})
       }
@@ -2248,7 +2359,7 @@ const cancelActiveDeletion = async () => {
 
 const executeDeleteFiles = async () => {
   if (!deleteTarget.value || deleteTarget.value.files.length === 0) return
-  const { pane, files } = deleteTarget.value
+  const { pane, files, sessionId: targetSessionIdProp } = deleteTarget.value
   const fastRm = useFastRm.value
 
   // Close confirmation modal immediately so the user can continue working without being trapped
@@ -2256,7 +2367,7 @@ const executeDeleteFiles = async () => {
   deleteTarget.value = null
   useFastRm.value = false
 
-  const targetSessionId = props.sessionId || sftpStore.currentSessionId
+  const targetSessionId = targetSessionIdProp || (pane === 'remote' ? (props.sessionId || sftpStore.currentSessionId) : null)
   console.log('[executeDeleteFiles] Starting deletion:', {
     pane,
     count: files.length,
@@ -2287,6 +2398,7 @@ const executeDeleteFiles = async () => {
     totalCount: files.length,
     completedCount: 0,
     isCancelling: false,
+    sessionId: targetSessionId,
   }
 
   let wasCancelled = false
@@ -2340,19 +2452,32 @@ const executeDeleteFiles = async () => {
     if (pane === 'local') {
       selectedLocalPaths.value.clear()
       sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }).catch(() => {})
-    } else if (pane === 'remote' && targetSessionId) {
-      selectedRemotePaths.value.clear()
-      sftpStore.fetchRemoteDir(targetSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+    } else if (pane === 'remote') {
+      if (targetSessionId === leftPaneSource.value && leftPaneSource.value !== 'local') {
+        selectedLeftRemotePaths.value.clear()
+        fetchLeftRemoteDir(targetSessionId, leftRemotePath.value, { force: true }).catch(() => {})
+      } else if (targetSessionId) {
+        selectedRemotePaths.value.clear()
+        sftpStore.fetchRemoteDir(targetSessionId, sftpStore.remotePath, { force: true }).catch(() => {})
+      }
     }
   }
 }
 
-const handleBatchDeleteLocal = (files?: LocalFileEntry[]) => {
-  const targetFiles = (Array.isArray(files) && files.length > 0)
-    ? files
-    : selectedLocalFiles.value
-  if (!targetFiles || targetFiles.length === 0) return
-  openDeleteConfirm('local', targetFiles)
+const handleBatchDeleteLocal = (files?: (LocalFileEntry | SftpFileEntry)[]) => {
+  if (leftPaneSource.value !== 'local') {
+    const targetFiles = (Array.isArray(files) && files.length > 0)
+      ? files
+      : selectedLeftRemoteFiles.value
+    if (!targetFiles || targetFiles.length === 0) return
+    openDeleteConfirm('remote', targetFiles, leftPaneSource.value)
+  } else {
+    const targetFiles = (Array.isArray(files) && files.length > 0)
+      ? files
+      : selectedLocalFiles.value
+    if (!targetFiles || targetFiles.length === 0) return
+    openDeleteConfirm('local', targetFiles)
+  }
 }
 
 const handleBatchDeleteRemote = (files?: SftpFileEntry[]) => {
@@ -2360,15 +2485,19 @@ const handleBatchDeleteRemote = (files?: SftpFileEntry[]) => {
     ? files
     : selectedRemoteFiles.value
   if (!targetFiles || targetFiles.length === 0) return
-  openDeleteConfirm('remote', targetFiles)
+  openDeleteConfirm('remote', targetFiles, props.sessionId)
 }
 
-const handleDeleteLocal = (entry: LocalFileEntry) => {
-  openDeleteConfirm('local', [entry])
+const handleDeleteLocal = (entry: LocalFileEntry | SftpFileEntry) => {
+  if (leftPaneSource.value !== 'local') {
+    openDeleteConfirm('remote', [entry], leftPaneSource.value)
+  } else {
+    openDeleteConfirm('local', [entry])
+  }
 }
 
 const handleDeleteRemote = (entry: SftpFileEntry) => {
-  openDeleteConfirm('remote', [entry])
+  openDeleteConfirm('remote', [entry], props.sessionId)
 }
 
 // -------------------------------------------------------------
@@ -2423,8 +2552,11 @@ watch(showRenameModal, (val) => {
   }
 })
 
-const openNewFolder = (target: 'local' | 'remote') => {
-  newFolderTarget.value = target
+const openNewFolder = (target: 'local' | 'remote', sessionId?: string | null, parentDir?: string) => {
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  newFolderTarget.value = isTargetLeftRemote ? 'remote' : target
+  newFolderSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
+  newFolderParentDir.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
   newFolderName.value = ''
   showNewFolderModal.value = true
   closeContextMenu()
@@ -2437,14 +2569,23 @@ const submitNewFolder = async (folderName?: string) => {
   if (!nameToUse) return
   if (newFolderTarget.value === 'local') {
     await sftpStore.createLocalFolder(nameToUse)
-  } else if (props.sessionId) {
-    await sftpStore.createRemoteFolder(props.sessionId, nameToUse)
+  } else {
+    const sid = newFolderSessionId.value || props.sessionId
+    if (sid) {
+      await sftpStore.createRemoteFolder(sid, nameToUse, newFolderParentDir.value)
+      if (sid === leftPaneSource.value && leftPaneSource.value !== 'local') {
+        await fetchLeftRemoteDir(sid, leftRemotePath.value, { force: true })
+      }
+    }
   }
   showNewFolderModal.value = false
 }
 
-const openNewFile = (target: 'local' | 'remote') => {
-  newFileTarget.value = target
+const openNewFile = (target: 'local' | 'remote', sessionId?: string | null, parentDir?: string) => {
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  newFileTarget.value = isTargetLeftRemote ? 'remote' : target
+  newFileSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
+  newFileParentDir.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
   newFileName.value = ''
   showNewFileModal.value = true
   closeContextMenu()
@@ -2457,8 +2598,14 @@ const submitNewFile = async (fileName?: string, overwrite: boolean = false) => {
   try {
     if (newFileTarget.value === 'local') {
       await sftpStore.createLocalFile(nameToUse, overwrite)
-    } else if (props.sessionId) {
-      await sftpStore.createRemoteFile(props.sessionId, nameToUse, overwrite)
+    } else {
+      const sid = newFileSessionId.value || props.sessionId
+      if (sid) {
+        await sftpStore.createRemoteFile(sid, nameToUse, overwrite, newFileParentDir.value)
+        if (sid === leftPaneSource.value && leftPaneSource.value !== 'local') {
+          await fetchLeftRemoteDir(sid, leftRemotePath.value, { force: true })
+        }
+      }
     }
     showNewFileModal.value = false
   } catch (err: any) {
@@ -2466,9 +2613,11 @@ const submitNewFile = async (fileName?: string, overwrite: boolean = false) => {
   }
 }
 
-const openRename = (target: 'local' | 'remote', item: LocalFileEntry | SftpFileEntry) => {
+const openRename = (target: 'local' | 'remote', item: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
   if (!item || item.name === '..') return
-  renameTarget.value = target
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  renameTarget.value = isTargetLeftRemote ? 'remote' : target
+  renameSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   renameItem.value = item
   renameNewName.value = item.name
   showRenameModal.value = true
@@ -2485,6 +2634,24 @@ const triggerRenameSelected = () => {
   const secondaryPane: 'local' | 'remote' = isLocal ? 'remote' : 'local'
 
   const findRenameCandidate = (pane: 'local' | 'remote') => {
+    if (pane === 'local' && leftPaneSource.value !== 'local') {
+      const selected = selectedLeftRemoteFiles.value
+      if (selected.length === 0) return null
+      const files = filteredLeftRemoteFiles.value
+      const lastIndex = lastLeftRemoteClickedIndex.value
+      const selectedPaths = selectedLeftRemotePaths.value
+      if (
+        lastIndex !== null &&
+        lastIndex >= 0 &&
+        lastIndex < files.length &&
+        selectedPaths.has(files[lastIndex].path) &&
+        files[lastIndex].name !== '..'
+      ) {
+        return files[lastIndex]
+      }
+      return selected.find((f) => f.name !== '..') || null
+    }
+
     const isTargetLocal = pane === 'local'
     const selected = isTargetLocal ? selectedLocalFiles.value : selectedRemoteFiles.value
     if (selected.length === 0) return null
@@ -2508,7 +2675,7 @@ const triggerRenameSelected = () => {
 
   const primaryCandidate = findRenameCandidate(primaryPane)
   if (primaryCandidate) {
-    openRename(primaryPane, primaryCandidate)
+    openRename(primaryPane, primaryCandidate, primaryPane === 'local' && leftPaneSource.value !== 'local' ? leftPaneSource.value : undefined)
     return
   }
 
@@ -2516,7 +2683,7 @@ const triggerRenameSelected = () => {
   const secondaryCandidate = findRenameCandidate(secondaryPane)
   if (secondaryCandidate) {
     activePane.value = secondaryPane
-    openRename(secondaryPane, secondaryCandidate)
+    openRename(secondaryPane, secondaryCandidate, secondaryPane === 'local' && leftPaneSource.value !== 'local' ? leftPaneSource.value : undefined)
   }
 }
 
@@ -2552,8 +2719,14 @@ const submitRename = async (newName?: string) => {
   try {
     if (renameTarget.value === 'local') {
       await sftpStore.renameLocalItem(oldPath, newPath)
-    } else if (props.sessionId) {
-      await sftpStore.renameRemoteItem(props.sessionId, oldPath, newPath)
+    } else {
+      const sid = renameSessionId.value || props.sessionId
+      if (sid) {
+        await sftpStore.renameRemoteItem(sid, oldPath, newPath)
+        if (sid === leftPaneSource.value && leftPaneSource.value !== 'local') {
+          await fetchLeftRemoteDir(sid, leftRemotePath.value, { force: true })
+        }
+      }
     }
   } catch (err: any) {
     console.error('Failed to rename item:', err)
@@ -2591,13 +2764,20 @@ watch(showExtractModal, (val) => {
   }
 })
 
-const handleExtractArchiveHere = async (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
+const handleExtractArchiveHere = async (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
   closeContextMenu()
   showArchiveToast(`Extracting ${file.name}...`, false, true)
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  const actualTarget = isTargetLeftRemote ? 'remote' : target
+  const sid = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
+
   try {
-    if (target === 'remote') {
-      if (!props.sessionId) return
-      await sftpStore.extractRemoteArchive(props.sessionId, file.path)
+    if (actualTarget === 'remote') {
+      if (!sid) return
+      await sftpStore.extractRemoteArchive(sid, file.path)
+      if (sid === leftPaneSource.value && leftPaneSource.value !== 'local') {
+        await fetchLeftRemoteDir(sid, leftRemotePath.value, { force: true })
+      }
     } else {
       await sftpStore.extractLocalArchive(file.path)
     }
@@ -2607,9 +2787,12 @@ const handleExtractArchiveHere = async (target: 'local' | 'remote', file: LocalF
   }
 }
 
-const openExtractToFolderModal = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
+const openExtractToFolderModal = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry, sessionId?: string | null, parentDir?: string) => {
   closeContextMenu()
-  extractTarget.value = target
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  extractTarget.value = isTargetLeftRemote ? 'remote' : target
+  extractSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
+  extractParentPath.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
   extractArchiveFile.value = file
   const baseName = file.name.replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar|7z)$/i, '')
   extractSubfolderName.value = baseName
@@ -2632,14 +2815,20 @@ const submitExtractToFolder = async (subfolderNameParam?: string) => {
 
   try {
     if (target === 'remote') {
-      if (!props.sessionId) return
-      const targetDir = sftpStore.remotePath.endsWith('/')
-        ? `${sftpStore.remotePath}${subfolder}`
-        : `${sftpStore.remotePath}/${subfolder}`
-      await sftpStore.extractRemoteArchive(props.sessionId, file.path, targetDir)
+      const sid = extractSessionId.value || props.sessionId
+      if (!sid) return
+      const parent = extractParentPath.value || sftpStore.remotePath
+      const targetDir = parent.endsWith('/')
+        ? `${parent}${subfolder}`
+        : `${parent}/${subfolder}`
+      await sftpStore.extractRemoteArchive(sid, file.path, targetDir)
+      if (sid === leftPaneSource.value && leftPaneSource.value !== 'local') {
+        await fetchLeftRemoteDir(sid, leftRemotePath.value, { force: true })
+      }
     } else {
-      const sep = sftpStore.localPath.includes('/') && !sftpStore.localPath.includes('\\') ? '/' : '\\'
-      const targetDir = `${sftpStore.localPath}${sep}${subfolder}`
+      const parent = extractParentPath.value || sftpStore.localPath
+      const sep = parent.includes('/') && !parent.includes('\\') ? '/' : '\\'
+      const targetDir = `${parent}${sep}${subfolder}`
       await sftpStore.extractLocalArchive(file.path, targetDir)
     }
     showArchiveToast(`Extracted ${file.name} to ${subfolder}/ successfully!`, false, false, 3500)
@@ -2648,10 +2837,16 @@ const submitExtractToFolder = async (subfolderNameParam?: string) => {
   }
 }
 
-const openCompressModal = (target: 'local' | 'remote') => {
+const openCompressModal = (target: 'local' | 'remote', sessionId?: string | null, parentDir?: string) => {
   closeContextMenu()
-  compressTarget.value = target
-  const items = target === 'local' ? selectedLocalFiles.value : selectedRemoteFiles.value
+  const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
+  compressTarget.value = isTargetLeftRemote ? 'remote' : target
+  compressSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
+  compressParentPath.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
+  
+  const items = isTargetLeftRemote
+    ? selectedLeftRemoteFiles.value
+    : (target === 'local' ? selectedLocalFiles.value : selectedRemoteFiles.value)
   if (items.length === 0) return
 
   compressSelectedItems.value = [...items]
@@ -2687,10 +2882,16 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
 
   try {
     if (target === 'remote') {
-      if (!props.sessionId) return
-      await sftpStore.compressRemoteArchive(props.sessionId, sftpStore.remotePath, itemNames, archiveName)
+      const sid = compressSessionId.value || props.sessionId
+      if (!sid) return
+      const parent = compressParentPath.value || sftpStore.remotePath
+      await sftpStore.compressRemoteArchive(sid, parent, itemNames, archiveName)
+      if (sid === leftPaneSource.value && leftPaneSource.value !== 'local') {
+        await fetchLeftRemoteDir(sid, leftRemotePath.value, { force: true })
+      }
     } else {
-      await sftpStore.compressLocalArchive(sftpStore.localPath, itemNames, archiveName)
+      const parent = compressParentPath.value || sftpStore.localPath
+      await sftpStore.compressLocalArchive(parent, itemNames, archiveName)
     }
     showArchiveToast(`Created ${archiveName} successfully!`, false, false, 3500)
   } catch (err: any) {
@@ -3277,6 +3478,9 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :cell-padding-class="cellPaddingClass"
         :remote-bookmarks="remoteBookmarks"
         :current-path="leftRemotePath"
+        :is-loading="isLoadingLeftRemote"
+        :remote-error="leftRemoteError"
+        :total-count="leftRemoteRawFiles.length"
         :get-row-style="(isLoc, path, file) => getRowStyle(true, path, file)"
         :get-git-status="getGitStatus"
         @switch-source="handleLeftSwitchSource"
@@ -3289,14 +3493,14 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @navigate-up="navigateLeftRemoteUp"
         @navigate-back="navigateLeftRemoteBack"
         @navigate-forward="navigateLeftRemoteForward"
-        @navigate-to="(path) => leftPaneSource.value !== 'local' && sftpStore.fetchRemoteDir(leftPaneSource.value, path)"
+        @navigate-to="(path) => leftPaneSource !== 'local' && fetchLeftRemoteDir(leftPaneSource, path)"
         @copy-path="handleCopyPath"
         @refresh="() => handleRefresh('local')"
         @reconnect="performAutoReconnect"
-        @new-file="openNewFile('remote')"
-        @new-folder="openNewFolder('remote')"
-        @open-search="() => openSearchModal()"
-        @permissions="(file) => openPermissions(file)"
+        @new-file="openNewFile('remote', leftPaneSource, leftRemotePath)"
+        @new-folder="openNewFolder('remote', leftPaneSource, leftRemotePath)"
+        @open-search="() => openSearchModal(undefined, leftPaneSource)"
+        @permissions="(file) => openPermissions(file, leftPaneSource)"
         @batch-download="(files) => handleLeftRemoteBatchTransfer(files)"
         @batch-delete="(files) => handleBatchDeleteLeftRemote(files)"
         @row-click="handleLeftRemoteRowClick"
@@ -3305,18 +3509,18 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @parent-click="handleLeftRemoteParentClick"
         @close-context-menu="closeContextMenu"
         @contextmenu="openLeftRemoteContextMenu"
-        @dragstart="(ev, file) => handleRemoteDragStart(ev, file, leftPaneSource.value)"
+        @dragstart="(ev, file) => handleRemoteDragStart(ev, file, leftPaneSource)"
         @dragend="handleRemoteDragEnd"
         @dragover="handleRemoteDragOver"
         @dragenter="handleRemoteDragEnter"
         @dragleave="handleRemoteDragLeave"
-        @drop="(ev) => handleRemoteDrop(ev, leftPaneSource.value)"
+        @drop="(ev) => handleRemoteDrop(ev, leftPaneSource)"
         @folder-dragover="(ev, file) => handleFolderDragOver(ev, 'remote', file)"
         @folder-dragleave="(file) => handleFolderDragLeave('remote', file)"
-        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file, leftPaneSource.value)"
+        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file, leftPaneSource)"
         @parent-folder-dragover="(ev) => handleParentFolderDragOver(ev, 'remote')"
         @parent-folder-dragleave="handleParentFolderDragLeave('remote')"
-        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote', leftPaneSource.value)"
+        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote', leftPaneSource)"
         @toggle-bookmark="toggleRemoteBookmark"
       />
 
@@ -3424,14 +3628,15 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       :y="contextMenu.y"
       :pane="contextMenu.pane"
       :session-id="props.sessionId"
+      :left-session-id="leftPaneSource !== 'local' ? leftPaneSource : null"
       :selected-local-files="leftPaneSource === 'local' ? selectedLocalFiles : (selectedLeftRemoteFiles as any)"
       :selected-remote-files="selectedRemoteFiles"
       :local-bookmarks="leftPaneSource === 'local' ? localBookmarks : remoteBookmarks"
       :remote-bookmarks="remoteBookmarks"
-      :current-local-path="leftPaneSource.value === 'local' ? sftpStore.localPath : leftRemotePath"
+      :current-local-path="leftPaneSource === 'local' ? sftpStore.localPath : leftRemotePath"
       :current-remote-path="sftpStore.remotePath"
       :is-comparing="isComparing"
-      :is-left-pane-remote="leftPaneSource.value !== 'local'"
+      :is-left-pane-remote="leftPaneSource !== 'local'"
       @close="closeContextMenu"
       @batch-upload="(files) => handleBatchUpload(files)"
       @batch-download="(files) => handleBatchDownload(files)"
@@ -3453,7 +3658,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       @toggle-bookmark="(target, path) => target === 'local' ? toggleLocalBookmark(path) : toggleRemoteBookmark(path)"
       @toggle-comparison="toggleComparison"
       @select-all="(target) => selectAll(target)"
-      @batch-delete-local="(files) => leftPaneSource.value === 'local' ? handleBatchDeleteLocal(files) : handleBatchDeleteLeftRemote(files as any)"
+      @batch-delete-local="(files) => leftPaneSource === 'local' ? handleBatchDeleteLocal(files) : handleBatchDeleteLeftRemote(files as any)"
       @batch-delete-remote="(files) => handleBatchDeleteRemote(files)"
       @refresh="(target) => handleRefresh(target)"
       @copy="(target, files) => handleCopy(target, files)"
@@ -3479,7 +3684,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     <SftpCompressModal
       :show="showCompressModal"
       :target="compressTarget"
-      :current-path="compressTarget === 'local' ? sftpStore.localPath : sftpStore.remotePath"
+      :current-path="compressParentPath || (compressTarget === 'local' ? sftpStore.localPath : sftpStore.remotePath)"
       :selected-items="compressSelectedItems"
       :is-compressing="isCompressingArchive"
       @close="showCompressModal = false"
@@ -3500,7 +3705,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     <SftpNewFolderModal
       :show="showNewFolderModal"
       :target="newFolderTarget"
-      :existing-items="newFolderTarget === 'local' ? sftpStore.localFiles : sftpStore.remoteFiles"
+      :existing-items="newFolderTarget === 'local' ? sftpStore.localFiles : (leftPaneSource !== 'local' && newFolderSessionId === leftPaneSource ? leftRemoteRawFiles : sftpStore.remoteFiles)"
       @close="showNewFolderModal = false"
       @submit="submitNewFolder"
     />
@@ -3509,7 +3714,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     <SftpNewFileModal
       :show="showNewFileModal"
       :target="newFileTarget"
-      :existing-items="newFileTarget === 'local' ? sftpStore.localFiles : sftpStore.remoteFiles"
+      :existing-items="newFileTarget === 'local' ? sftpStore.localFiles : (leftPaneSource !== 'local' && newFileSessionId === leftPaneSource ? leftRemoteRawFiles : sftpStore.remoteFiles)"
       @close="showNewFileModal = false"
       @submit="submitNewFile"
     />
@@ -3518,7 +3723,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     <SftpNewSymlinkModal
       :show="showNewSymlinkModal"
       :target="newSymlinkTarget"
-      :current-path="newSymlinkTarget === 'local' ? sftpStore.localPath : sftpStore.remotePath"
+      :current-path="newSymlinkParentDir || (newSymlinkTarget === 'local' ? sftpStore.localPath : sftpStore.remotePath)"
       :selected-item="newSymlinkItem"
       @close="showNewSymlinkModal = false"
       @submit="submitNewSymlink"
@@ -3529,6 +3734,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       :show="showChecksumModal"
       :target="checksumTarget"
       :file="checksumFile"
+      :session-id="checksumSessionId || props.sessionId"
       @close="showChecksumModal = false"
     />
 
@@ -3552,7 +3758,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
   <!-- File Permissions (chmod) Modal -->
   <PermissionsModal
     :show="showPermissionsModal"
-    :session-id="props.sessionId"
+    :session-id="permissionsSessionId || props.sessionId"
     :item="permissionsItem"
     @close="showPermissionsModal = false"
     @updated="handlePermissionsUpdated"
@@ -3571,12 +3777,20 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
   <!-- Remote Search & Grep Modal -->
   <SftpSearchModal
     :show="showSearchModal"
-    :session-id="props.sessionId"
+    :session-id="searchSessionId || props.sessionId"
     :current-remote-path="searchInitialDir"
     @close="showSearchModal = false"
-    @navigate-to="(path) => props.sessionId && sftpStore.fetchRemoteDir(props.sessionId, path)"
-    @open-editor="(path, name) => openEditor('remote', { path, name, is_dir: false, is_symlink: false, size: 0, modified: 0, permissions: 0o644 })"
-    @quick-look="(path, name) => openQuickLook('remote', { path, name, is_dir: false, is_symlink: false, size: 0, modified: 0, permissions: 0o644 })"
+    @navigate-to="(path) => {
+      const sid = searchSessionId || props.sessionId
+      if (!sid) return
+      if (sid === leftPaneSource && leftPaneSource !== 'local') {
+        fetchLeftRemoteDir(sid, path)
+      } else {
+        sftpStore.fetchRemoteDir(sid, path)
+      }
+    }"
+    @open-editor="(path, name) => openEditor('remote', { path, name, is_dir: false, is_symlink: false, size: 0, modified: 0, permissions: 0o644 }, searchSessionId)"
+    @quick-look="(path, name) => openQuickLook('remote', { path, name, is_dir: false, is_symlink: false, size: 0, modified: 0, permissions: 0o644 }, searchSessionId)"
   />
 
   <!-- macOS-style Spacebar Quick Look Modal -->
@@ -3584,10 +3798,10 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
     v-model:show="showQuickLook"
     :file="quickLookFile"
     :target="quickLookTarget"
-    :session-id="props.sessionId"
+    :session-id="quickLookSessionId || props.sessionId"
     :current-index="quickLookCurrentIndex"
     :total-count="quickLookFileList.length"
-    @open-editor="(target, file) => openEditor(target, file)"
+    @open-editor="(target, file) => openEditor(target, file, quickLookSessionId)"
     @prev="navigateQuickLook('prev')"
     @next="navigateQuickLook('next')"
   />
@@ -3595,7 +3809,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
   <!-- File Editor Modal (in front of search & preview) -->
   <FileEditorModal
     :show="showEditorModal"
-    :session-id="props.sessionId"
+    :session-id="editorSessionId || props.sessionId"
     :target="editorTarget"
     :file-path="editorFilePath"
     :file-name="editorFileName"

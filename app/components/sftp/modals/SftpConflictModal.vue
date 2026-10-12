@@ -4,7 +4,7 @@ import { formatBytes, formatDate } from '../../../utils/formatters'
 interface ConflictDialogData {
   show: boolean
   fileName: string
-  direction: 'upload' | 'download'
+  direction: 'upload' | 'download' | 'transfer'
   source: { size: number; modified: number }
   destination: { size: number; modified: number }
 }
@@ -37,7 +37,7 @@ const emit = defineEmits<{
             File Already Exists
           </h3>
           <p class="text-xs mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
-            An existing file was detected while {{ dialog.direction === 'download' ? 'downloading to local' : 'uploading to remote' }}.
+            An existing file was detected while {{ dialog.direction === 'download' ? 'downloading to local' : dialog.direction === 'upload' ? 'uploading to remote' : 'transferring between servers' }}.
           </p>
         </div>
       </div>
@@ -51,7 +51,7 @@ const emit = defineEmits<{
           <!-- Source Details -->
           <div class="space-y-1">
             <span class="font-medium uppercase tracking-wider text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
-              Source ({{ dialog.direction === 'download' ? 'Remote' : 'Local' }})
+              Source ({{ dialog.direction === 'download' ? 'Remote' : dialog.direction === 'upload' ? 'Local' : 'Source Server' }})
             </span>
             <div class="font-mono" :style="{ color: 'var(--color-text-main)' }">
               {{ formatBytes(dialog.source.size) }}
@@ -64,7 +64,7 @@ const emit = defineEmits<{
           <!-- Destination Details -->
           <div class="space-y-1 border-l pl-3" :style="{ borderColor: 'var(--color-border)' }">
             <span class="text-amber-500/90 font-medium uppercase tracking-wider text-[10px]">
-              Target (Existing)
+              Target ({{ dialog.direction === 'download' ? 'Local Existing' : dialog.direction === 'upload' ? 'Remote Existing' : 'Destination Existing' }})
             </span>
             <div class="font-mono" :style="{ color: 'var(--color-text-main)' }">
               {{ formatBytes(dialog.destination.size) }}
@@ -89,7 +89,7 @@ const emit = defineEmits<{
           <button
             @click="emit('resolve', 'skip')"
             class="px-3 py-1.5 rounded-lg text-xs font-medium transition btn-theme-card cursor-pointer"
-            title="Skip downloading/uploading this file"
+            title="Skip transferring this file"
           >
             Skip
           </button>
