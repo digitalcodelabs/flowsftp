@@ -21,7 +21,7 @@ import {
   Search,
   Code2,
 } from 'lucide-vue-next'
-import { selectAll, undo, redo, undoDepth, redoDepth, indentSelection } from '@codemirror/commands'
+import { selectAll, undo, redo, undoDepth, redoDepth, indentSelection, insertTab, indentLess } from '@codemirror/commands'
 import { openSearchPanel } from '@codemirror/search'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore, isLightTheme } from '../stores/theme'
@@ -331,6 +331,13 @@ const setupVimExCommands = () => {
   }
 }
 
+// True when Vim is active but not in Insert mode (Tab should then be left to Vim).
+const isVimModeBlockingTab = (): boolean => {
+  if (!isVimMode.value || !editorView) return false
+  const cm = getCM(editorView)
+  return !cm?.state?.vim?.insertMode
+}
+
 // Create CodeMirror Editor
 const initEditor = (docContent: string) => {
   if (!editorContainerRef.value) return
@@ -368,6 +375,18 @@ const initEditor = (docContent: string) => {
             }
             return false
           },
+        },
+      ])
+    ),
+    // Tab inserts a tab at the cursor (or indents the selected lines); Shift-Tab outdents.
+    // basicSetup intentionally has no Tab binding, so without this Tab just moves focus away.
+    // In Vim, only Insert mode gets it so Normal-mode keys keep their Vim meaning.
+    Prec.high(
+      keymap.of([
+        {
+          key: 'Tab',
+          run: (view) => (isVimModeBlockingTab() ? false : insertTab(view)),
+          shift: (view) => (isVimModeBlockingTab() ? false : indentLess(view)),
         },
       ])
     ),
