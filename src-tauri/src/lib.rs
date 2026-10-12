@@ -35,7 +35,8 @@ use commands::sftp::{
     sftp_extract_remote_archive, sftp_compress_remote_archive,
     sftp_extract_local_archive, sftp_compress_local_archive,
     sftp_crawl_local_paths, sftp_crawl_remote_paths, sftp_batch_create_remote_dirs, exit_app,
-    sftp_move_remote_paths, sftp_move_local_paths, sftp_duplicate_remote_path, sftp_duplicate_local_path,
+    sftp_move_remote_paths, sftp_move_local_paths, sftp_copy_remote_paths, sftp_transfer_remote_to_remote,
+    sftp_duplicate_remote_path, sftp_duplicate_local_path,
     sftp_create_remote_symlink, sftp_create_local_symlink, sftp_get_remote_dir_size, sftp_get_local_dir_size,
     sftp_calculate_remote_checksum, sftp_calculate_local_checksum,
 };
@@ -110,6 +111,8 @@ pub fn run() {
             sftp_crawl_remote_paths,
             sftp_move_remote_paths,
             sftp_move_local_paths,
+            sftp_copy_remote_paths,
+            sftp_transfer_remote_to_remote,
             sftp_duplicate_remote_path,
             sftp_duplicate_local_path,
             sftp_create_remote_symlink,

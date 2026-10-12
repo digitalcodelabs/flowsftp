@@ -76,9 +76,17 @@ const dirWatcherRemoteDir = ref('')
 const showSearchModal = ref(false)
 const searchInitialDir = ref('/')
 
+const leftPaneSource = ref<'local' | string>('local')
 const localPaneComp = ref<InstanceType<typeof SftpLocalPane> | null>(null)
+const leftRemotePaneComp = ref<InstanceType<typeof SftpRemotePane> | null>(null)
 const remotePaneComp = ref<InstanceType<typeof SftpRemotePane> | null>(null)
-const localPaneRef = computed<HTMLElement | null>(() => localPaneComp.value?.rootEl ?? null)
+const localPaneRef = computed<HTMLElement | null>(() => {
+  if (leftPaneSource.value === 'local') {
+    return localPaneComp.value?.rootEl ?? null
+  } else {
+    return leftRemotePaneComp.value?.rootEl ?? null
+  }
+})
 const remotePaneRef = computed<HTMLElement | null>(() => remotePaneComp.value?.rootEl ?? null)
 const splitContainerRef = ref<HTMLElement | null>(null)
 const leftPanePercent = ref(50)
@@ -263,10 +271,15 @@ const handleCut = (target: 'local' | 'remote', files: (LocalFileEntry | SftpFile
   sftpStore.triggerTransferToast(`Cut ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
 }
 
-const handlePaste = async (target: 'local' | 'remote', targetDir?: string) => {
+const handlePaste = async (target?: 'local' | 'remote', targetDir?: string) => {
   if (!sftpStore.clipboard) return
   try {
-    await sftpStore.pasteFromClipboard(target, targetDir)
+    let effectiveTarget: 'local' | 'remote' = target || (activePane.value === 'local' ? (leftPaneSource.value === 'local' ? 'local' : 'remote') : 'remote')
+    let destSessionId: string | undefined = undefined
+    if (effectiveTarget === 'remote') {
+      destSessionId = (activePane.value === 'local' && leftPaneSource.value !== 'local') ? leftPaneSource.value : (props.sessionId || undefined)
+    }
+    await sftpStore.pasteFromClipboard(effectiveTarget, targetDir, destSessionId)
     sftpStore.triggerTransferToast('Pasted items successfully')
   } catch (err: any) {
     showArchiveToast(`Paste failed: ${err?.message || err}`, true)
@@ -548,9 +561,12 @@ const handleRemoteRefresh = async () => {
 const handleRefresh = async (target?: 'local' | 'remote' | 'both') => {
   const t = target || (activePane.value === 'remote' ? 'remote' : 'local')
   if (t === 'both') {
-    const promises: Promise<any>[] = [
-      sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }),
-    ]
+    const promises: Promise<any>[] = []
+    if (leftPaneSource.value === 'local') {
+      promises.push(sftpStore.fetchLocalDir(sftpStore.localPath, { force: true }))
+    } else {
+      promises.push(sftpStore.fetchRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true }))
+    }
     if (props.sessionId) {
       promises.push(handleRemoteRefresh())
     }
@@ -565,7 +581,11 @@ const handleRefresh = async (target?: 'local' | 'remote' | 'both') => {
       await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
     }
   } else {
-    await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
+    if (leftPaneSource.value !== 'local') {
+      await sftpStore.fetchRemoteDir(leftPaneSource.value, leftRemotePath.value, { force: true })
+    } else {
+      await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
+    }
   }
 }
 
@@ -710,6 +730,242 @@ const filteredRemoteFiles = computed(() => {
   }
   return sortFileList(list, remoteSortBy.value, remoteSortOrder.value)
 })
+
+// -------------------------------------------------------------
+// Left Remote Pane State & Logic (Dual-Remote Browsing)
+// -------------------------------------------------------------
+const handleLeftSwitchSource = async (newSource: 'local' | string) => {
+  leftPaneSource.value = newSource
+  if (newSource !== 'local') {
+    if (!sftpStore.sessionRemoteFiles[newSource] || !sftpStore.sessionRemotePaths[newSource]) {
+      await sftpStore.fetchRemoteDir(newSource, '.')
+    }
+  }
+}
+
+const handleRightSwitchSource = async (newSessionId: string) => {
+  if (newSessionId !== props.sessionId) {
+    sshStore.setActiveSession(newSessionId)
+  }
+}
+
+watch(
+  () => sshStore.sessions,
+  (sessions) => {
+    if (leftPaneSource.value !== 'local') {
+      const exists = sessions.some((s) => s.sessionId === leftPaneSource.value)
+      if (!exists) {
+        leftPaneSource.value = 'local'
+      }
+    }
+  },
+  { deep: true }
+)
+
+const showLeftRemoteFilter = ref(false)
+const leftRemoteSearchQuery = ref('')
+const leftRemoteSortBy = ref<FileSortField>(getStoredSortBy('flowsftp_left_remote_sort_by', 'name'))
+const leftRemoteSortOrder = ref<FileSortOrder>(getStoredSortOrder('flowsftp_left_remote_sort_order', 'asc'))
+
+const handleLeftRemoteSort = (field: FileSortField) => {
+  if (leftRemoteSortBy.value === field) {
+    leftRemoteSortOrder.value = leftRemoteSortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    leftRemoteSortBy.value = field
+    leftRemoteSortOrder.value = 'asc'
+  }
+}
+
+const leftRemotePath = computed(() => {
+  if (leftPaneSource.value === 'local') return ''
+  return sftpStore.sessionRemotePaths[leftPaneSource.value] || '/'
+})
+
+const leftRemoteRawFiles = computed<SftpFileEntry[]>(() => {
+  if (leftPaneSource.value === 'local') return []
+  return sftpStore.sessionRemoteFiles[leftPaneSource.value] || []
+})
+
+const filteredLeftRemoteFiles = computed<SftpFileEntry[]>(() => {
+  let list = leftRemoteRawFiles.value
+  if (!showHiddenFiles.value) {
+    list = list.filter((f) => !f.name.startsWith('.'))
+  }
+  const q = leftRemoteSearchQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((f) => f.name.toLowerCase().includes(q))
+  }
+  return sortFileList(list, leftRemoteSortBy.value, leftRemoteSortOrder.value)
+})
+
+const selectedLeftRemotePaths = ref<Set<string>>(new Set())
+const isLeftRemoteParentSelected = ref(false)
+const lastLeftRemoteClickedIndex = ref<number | null>(null)
+
+const selectedLeftRemoteFiles = computed<SftpFileEntry[]>(() => {
+  return filteredLeftRemoteFiles.value.filter((f) => selectedLeftRemotePaths.value.has(f.path))
+})
+
+const leftRemoteParentPath = computed(() => {
+  if (leftPaneSource.value === 'local') return null
+  return getRemoteParentPath(leftRemotePath.value)
+})
+const canNavigateLeftRemoteUp = computed(() => leftPaneSource.value !== 'local' && !!leftRemoteParentPath.value)
+
+const leftRemoteHistory = ref<string[]>([])
+const leftRemoteHistoryIndex = ref<number>(-1)
+let isNavigatingLeftRemoteHistory = false
+
+const canNavigateLeftRemoteBack = computed(
+  () => leftPaneSource.value !== 'local' && leftRemoteHistoryIndex.value > 0
+)
+const canNavigateLeftRemoteForward = computed(
+  () =>
+    leftPaneSource.value !== 'local' &&
+    leftRemoteHistoryIndex.value >= 0 &&
+    leftRemoteHistoryIndex.value < leftRemoteHistory.value.length - 1
+)
+
+watch(
+  () => leftRemotePath.value,
+  (newPath) => {
+    if (!newPath || leftPaneSource.value === 'local') return
+    if (isNavigatingLeftRemoteHistory) {
+      isNavigatingLeftRemoteHistory = false
+      return
+    }
+    if (leftRemoteHistory.value.length === 0) {
+      leftRemoteHistory.value = [newPath]
+      leftRemoteHistoryIndex.value = 0
+    } else if (leftRemoteHistory.value[leftRemoteHistoryIndex.value] !== newPath) {
+      leftRemoteHistory.value = leftRemoteHistory.value.slice(0, leftRemoteHistoryIndex.value + 1)
+      leftRemoteHistory.value.push(newPath)
+      leftRemoteHistoryIndex.value = leftRemoteHistory.value.length - 1
+    }
+  },
+  { immediate: true }
+)
+
+const navigateLeftRemoteUp = () => {
+  if (leftPaneSource.value === 'local' || !leftRemoteParentPath.value) return
+  sftpStore.fetchRemoteDir(leftPaneSource.value, leftRemoteParentPath.value)
+}
+
+const navigateLeftRemoteBack = () => {
+  if (!canNavigateLeftRemoteBack.value || leftPaneSource.value === 'local') return
+  isNavigatingLeftRemoteHistory = true
+  leftRemoteHistoryIndex.value--
+  const target = leftRemoteHistory.value[leftRemoteHistoryIndex.value]
+  if (target) {
+    sftpStore.fetchRemoteDir(leftPaneSource.value, target)
+  }
+}
+
+const navigateLeftRemoteForward = () => {
+  if (!canNavigateLeftRemoteForward.value || leftPaneSource.value === 'local') return
+  isNavigatingLeftRemoteHistory = true
+  leftRemoteHistoryIndex.value++
+  const target = leftRemoteHistory.value[leftRemoteHistoryIndex.value]
+  if (target) {
+    sftpStore.fetchRemoteDir(leftPaneSource.value, target)
+  }
+}
+
+const handleLeftRemoteRowClick = (event: MouseEvent, file: SftpFileEntry, index: number) => {
+  closeContextMenu()
+  activePane.value = 'local'
+  isLeftRemoteParentSelected.value = false
+  if (event.shiftKey && lastLeftRemoteClickedIndex.value !== null) {
+    const start = Math.min(lastLeftRemoteClickedIndex.value, index)
+    const end = Math.max(lastLeftRemoteClickedIndex.value, index)
+    const newSelection = event.ctrlKey || event.metaKey ? new Set(selectedLeftRemotePaths.value) : new Set<string>()
+    for (let i = start; i <= end; i++) {
+      if (filteredLeftRemoteFiles.value[i]) {
+        newSelection.add(filteredLeftRemoteFiles.value[i].path)
+      }
+    }
+    selectedLeftRemotePaths.value = newSelection
+  } else if (event.ctrlKey || event.metaKey) {
+    const newSelection = new Set(selectedLeftRemotePaths.value)
+    if (newSelection.has(file.path)) {
+      newSelection.delete(file.path)
+    } else {
+      newSelection.add(file.path)
+    }
+    selectedLeftRemotePaths.value = newSelection
+    lastLeftRemoteClickedIndex.value = index
+  } else {
+    selectedLeftRemotePaths.value = new Set([file.path])
+    lastLeftRemoteClickedIndex.value = index
+  }
+}
+
+const handleLeftRemoteRowDoubleClick = (entry: SftpFileEntry) => {
+  if (entry.is_dir && leftPaneSource.value !== 'local') {
+    sftpStore.fetchRemoteDir(leftPaneSource.value, entry.path)
+  } else if (!entry.is_dir) {
+    openEditor('remote', entry)
+  }
+}
+
+const handleLeftRemoteEmptyClick = (_event?: MouseEvent) => {
+  closeContextMenu()
+  activePane.value = 'local'
+  selectedLeftRemotePaths.value = new Set()
+  lastLeftRemoteClickedIndex.value = null
+  isLeftRemoteParentSelected.value = false
+}
+
+const handleLeftRemoteParentClick = () => {
+  closeContextMenu()
+  activePane.value = 'local'
+  selectedLeftRemotePaths.value = new Set()
+  isLeftRemoteParentSelected.value = true
+}
+
+const openLeftRemoteContextMenu = (e: MouseEvent, file?: SftpFileEntry) => {
+  e.preventDefault()
+  if (file) {
+    if (!selectedLeftRemotePaths.value.has(file.path)) {
+      selectedLeftRemotePaths.value = new Set([file.path])
+      lastLeftRemoteClickedIndex.value = filteredLeftRemoteFiles.value.findIndex((f) => f.path === file.path)
+    }
+  } else {
+    selectedLeftRemotePaths.value = new Set()
+    lastLeftRemoteClickedIndex.value = null
+  }
+  const x = Math.max(10, Math.min(e.clientX, window.innerWidth - 275))
+  const y = Math.max(45, Math.min(e.clientY, window.innerHeight - 420))
+  contextMenu.value = {
+    show: true,
+    x,
+    y,
+    pane: 'remote',
+    targetItem: file || null,
+  }
+}
+
+const handleLeftRemoteBatchTransfer = async (files?: SftpFileEntry[]) => {
+  if (leftPaneSource.value === 'local' || !props.sessionId) return
+  const targetFiles = (Array.isArray(files) && files.length > 0) ? files : selectedLeftRemoteFiles.value
+  if (targetFiles.length === 0) return
+  dismissTransferToasts()
+  showTransferDrawer.value = true
+  transferTab.value = 'active'
+  await sftpStore.startBatchRemoteToRemoteTransfer(
+    leftPaneSource.value,
+    props.sessionId,
+    targetFiles,
+    sftpStore.remotePath
+  )
+}
+
+const handleBatchDeleteLeftRemote = async (files?: SftpFileEntry[]) => {
+  if (leftPaneSource.value === 'local') return
+  const targetFiles = (Array.isArray(files) && files.length > 0) ? files : selectedLeftRemoteFiles.value
+  if (targetFiles.length === 0) return
+  openDeleteConfirm('remote', targetFiles)
+}
 
 // -------------------------------------------------------------
 // Quick Look / Instant Preview Computed & Navigation
@@ -1765,9 +2021,14 @@ const handleBatchDownload = async (files?: SftpFileEntry[], destinationDir?: str
   showTransferDrawer.value = true
   transferTab.value = 'active'
   try {
-    await sftpStore.startBatchDownload(props.sessionId, targetFiles, destinationDir)
+    if (leftPaneSource.value !== 'local') {
+      const dest = destinationDir || leftRemotePath.value
+      await sftpStore.startBatchRemoteToRemoteTransfer(props.sessionId, leftPaneSource.value, targetFiles, dest)
+    } else {
+      await sftpStore.startBatchDownload(props.sessionId, targetFiles, destinationDir)
+    }
   } catch (err) {
-    console.error('Batch download failed:', err)
+    console.error('Batch download/transfer failed:', err)
   }
 }
 
@@ -1792,8 +2053,18 @@ const handleDownload = async (remoteFile: SftpFileEntry) => {
 const handleTransferCopy = async () => {
   if (!props.sessionId) return
   if (activePane.value === 'local') {
-    if (selectedLocalFiles.value.length === 0) return
-    await handleBatchUpload(selectedLocalFiles.value)
+    if (leftPaneSource.value === 'local') {
+      if (selectedLocalFiles.value.length === 0) return
+      await handleBatchUpload(selectedLocalFiles.value)
+    } else {
+      if (selectedLeftRemoteFiles.value.length === 0) return
+      await sftpStore.startBatchRemoteToRemoteTransfer(
+        leftPaneSource.value,
+        props.sessionId,
+        selectedLeftRemoteFiles.value,
+        sftpStore.remotePath
+      )
+    }
   } else {
     if (selectedRemoteFiles.value.length === 0) return
     await handleBatchDownload(selectedRemoteFiles.value)
@@ -1804,10 +2075,22 @@ const handleTransferCopy = async () => {
 const handleTransferMove = async () => {
   if (!props.sessionId) return
   if (activePane.value === 'local') {
-    if (selectedLocalFiles.value.length === 0) return
-    const filesToMove = [...selectedLocalFiles.value]
-    await handleBatchUpload(filesToMove)
-    openDeleteConfirm('local', filesToMove)
+    if (leftPaneSource.value === 'local') {
+      if (selectedLocalFiles.value.length === 0) return
+      const filesToMove = [...selectedLocalFiles.value]
+      await handleBatchUpload(filesToMove)
+      openDeleteConfirm('local', filesToMove)
+    } else {
+      if (selectedLeftRemoteFiles.value.length === 0) return
+      const filesToMove = [...selectedLeftRemoteFiles.value]
+      await sftpStore.startBatchRemoteToRemoteTransfer(
+        leftPaneSource.value,
+        props.sessionId,
+        filesToMove,
+        sftpStore.remotePath
+      )
+      openDeleteConfirm('remote', filesToMove)
+    }
   } else {
     if (selectedRemoteFiles.value.length === 0) return
     const filesToMove = [...selectedRemoteFiles.value]
@@ -2798,12 +3081,15 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       ref="splitContainerRef"
       class="flex-1 flex flex-row overflow-hidden relative"
     >
-      <!-- LEFT PANE: Local File System -->
+      <!-- LEFT PANE: Local File System OR Remote Session (Dual-Remote Mode) -->
       <SftpLocalPane
+        v-if="leftPaneSource === 'local'"
         ref="localPaneComp"
         :active="activePane === 'local'"
         :width-percent="leftPanePercent"
         :session-id="props.sessionId"
+        :allow-switch-source="true"
+        :current-source="'local'"
         :is-comparing="isComparing"
         :hide-identical-files="hideIdenticalFiles"
         :comparison-result="comparisonResult"
@@ -2827,6 +3113,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :current-path="sftpStore.localPath"
         :get-row-style="getRowStyle"
         :get-git-status="getGitStatus"
+        @switch-source="handleLeftSwitchSource"
         @select-pane="activePane = 'local'"
         @sort="handleLocalSort"
         @toggle-comparison="toggleComparison"
@@ -2866,6 +3153,79 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @toggle-bookmark="toggleLocalBookmark"
       />
 
+      <SftpRemotePane
+        v-else
+        ref="leftRemotePaneComp"
+        :active="activePane === 'local'"
+        :width-percent="leftPanePercent"
+        :session-id="leftPaneSource"
+        :is-left-pane="true"
+        :allow-switch-source="true"
+        :current-source="leftPaneSource"
+        :is-comparing="isComparing"
+        :hide-identical-files="hideIdenticalFiles"
+        :comparison-result="comparisonResult"
+        v-model:show-hidden-files="showHiddenFiles"
+        v-model:search-query="leftRemoteSearchQuery"
+        v-model:show-filter="showLeftRemoteFilter"
+        :selected-paths="selectedLeftRemotePaths"
+        :selected-files="selectedLeftRemoteFiles"
+        :filtered-files="filteredLeftRemoteFiles"
+        :sort-by="leftRemoteSortBy"
+        :sort-order="leftRemoteSortOrder"
+        :active-drop-folder="activeDropFolder"
+        :can-navigate-up="canNavigateLeftRemoteUp"
+        :can-navigate-back="canNavigateLeftRemoteBack"
+        :can-navigate-forward="canNavigateLeftRemoteForward"
+        :parent-path="leftRemoteParentPath"
+        :is-parent-selected="isLeftRemoteParentSelected"
+        :row-padding-class="rowPaddingClass"
+        :cell-padding-class="cellPaddingClass"
+        :remote-bookmarks="remoteBookmarks"
+        :current-path="leftRemotePath"
+        :get-row-style="getRowStyle"
+        :get-git-status="getGitStatus"
+        @switch-source="handleLeftSwitchSource"
+        @select-pane="activePane = 'local'"
+        @sort="handleLeftRemoteSort"
+        @toggle-comparison="toggleComparison"
+        @toggle-filter="toggleFilter('local')"
+        @filter-esc="handleFilterEsc('local')"
+        @focus-first-item="focusFirstItem('local')"
+        @navigate-up="navigateLeftRemoteUp"
+        @navigate-back="navigateLeftRemoteBack"
+        @navigate-forward="navigateLeftRemoteForward"
+        @navigate-to="(path) => leftPaneSource !== 'local' && sftpStore.fetchRemoteDir(leftPaneSource, path)"
+        @copy-path="handleCopyPath"
+        @refresh="() => handleRefresh('local')"
+        @reconnect="performAutoReconnect"
+        @new-file="openNewFile('remote')"
+        @new-folder="openNewFolder('remote')"
+        @open-search="() => openSearchModal()"
+        @permissions="(file) => openPermissions(file)"
+        @batch-download="(files) => handleLeftRemoteBatchTransfer(files)"
+        @batch-delete="(files) => handleBatchDeleteLeftRemote(files)"
+        @row-click="handleLeftRemoteRowClick"
+        @row-dblclick="handleLeftRemoteRowDoubleClick"
+        @empty-click="handleLeftRemoteEmptyClick"
+        @parent-click="handleLeftRemoteParentClick"
+        @close-context-menu="closeContextMenu"
+        @contextmenu="openLeftRemoteContextMenu"
+        @dragstart="(ev, file) => handleRemoteDragStart(ev, file, leftPaneSource)"
+        @dragend="handleRemoteDragEnd"
+        @dragover="handleRemoteDragOver"
+        @dragenter="handleRemoteDragEnter"
+        @dragleave="handleRemoteDragLeave"
+        @drop="(ev) => handleRemoteDrop(ev, leftPaneSource)"
+        @folder-dragover="(ev, file) => handleFolderDragOver(ev, 'remote', file)"
+        @folder-dragleave="(file) => handleFolderDragLeave('remote', file)"
+        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file, leftPaneSource)"
+        @parent-folder-dragover="(ev) => handleParentFolderDragOver(ev, 'remote')"
+        @parent-folder-dragleave="handleParentFolderDragLeave('remote')"
+        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote', leftPaneSource)"
+        @toggle-bookmark="toggleRemoteBookmark"
+      />
+
       <!-- Vertical Splitter Handle (Horizontal Resize between Local & Remote) -->
       <div
         @mousedown.prevent="startHorizontalResize"
@@ -2887,6 +3247,9 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :active="activePane === 'remote'"
         :width-percent="100 - leftPanePercent"
         :session-id="props.sessionId"
+        :allow-switch-source="sshStore.sessions.length > 1"
+        :current-source="props.sessionId || undefined"
+        :is-left-pane="false"
         :is-comparing="isComparing"
         :hide-identical-files="hideIdenticalFiles"
         :comparison-result="comparisonResult"
@@ -2910,6 +3273,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :current-path="sftpStore.remotePath"
         :get-row-style="getRowStyle"
         :get-git-status="getGitStatus"
+        @switch-source="handleRightSwitchSource"
         @select-pane="activePane = 'remote'"
         @sort="handleRemoteSort"
         @toggle-comparison="toggleComparison"
@@ -2935,19 +3299,18 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @parent-click="handleRemoteParentClick"
         @close-context-menu="closeContextMenu"
         @contextmenu="openRemoteContextMenu"
-        @dragstart="handleRemoteDragStart"
+        @dragstart="(ev, file) => handleRemoteDragStart(ev, file, props.sessionId || undefined)"
         @dragend="handleRemoteDragEnd"
         @dragover="handleRemoteDragOver"
         @dragenter="handleRemoteDragEnter"
         @dragleave="handleRemoteDragLeave"
-        @drop="handleRemoteDrop"
+        @drop="(ev) => handleRemoteDrop(ev, props.sessionId || undefined)"
         @folder-dragover="(ev, file) => handleFolderDragOver(ev, 'remote', file)"
         @folder-dragleave="(file) => handleFolderDragLeave('remote', file)"
-        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file)"
+        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file, props.sessionId || undefined)"
         @parent-folder-dragover="(ev) => handleParentFolderDragOver(ev, 'remote')"
         @parent-folder-dragleave="handleParentFolderDragLeave('remote')"
-        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote')"
-        @toggle-bookmark="toggleRemoteBookmark"
+        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote', props.sessionId || undefined)"
       />
     </div>
 

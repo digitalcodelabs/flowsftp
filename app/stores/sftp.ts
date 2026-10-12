@@ -1978,6 +1978,296 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
+  async function copyRemotePaths(sessionId: string, paths: string[], targetDir: string): Promise<void> {
+    const cleanTarget = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+    await invoke('sftp_copy_remote_paths', { sessionId, paths, targetDir: cleanTarget })
+    invalidateRemoteCache(sessionId, cleanTarget)
+    await fetchRemoteDir(sessionId, cleanTarget, { force: true })
+  }
+
+  interface RemoteToRemoteTask {
+    transferId: string
+    file: SftpFileEntry
+    targetDest: string
+    targetParent?: string
+  }
+
+  async function transferRemoteToRemote(
+    srcSessionId: string,
+    destSessionId: string,
+    srcFile: SftpFileEntry,
+    targetDestParent?: string,
+    options: { preEnqueuedTransferId?: string; exactDestPath?: string; skipRefresh?: boolean } = {}
+  ) {
+    if (srcFile.is_dir) {
+      return startBatchRemoteToRemoteTransfer(srcSessionId, destSessionId, [srcFile], targetDestParent)
+    }
+
+    if (activeTransfers.value.length === 0) {
+      await ensureTransferReady()
+    }
+
+    const baseDest = targetDestParent || sessionRemotePaths.value[destSessionId] || remotePath.value || '/'
+    const cleanDestDir = baseDest.replace(/\\/g, '/').replace(/\/+$/, '')
+    const targetDest = options.exactDestPath || (cleanDestDir === '' ? `/${srcFile.name}` : `${cleanDestDir}/${srcFile.name}`)
+    const transferId = options.preEnqueuedTransferId || `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+
+    if (!options.preEnqueuedTransferId) {
+      const item: TransferItem = {
+        transfer_id: transferId,
+        file_name: srcFile.name,
+        direction: 'upload',
+        bytes_transferred: 0,
+        total_bytes: srcFile.size,
+        speed_bytes_per_sec: 0,
+        is_complete: false,
+        local_path: srcFile.path,
+        remote_path: targetDest,
+        session_id: destSessionId,
+        server_url: getServerUrlForSession(destSessionId),
+        priority: 'Normal',
+        started_at: Date.now(),
+        status: 'queued',
+      }
+      transferMap.set(transferId, item)
+      activeTransfers.value = [item, ...activeTransfers.value]
+      scheduleProgressFlush()
+    }
+
+    let unlisten: (() => void) | null = null
+    try {
+      unlisten = await listen<TransferItem>(`sftp:progress:${transferId}`, (event) => {
+        const item = transferMap.get(transferId)
+        if (item) {
+          activeRunningIds.add(transferId)
+          item.status = 'transferring'
+          item.bytes_transferred = event.payload.bytes_transferred
+          item.total_bytes = event.payload.total_bytes || item.total_bytes
+          item.speed_bytes_per_sec = event.payload.speed_bytes_per_sec
+          if (event.payload.error) {
+            item.error = event.payload.error
+            item.status = 'failed'
+          }
+          scheduleProgressFlush()
+        }
+      })
+    } catch (listenErr) {
+      console.warn('Failed to attach remote-to-remote progress listener:', listenErr)
+    }
+
+    try {
+      const currentItem = transferMap.get(transferId)
+      if (currentItem) {
+        currentItem.status = 'transferring'
+        currentItem.started_at = Date.now()
+        activeRunningIds.add(transferId)
+        scheduleProgressFlush()
+      }
+
+      await invoke('sftp_transfer_remote_to_remote', {
+        srcSessionId,
+        destSessionId,
+        transferId,
+        srcPath: srcFile.path,
+        destPath: targetDest,
+        fileSize: srcFile.size || null,
+      })
+
+      completeTransferItem(transferId, srcFile.size)
+
+      if (!options.skipRefresh) {
+        invalidateRemoteCache(destSessionId, cleanDestDir)
+        await fetchRemoteDir(destSessionId, cleanDestDir, { force: true })
+      }
+    } catch (err: any) {
+      failTransferItem(transferId, err?.message || String(err))
+      throw err
+    } finally {
+      if (unlisten) {
+        unlisten()
+        unlisten = null
+      }
+    }
+  }
+
+  async function startBatchRemoteToRemoteTransfer(
+    srcSessionId: string,
+    destSessionId: string,
+    files: SftpFileEntry[],
+    destinationDir?: string
+  ) {
+    if (!files || files.length === 0) return
+    const targetDir = destinationDir || sessionRemotePaths.value[destSessionId] || remotePath.value || '/'
+
+    // If source session and destination session are identical, perform same-server remote copy
+    if (srcSessionId === destSessionId) {
+      const paths = files.map((f) => f.path)
+      await copyRemotePaths(srcSessionId, paths, targetDir)
+      triggerTransferToast(
+        `Copied ${files.length} item(s) to ${targetDir.split('/').pop() || targetDir}`,
+        'success'
+      )
+      return
+    }
+
+    await ensureTransferReady()
+
+    const taskQueue: RemoteToRemoteTask[] = []
+    const queuedIds = new Set<string>()
+    let isScanning = true
+    const waitingWorkers: (() => void)[] = []
+
+    function notifyWorkers() {
+      while (waitingWorkers.length > 0) {
+        const resolve = waitingWorkers.shift()
+        if (resolve) resolve()
+      }
+    }
+
+    activeWorkersNotifiers.add(notifyWorkers)
+
+    function onTaskFound(task: RemoteToRemoteTask) {
+      if (queuedIds.has(task.transferId)) return
+      queuedIds.add(task.transferId)
+      taskQueue.push(task)
+
+      const newItem: TransferItem = {
+        transfer_id: task.transferId,
+        file_name: task.file.name,
+        direction: 'upload',
+        bytes_transferred: 0,
+        total_bytes: task.file.size || 0,
+        speed_bytes_per_sec: 0,
+        is_complete: false,
+        local_path: task.file.path,
+        remote_path: task.targetDest,
+        session_id: destSessionId,
+        server_url: getServerUrlForSession(destSessionId),
+        priority: 'Normal',
+        started_at: Date.now(),
+        status: 'queued',
+      }
+      scheduleNewTransfersFlush(newItem)
+      notifyWorkers()
+    }
+
+    function finishScanning() {
+      isScanning = false
+      flushNewTransfersNow()
+      notifyWorkers()
+    }
+
+    const settingsStore = useSettingsStore()
+    const ignoreFilterActive = settingsStore.enableTransferIgnoreFilter
+    const ignorePatterns = ignoreFilterActive ? settingsStore.transferIgnorePatterns : []
+
+    // 1. Root level files
+    for (const f of files) {
+      if (!f.is_dir) {
+        const cleanDestDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
+        const targetDest = cleanDestDir === '' ? `/${f.name}` : `${cleanDestDir}/${f.name}`
+        const transferId = `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
+        onTaskFound({
+          transferId,
+          file: f,
+          targetDest,
+          targetParent: targetDir,
+        })
+      }
+    }
+
+    // 2. Directory crawling
+    const dirItems = files.filter((f) => f.is_dir)
+    const scanPromise = (async () => {
+      try {
+        if (dirItems.length > 0) {
+          try {
+            const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+              sessionId: srcSessionId,
+              paths: dirItems.map((d) => d.path),
+              targetLocalDir: targetDir,
+              ignorePatterns,
+            })
+
+            for (let i = 0; i < crawled.length; i++) {
+              if (isCancellingAll.value) break
+              const c = crawled[i]
+              const transferId = `r2r-${Date.now()}-${Math.random().toString(36).substring(2, 7)}-${taskQueue.length}`
+              const fileEntry: SftpFileEntry = {
+                name: c.file_name,
+                path: c.remote_path,
+                is_dir: false,
+                is_symlink: false,
+                size: c.size,
+                modified: 0,
+                permissions: 0o644,
+              }
+
+              onTaskFound({
+                transferId,
+                file: fileEntry,
+                targetDest: c.local_path,
+                targetParent: targetDir,
+              })
+            }
+          } catch (crawlErr) {
+            console.error('Remote-to-remote crawl error:', crawlErr)
+          }
+        }
+      } catch (scanErr) {
+        console.error('Remote crawl error:', scanErr)
+      } finally {
+        finishScanning()
+      }
+    })()
+
+    // 3. Worker implementation
+    async function worker(): Promise<void> {
+      while (true) {
+        if (isCancellingAll.value) break
+        await waitIfQueuePaused()
+        if (isCancellingAll.value) break
+        if (taskQueue.length > 0) {
+          const task = taskQueue.shift()!
+          try {
+            await transferRemoteToRemote(srcSessionId, destSessionId, task.file, task.targetParent, {
+              skipRefresh: true,
+              preEnqueuedTransferId: task.transferId,
+              exactDestPath: task.targetDest,
+            })
+          } catch (err) {
+            console.error('Remote-to-remote worker error:', err)
+          }
+        } else if (!isScanning) {
+          break
+        } else {
+          await new Promise<void>((resolve) => {
+            waitingWorkers.push(resolve)
+          })
+        }
+      }
+    }
+
+    const concurrency = Math.max(1, Math.min(maxSimultaneousTransfers.value || 3, 10))
+    const workerPromises = Array.from({ length: concurrency }, () => worker())
+
+    try {
+      await Promise.all([scanPromise, ...workerPromises])
+    } finally {
+      flushNewTransfersNow()
+      activeWorkersNotifiers.delete(notifyWorkers)
+    }
+
+    // Refresh destination directory ONCE at the end of the batch
+    invalidateRemoteCache(destSessionId, targetDir)
+    await fetchRemoteDir(destSessionId, targetDir, { force: true })
+    triggerTransferToast(
+      `Finished remote-to-remote transfer of ${files.length} item(s)`,
+      'success'
+    )
+  }
+
+
   function clearCompletedTransfers() {
     for (const t of completedTransfers.value) {
       transferMap.delete(t.transfer_id)
@@ -2427,10 +2717,11 @@ export const useSftpStore = defineStore('sftp', () => {
     }
   }
 
-  async function pasteFromClipboard(targetPane: 'local' | 'remote', targetDir?: string) {
+  async function pasteFromClipboard(targetPane: 'local' | 'remote', targetDir?: string, targetSessionId?: string) {
     if (!clipboard.value || clipboard.value.files.length === 0) return
     const clip = clipboard.value
-    const dest = targetDir || (targetPane === 'local' ? localPath.value : remotePath.value)
+    const destSessionId = targetSessionId || currentSessionId.value
+    const dest = targetDir || (targetPane === 'local' ? localPath.value : (destSessionId ? sessionRemotePaths.value[destSessionId] || remotePath.value : remotePath.value))
     if (!dest) return
 
     try {
@@ -2443,26 +2734,43 @@ export const useSftpStore = defineStore('sftp', () => {
           await invoke('sftp_copy_local_paths', { paths, targetDir: dest })
         }
         await fetchLocalDir(localPath.value, { force: true })
-      } else if (clip.sourcePane === 'remote' && targetPane === 'remote' && currentSessionId.value) {
-        const paths = clip.files.map((f) => f.path)
-        if (clip.mode === 'cut') {
-          await invoke('sftp_move_remote_paths', { sessionId: currentSessionId.value, paths, targetDir: dest })
-          clipboard.value = null
+      } else if (clip.sourcePane === 'remote' && targetPane === 'remote' && destSessionId) {
+        const srcSessionId = clip.sessionId || destSessionId
+        if (srcSessionId === destSessionId) {
+          const paths = clip.files.map((f) => f.path)
+          if (clip.mode === 'cut') {
+            await invoke('sftp_move_remote_paths', { sessionId: destSessionId, paths, targetDir: dest })
+            clipboard.value = null
+          } else {
+            await copyRemotePaths(destSessionId, paths, dest)
+          }
+          await fetchRemoteDir(destSessionId, dest, { force: true })
         } else {
-          for (const path of paths) {
-            await invoke('sftp_duplicate_remote_path', { sessionId: currentSessionId.value, path, newName: null })
+          // Cross-session remote transfer!
+          await startBatchRemoteToRemoteTransfer(srcSessionId, destSessionId, clip.files as SftpFileEntry[], dest)
+          if (clip.mode === 'cut') {
+            for (const f of clip.files) {
+              try {
+                await deleteRemoteItem(srcSessionId, f as SftpFileEntry)
+              } catch (delErr) {
+                console.warn('Failed to delete source file after cut transfer:', delErr)
+              }
+            }
+            clipboard.value = null
           }
         }
-        await fetchRemoteDir(currentSessionId.value, remotePath.value, { force: true })
-      } else if (clip.sourcePane === 'local' && targetPane === 'remote' && currentSessionId.value) {
-        await startBatchUpload(clip.files as LocalFileEntry[], dest)
+      } else if (clip.sourcePane === 'local' && targetPane === 'remote' && destSessionId) {
+        await startBatchUpload(destSessionId, clip.files as LocalFileEntry[], dest)
         if (clip.mode === 'cut') {
           clipboard.value = null
         }
-      } else if (clip.sourcePane === 'remote' && targetPane === 'local' && currentSessionId.value) {
-        await startBatchDownload(clip.files as SftpFileEntry[], dest)
-        if (clip.mode === 'cut') {
-          clipboard.value = null
+      } else if (clip.sourcePane === 'remote' && targetPane === 'local') {
+        const srcSessionId = clip.sessionId || currentSessionId.value
+        if (srcSessionId) {
+          await startBatchDownload(srcSessionId, clip.files as SftpFileEntry[], dest)
+          if (clip.mode === 'cut') {
+            clipboard.value = null
+          }
         }
       }
     } catch (err) {
@@ -2565,6 +2873,11 @@ export const useSftpStore = defineStore('sftp', () => {
     startUpload,
     startBatchDownload,
     startBatchUpload,
+    copyRemotePaths,
+    transferRemoteToRemote,
+    startBatchRemoteToRemoteTransfer,
+    sessionRemotePaths,
+    sessionRemoteFiles,
     invalidateRemoteCache,
     invalidateLocalCache,
     clearAllCache,

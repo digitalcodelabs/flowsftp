@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Folder,
@@ -15,9 +15,13 @@ import {
   ChevronRight,
   ArrowUp,
   ArrowDown,
+  Monitor,
+  Globe,
+  Check,
 } from 'lucide-vue-next'
 import { useSftpStore, type LocalFileEntry } from '../../../stores/sftp'
 import { useSettingsStore } from '../../../stores/settings'
+import { useSshStore } from '../../../stores/ssh'
 import FileIcon from '../../FileIcon.vue'
 import CatppuccinIcon from '../../CatppuccinIcon.vue'
 import SftpBreadcrumbBar from './SftpBreadcrumbBar.vue'
@@ -53,6 +57,8 @@ const props = defineProps<{
   currentPath: string
   getRowStyle: (isLocal: boolean, path: string, file: LocalFileEntry) => Record<string, any>
   getGitStatus: (isLocal: boolean, file: LocalFileEntry) => string | null
+  allowSwitchSource?: boolean
+  currentSource?: string
 }>()
 
 const emit = defineEmits<{
@@ -96,10 +102,39 @@ const emit = defineEmits<{
   (e: 'parent-folder-dragleave'): void
   (e: 'parent-folder-drop', event: DragEvent): void
   (e: 'toggle-bookmark', path?: string): void
+  (e: 'switch-source', source: 'local' | string): void
 }>()
 
 const sftpStore = useSftpStore()
 const settingsStore = useSettingsStore()
+const sshStore = useSshStore()
+
+const showSourceDropdown = ref(false)
+const sourceDropdownRef = ref<HTMLElement | null>(null)
+
+const toggleSourceDropdown = () => {
+  if (!props.allowSwitchSource) return
+  showSourceDropdown.value = !showSourceDropdown.value
+}
+
+const handleSelectSource = (src: 'local' | string) => {
+  showSourceDropdown.value = false
+  emit('switch-source', src)
+}
+
+const handleDocumentClick = (e: MouseEvent) => {
+  if (sourceDropdownRef.value && !sourceDropdownRef.value.contains(e.target as Node)) {
+    showSourceDropdown.value = false
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('click', handleDocumentClick)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', handleDocumentClick)
+})
 
 const handleContainerClick = (e: MouseEvent) => {
   const target = e.target as HTMLElement | null
@@ -209,12 +244,85 @@ defineExpose({
           :style="{ backgroundColor: 'var(--color-accent)' }"
           title="Active navigation pane"
         />
-        <span
-          class="text-xs font-semibold transition-colors duration-150"
-          :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }"
-        >
-          Local Files
-        </span>
+        <!-- Source Switcher Dropdown Button -->
+        <div class="relative inline-block text-left" ref="sourceDropdownRef">
+          <button
+            @click.stop="toggleSourceDropdown"
+            class="flex items-center gap-1.5 px-1.5 py-0.5 rounded transition hover:bg-zinc-500/10 focus:outline-none group select-none"
+            :class="{ 'cursor-pointer': allowSwitchSource }"
+            :title="allowSwitchSource ? 'Switch pane source (Local Files / Remote Sessions)' : ''"
+          >
+            <Monitor class="w-3.5 h-3.5 opacity-80" :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }" />
+            <span
+              class="text-xs font-semibold transition-colors duration-150"
+              :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }"
+            >
+              Local Files
+            </span>
+            <ChevronDown
+              v-if="allowSwitchSource && sshStore.sessions.length > 0"
+              class="w-3 h-3 transition-transform duration-200 opacity-60 group-hover:opacity-100"
+              :class="{ 'rotate-180': showSourceDropdown }"
+            />
+          </button>
+
+          <!-- Dropdown Menu -->
+          <div
+            v-if="showSourceDropdown"
+            class="absolute left-0 mt-1 w-64 rounded-lg shadow-xl border py-1.5 z-50 text-xs backdrop-blur-md"
+            :style="{
+              backgroundColor: 'var(--color-bg-pane)',
+              borderColor: 'var(--color-border)',
+              color: 'var(--color-text-main)'
+            }"
+            @click.stop
+          >
+            <div class="px-2.5 py-1 text-[10px] font-bold tracking-wider uppercase opacity-50">
+              Select Pane Source
+            </div>
+
+            <!-- Option 1: Local Files -->
+            <button
+              @click="handleSelectSource('local')"
+              class="w-full text-left px-3 py-1.5 flex items-center justify-between transition hover:bg-sky-500/15"
+              :class="{ 'font-semibold text-sky-500': (!currentSource || currentSource === 'local') }"
+            >
+              <div class="flex items-center gap-2">
+                <Monitor class="w-3.5 h-3.5 text-emerald-400" />
+                <span>Local Files</span>
+              </div>
+              <Check v-if="!currentSource || currentSource === 'local'" class="w-3.5 h-3.5 text-sky-500" />
+            </button>
+
+            <!-- Remote Sessions -->
+            <template v-if="sshStore.sessions.length > 0">
+              <div
+                class="mt-1 pt-1 border-t px-2.5 py-1 text-[10px] font-bold tracking-wider uppercase opacity-50"
+                :style="{ borderColor: 'var(--color-border)' }"
+              >
+                Remote Sessions
+              </div>
+
+              <button
+                v-for="sess in sshStore.sessions"
+                :key="sess.sessionId"
+                @click="handleSelectSource(sess.sessionId)"
+                class="w-full text-left px-3 py-1.5 flex items-center justify-between transition hover:bg-sky-500/15"
+                :class="{ 'font-semibold text-sky-500': currentSource === sess.sessionId }"
+              >
+                <div class="flex items-center gap-2 truncate">
+                  <Globe class="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                  <span class="truncate">
+                    {{ sess.username }}@{{ sess.host }}
+                    <span class="text-[10px] opacity-60">({{ (sess.protocol || 'sftp').toUpperCase() }})</span>
+                  </span>
+                </div>
+                <Check v-if="currentSource === sess.sessionId" class="w-3.5 h-3.5 text-sky-500 shrink-0" />
+              </button>
+            </template>
+          </div>
+        </div>
+
         <span class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
           ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${sftpStore.localFiles.length}` : `${filteredFiles.length}` }} items)
         </span>

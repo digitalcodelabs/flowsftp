@@ -1456,6 +1456,245 @@ pub async fn sftp_move_remote_paths(
 }
 
 #[tauri::command]
+pub async fn sftp_copy_remote_paths(
+    state: State<'_, AppState>,
+    session_id: String,
+    paths: Vec<String>,
+    target_dir: String,
+) -> Result<(), String> {
+    let clean_target = target_dir.trim().replace('\\', "/");
+    let dest_dir = clean_target.trim_end_matches('/');
+
+    if let Some(session) = state.get_session(&session_id).await {
+        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+        let escaped_dest = dest_dir.replace('\'', "'\\''");
+        let mut files_escaped = String::new();
+        for p in &paths {
+            let clean = p.trim().replace('\\', "/");
+            files_escaped.push_str(&format!(" '{}'", clean.replace('\'', "'\\''")));
+        }
+        let cmd = format!("cp -a -t '{}'{} 2>&1 || cp -r -t '{}'{} 2>&1", escaped_dest, files_escaped, escaped_dest, files_escaped);
+        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
+        let mut stream = channel.into_stream();
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        Ok(())
+    } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        for p in paths {
+            let clean_p = p.trim().replace('\\', "/");
+            let file_name = clean_p.split('/').filter(|s| !s.is_empty()).last().unwrap_or("file");
+            let dest_file = format!("{}/{}", dest_dir, file_name);
+            let data = ftp.read_file_binary(&clean_p).await?;
+            ftp.write_file_binary(&dest_file, &data).await?;
+        }
+        Ok(())
+    } else {
+        Err(format!("Session '{}' not found", session_id))
+    }
+}
+
+#[tauri::command]
+pub async fn sftp_transfer_remote_to_remote(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    src_session_id: String,
+    dest_session_id: String,
+    transfer_id: String,
+    src_path: String,
+    dest_path: String,
+    file_size: Option<u64>,
+) -> Result<(), String> {
+    log::info!(
+        "Command sftp_transfer_remote_to_remote: src_session='{}', dest_session='{}', transfer_id='{}', src='{}' -> dest='{}'",
+        src_session_id, dest_session_id, transfer_id, src_path, dest_path
+    );
+
+    let clean_src = src_path.trim().replace('\\', "/");
+    let clean_dest = dest_path.trim().replace('\\', "/");
+    let file_name = clean_src.split('/').filter(|s| !s.is_empty()).last().unwrap_or("file").to_string();
+    let event_name = format!("sftp:progress:{}", transfer_id);
+
+    let total_bytes = file_size.unwrap_or(0);
+    let _ = app.emit(
+        &event_name,
+        crate::sftp::TransferProgress {
+            transfer_id: transfer_id.clone(),
+            file_name: file_name.clone(),
+            direction: "upload".to_string(),
+            bytes_transferred: 0,
+            total_bytes,
+            speed_bytes_per_sec: 0,
+            is_complete: false,
+            error: None,
+        },
+    );
+
+    if src_session_id == dest_session_id {
+        sftp_copy_remote_paths(state, src_session_id, vec![clean_src], clean_dest).await?;
+        let _ = app.emit(
+            &event_name,
+            crate::sftp::TransferProgress {
+                transfer_id: transfer_id.clone(),
+                file_name: file_name.clone(),
+                direction: "upload".to_string(),
+                bytes_transferred: total_bytes,
+                total_bytes,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: None,
+            },
+        );
+        return Ok(());
+    }
+
+    let src_is_ftp = state.get_ftp_session(&src_session_id).await.is_some();
+    let dest_is_ftp = state.get_ftp_session(&dest_session_id).await.is_some();
+
+    if !src_is_ftp && !dest_is_ftp {
+        let src_session = state.get_session(&src_session_id).await
+            .ok_or_else(|| format!("Source session '{}' not found", src_session_id))?;
+        let dest_session = state.get_session(&dest_session_id).await
+            .ok_or_else(|| format!("Destination session '{}' not found", dest_session_id))?;
+
+        let src_sftp = src_session.get_sftp().await?;
+        let dest_sftp = dest_session.get_sftp().await?;
+
+        let mut src_file = src_sftp.open(&clean_src).await
+            .map_err(|e| format!("Failed to open source remote file '{}': {}", clean_src, e))?;
+
+        if let Some(parent) = clean_dest.rfind('/').map(|i| &clean_dest[..i]) {
+            if !parent.is_empty() {
+                let _ = crate::sftp::ensure_remote_dir_recursive(&dest_sftp, parent).await;
+            }
+        }
+
+        let mut dest_file = dest_sftp.create(&clean_dest).await
+            .map_err(|e| format!("Failed to create destination remote file '{}': {}", clean_dest, e))?;
+
+        let mut buffer = vec![0u8; 128 * 1024];
+        let mut transferred: u64 = 0;
+        let start_time = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
+
+        loop {
+            if state.is_transfer_cancelled(&transfer_id) {
+                let err_msg = "Transfer cancelled by user".to_string();
+                let _ = app.emit(
+                    &event_name,
+                    crate::sftp::TransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        file_name: file_name.clone(),
+                        direction: "upload".to_string(),
+                        bytes_transferred: transferred,
+                        total_bytes,
+                        speed_bytes_per_sec: 0,
+                        is_complete: true,
+                        error: Some(err_msg.clone()),
+                    },
+                );
+                return Err(err_msg);
+            }
+
+            let bytes_read = match tokio::io::AsyncReadExt::read(&mut src_file, &mut buffer).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => return Err(format!("Read error from source remote file: {}", e)),
+            };
+
+            if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut dest_file, &buffer[..bytes_read]).await {
+                return Err(format!("Write error to destination remote file: {}", e));
+            }
+
+            transferred += bytes_read as u64;
+
+            if last_emit.elapsed().as_millis() >= 100 {
+                let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed_secs > 0.0 {
+                    (transferred as f64 / elapsed_secs) as u64
+                } else {
+                    0
+                };
+                let _ = app.emit(
+                    &event_name,
+                    crate::sftp::TransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        file_name: file_name.clone(),
+                        direction: "upload".to_string(),
+                        bytes_transferred: transferred,
+                        total_bytes: if total_bytes > 0 { total_bytes } else { transferred },
+                        speed_bytes_per_sec: speed,
+                        is_complete: false,
+                        error: None,
+                    },
+                );
+                last_emit = std::time::Instant::now();
+            }
+        }
+
+        let _ = tokio::io::AsyncWriteExt::flush(&mut dest_file).await;
+        let _ = tokio::io::AsyncWriteExt::shutdown(&mut dest_file).await;
+
+        let elapsed_secs = start_time.elapsed().as_secs_f64();
+        let final_speed = if elapsed_secs > 0.0 {
+            (transferred as f64 / elapsed_secs) as u64
+        } else {
+            0
+        };
+
+        let _ = app.emit(
+            &event_name,
+            crate::sftp::TransferProgress {
+                transfer_id: transfer_id.clone(),
+                file_name: file_name.clone(),
+                direction: "upload".to_string(),
+                bytes_transferred: transferred,
+                total_bytes: transferred,
+                speed_bytes_per_sec: final_speed,
+                is_complete: true,
+                error: None,
+            },
+        );
+
+        Ok(())
+    } else {
+        let data = if let Some(ftp) = state.get_ftp_session(&src_session_id).await {
+            ftp.read_file_binary(&clean_src).await?
+        } else if let Some(session) = state.get_session(&src_session_id).await {
+            let sftp = session.get_sftp().await?;
+            crate::sftp::read_remote_file_binary(&sftp, &clean_src).await?
+        } else {
+            return Err(format!("Source session '{}' not found", src_session_id));
+        };
+
+        if let Some(ftp) = state.get_ftp_session(&dest_session_id).await {
+            ftp.write_file_binary(&clean_dest, &data).await?;
+        } else if let Some(session) = state.get_session(&dest_session_id).await {
+            let sftp = session.get_sftp().await?;
+            crate::sftp::write_remote_file_binary(&sftp, &clean_dest, &data).await?;
+        } else {
+            return Err(format!("Destination session '{}' not found", dest_session_id));
+        }
+
+        let total = data.len() as u64;
+        let _ = app.emit(
+            &event_name,
+            crate::sftp::TransferProgress {
+                transfer_id: transfer_id.clone(),
+                file_name: file_name.clone(),
+                direction: "upload".to_string(),
+                bytes_transferred: total,
+                total_bytes: total,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: None,
+            },
+        );
+
+        Ok(())
+    }
+}
+
+#[tauri::command]
 pub async fn sftp_move_local_paths(paths: Vec<String>, target_dir: String) -> Result<(), String> {
     crate::sftp::move_local_paths(paths, &target_dir).await
 }
