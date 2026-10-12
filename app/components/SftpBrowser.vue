@@ -247,7 +247,7 @@ const submitNewSymlink = async (data: { target: string; linkName: string }) => {
     const parentPath = newSymlinkParentDir.value || (newSymlinkTarget.value === 'local' ? sftpStore.localPath : sftpStore.remotePath)
     const cleanParent = parentPath.replace(/\\/g, '/').replace(/\/+$/, '')
     const linkFullPath = `${cleanParent}/${data.linkName}`
-    await sftpStore.createSymlink(newSymlinkTarget.value, data.target, linkFullPath, false, newSymlinkSessionId.value || undefined)
+    await sftpStore.createSymlink(newSymlinkTarget.value, data.target, linkFullPath, newSymlinkSessionId.value || undefined)
     if (newSymlinkSessionId.value && newSymlinkSessionId.value === leftPaneSource.value) {
       await fetchLeftRemoteDir(newSymlinkSessionId.value, leftRemotePath.value, { force: true })
     }
@@ -434,6 +434,8 @@ const showQuickLook = ref(false)
 const quickLookFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
 const quickLookTarget = ref<'local' | 'remote'>('remote')
 const quickLookSessionId = ref<string | null>(null)
+// True when the preview was opened from the left pane while it shows a remote server.
+const quickLookOnLeftRemote = ref(false)
 
 // -------------------------------------------------------------
 // Git Status Helper
@@ -1050,6 +1052,7 @@ const handleBatchDeleteLeftRemote = async (files?: SftpFileEntry[]) => {
 // Quick Look / Instant Preview Computed & Navigation
 // -------------------------------------------------------------
 const quickLookFileList = computed<(LocalFileEntry | SftpFileEntry)[]>(() => {
+  if (quickLookOnLeftRemote.value) return filteredLeftRemoteFiles.value
   return quickLookTarget.value === 'local' ? filteredLocalFiles.value : filteredRemoteFiles.value
 })
 
@@ -1058,17 +1061,25 @@ const quickLookCurrentIndex = computed<number>(() => {
   return quickLookFileList.value.findIndex((f) => f.path === quickLookFile.value?.path)
 })
 
-const openQuickLook = (target?: 'local' | 'remote', file?: LocalFileEntry | SftpFileEntry) => {
+const openQuickLook = (target?: 'local' | 'remote', file?: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
   const chosenTarget = target || activePane.value
-  quickLookTarget.value = chosenTarget
+  // Same rule as openEditor: with a remote server loaded on the left, "local" means that server.
+  const leftIsRemote = leftPaneSource.value !== 'local'
+  const onLeftRemote = sessionId
+    ? leftIsRemote && sessionId === leftPaneSource.value
+    : leftIsRemote && (chosenTarget === 'local' || (contextMenu.value.show && contextMenu.value.pane === 'local'))
+  quickLookOnLeftRemote.value = onLeftRemote
+  // The modal reads local paths from disk for 'local', so a remote server must be 'remote'.
+  quickLookTarget.value = onLeftRemote ? 'remote' : chosenTarget
+  quickLookSessionId.value = sessionId || (onLeftRemote ? leftPaneSource.value : null)
 
   if (file) {
     quickLookFile.value = file
   } else {
-    const isLocal = chosenTarget === 'local'
-    const files = isLocal ? filteredLocalFiles.value : filteredRemoteFiles.value
-    const selected = isLocal ? selectedLocalFiles.value : selectedRemoteFiles.value
-    const lastIdx = isLocal ? lastLocalClickedIndex.value : lastRemoteClickedIndex.value
+    const isLocal = chosenTarget === 'local' && !onLeftRemote
+    const files = onLeftRemote ? filteredLeftRemoteFiles.value : (isLocal ? filteredLocalFiles.value : filteredRemoteFiles.value)
+    const selected = onLeftRemote ? selectedLeftRemoteFiles.value : (isLocal ? selectedLocalFiles.value : selectedRemoteFiles.value)
+    const lastIdx = onLeftRemote ? lastLeftRemoteClickedIndex.value : (isLocal ? lastLocalClickedIndex.value : lastRemoteClickedIndex.value)
 
     if (selected.length > 0 && !selected[0].is_dir) {
       quickLookFile.value = selected[0]

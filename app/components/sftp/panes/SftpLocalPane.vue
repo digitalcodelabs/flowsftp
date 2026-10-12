@@ -27,6 +27,7 @@ import CatppuccinIcon from '../../CatppuccinIcon.vue'
 import SftpBreadcrumbBar from './SftpBreadcrumbBar.vue'
 import SftpComparisonBadge from '../compare/SftpComparisonBadge.vue'
 import type { ComparisonResult } from '../compare/types'
+import type { FileSortField, FileSortOrder } from './sorting'
 import { formatBytes, formatDate, getFileType, highlightMatch } from '../../../utils/formatters'
 import { getWslDistroIcon } from '../../../utils/fileIcons'
 
