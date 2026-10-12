@@ -2073,17 +2073,29 @@ const {
   isAnyModalOpen,
 })
 
-const handleBatchUpload = async (files?: LocalFileEntry[], destinationDir?: string) => {
-  const targetFiles = (Array.isArray(files) && files.length > 0) ? files : selectedLocalFiles.value
+const handleBatchUpload = async (files?: (LocalFileEntry | SftpFileEntry)[], destinationDir?: string) => {
+  const targetFiles = (Array.isArray(files) && files.length > 0)
+    ? files
+    : (leftPaneSource.value === 'local' ? selectedLocalFiles.value : selectedLeftRemoteFiles.value)
   if (!props.sessionId || targetFiles.length === 0) return
   closeContextMenu()
   dismissTransferToasts()
   showTransferDrawer.value = true
   transferTab.value = 'active'
   try {
-    await sftpStore.startBatchUpload(props.sessionId, targetFiles, destinationDir)
+    if (leftPaneSource.value !== 'local') {
+      const dest = destinationDir || sftpStore.remotePath
+      await sftpStore.startBatchRemoteToRemoteTransfer(
+        leftPaneSource.value,
+        props.sessionId,
+        targetFiles as SftpFileEntry[],
+        dest
+      )
+    } else {
+      await sftpStore.startBatchUpload(props.sessionId, targetFiles as LocalFileEntry[], destinationDir)
+    }
   } catch (err) {
-    console.error('Batch upload failed:', err)
+    console.error('Batch upload/transfer failed:', err)
   }
 }
 
@@ -2107,11 +2119,19 @@ const handleBatchDownload = async (files?: SftpFileEntry[], destinationDir?: str
 }
 
 // Transfer triggers from row buttons: if the clicked row is part of a multi-selection, upload/download the entire selection!
-const handleUpload = async (localFile: LocalFileEntry) => {
-  if (selectedLocalFiles.value.length > 1 && selectedLocalPaths.value.has(localFile.path)) {
-    await handleBatchUpload(selectedLocalFiles.value)
+const handleUpload = async (file: LocalFileEntry | SftpFileEntry) => {
+  if (leftPaneSource.value === 'local') {
+    if (selectedLocalFiles.value.length > 1 && selectedLocalPaths.value.has(file.path)) {
+      await handleBatchUpload(selectedLocalFiles.value)
+    } else {
+      await handleBatchUpload([file as LocalFileEntry])
+    }
   } else {
-    await handleBatchUpload([localFile])
+    if (selectedLeftRemoteFiles.value.length > 1 && selectedLeftRemotePaths.value.has(file.path)) {
+      await handleBatchUpload(selectedLeftRemoteFiles.value)
+    } else {
+      await handleBatchUpload([file as SftpFileEntry])
+    }
   }
 }
 
@@ -3269,7 +3289,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @navigate-up="navigateLeftRemoteUp"
         @navigate-back="navigateLeftRemoteBack"
         @navigate-forward="navigateLeftRemoteForward"
-        @navigate-to="(path) => leftPaneSource !== 'local' && sftpStore.fetchRemoteDir(leftPaneSource, path)"
+        @navigate-to="(path) => leftPaneSource.value !== 'local' && sftpStore.fetchRemoteDir(leftPaneSource.value, path)"
         @copy-path="handleCopyPath"
         @refresh="() => handleRefresh('local')"
         @reconnect="performAutoReconnect"
@@ -3285,18 +3305,18 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         @parent-click="handleLeftRemoteParentClick"
         @close-context-menu="closeContextMenu"
         @contextmenu="openLeftRemoteContextMenu"
-        @dragstart="(ev, file) => handleRemoteDragStart(ev, file, leftPaneSource)"
+        @dragstart="(ev, file) => handleRemoteDragStart(ev, file, leftPaneSource.value)"
         @dragend="handleRemoteDragEnd"
         @dragover="handleRemoteDragOver"
         @dragenter="handleRemoteDragEnter"
         @dragleave="handleRemoteDragLeave"
-        @drop="(ev) => handleRemoteDrop(ev, leftPaneSource)"
+        @drop="(ev) => handleRemoteDrop(ev, leftPaneSource.value)"
         @folder-dragover="(ev, file) => handleFolderDragOver(ev, 'remote', file)"
         @folder-dragleave="(file) => handleFolderDragLeave('remote', file)"
-        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file, leftPaneSource)"
+        @folder-drop="(ev, file) => handleFolderDrop(ev, 'remote', file, leftPaneSource.value)"
         @parent-folder-dragover="(ev) => handleParentFolderDragOver(ev, 'remote')"
         @parent-folder-dragleave="handleParentFolderDragLeave('remote')"
-        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote', leftPaneSource)"
+        @parent-folder-drop="(ev) => handleParentFolderDrop(ev, 'remote', leftPaneSource.value)"
         @toggle-bookmark="toggleRemoteBookmark"
       />
 
@@ -3408,9 +3428,10 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       :selected-remote-files="selectedRemoteFiles"
       :local-bookmarks="leftPaneSource === 'local' ? localBookmarks : remoteBookmarks"
       :remote-bookmarks="remoteBookmarks"
-      :current-local-path="leftPaneSource === 'local' ? sftpStore.localPath : leftRemotePath"
+      :current-local-path="leftPaneSource.value === 'local' ? sftpStore.localPath : leftRemotePath"
       :current-remote-path="sftpStore.remotePath"
       :is-comparing="isComparing"
+      :is-left-pane-remote="leftPaneSource.value !== 'local'"
       @close="closeContextMenu"
       @batch-upload="(files) => handleBatchUpload(files)"
       @batch-download="(files) => handleBatchDownload(files)"
@@ -3432,7 +3453,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       @toggle-bookmark="(target, path) => target === 'local' ? toggleLocalBookmark(path) : toggleRemoteBookmark(path)"
       @toggle-comparison="toggleComparison"
       @select-all="(target) => selectAll(target)"
-      @batch-delete-local="(files) => handleBatchDeleteLocal(files)"
+      @batch-delete-local="(files) => leftPaneSource.value === 'local' ? handleBatchDeleteLocal(files) : handleBatchDeleteLeftRemote(files as any)"
       @batch-delete-remote="(files) => handleBatchDeleteRemote(files)"
       @refresh="(target) => handleRefresh(target)"
       @copy="(target, files) => handleCopy(target, files)"

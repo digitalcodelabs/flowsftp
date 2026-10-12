@@ -27,6 +27,7 @@ const props = defineProps<{
   currentLocalPath: string
   currentRemotePath: string
   isComparing: boolean
+  isLeftPaneRemote?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -99,7 +100,7 @@ const menuHeaderTitle = computed(() => {
 
 const menuHeaderBadge = computed(() => {
   if (selectedCount.value === 0) {
-    return props.pane === 'local' ? 'Local Folder' : 'Remote Folder'
+    return props.pane === 'local' ? (props.isLeftPaneRemote ? 'Remote Folder' : 'Local Folder') : 'Remote Folder'
   }
   if (selectedCount.value === 1) {
     const file = props.pane === 'local' ? props.selectedLocalFiles[0] : props.selectedRemoteFiles[0]
@@ -128,7 +129,7 @@ const menuHeaderBadge = computed(() => {
       :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
     >
       <div class="flex items-center space-x-1.5 min-w-0 truncate mr-2">
-        <CatppuccinIcon :name="pane === 'local' ? 'laptop' : 'server'" :size="12" class="opacity-75 shrink-0" />
+        <CatppuccinIcon :name="pane === 'local' ? (isLeftPaneRemote ? 'server' : 'laptop') : 'server'" :size="12" class="opacity-75 shrink-0" />
         <span class="truncate font-mono">{{ menuHeaderTitle }}</span>
       </div>
       <span class="text-[9px] font-medium tracking-normal opacity-65 shrink-0">{{ menuHeaderBadge }}</span>
@@ -147,8 +148,8 @@ const menuHeaderBadge = computed(() => {
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg font-medium transition text-left"
           :style="{ color: 'var(--color-accent)' }"
         >
-          <CatppuccinIcon name="upload" :size="15" />
-          <span class="truncate">Upload {{ selectedLocalFiles.length > 1 ? `(${selectedLocalFiles.length} items)` : '' }}</span>
+          <CatppuccinIcon :name="isLeftPaneRemote ? 'network' : 'upload'" :size="15" />
+          <span class="truncate">{{ isLeftPaneRemote ? 'Transfer to Remote Server' : 'Upload' }} {{ selectedLocalFiles.length > 1 ? `(${selectedLocalFiles.length} items)` : '' }}</span>
         </button>
 
         <!-- Quick Look (Single File) -->
@@ -401,6 +402,7 @@ const menuHeaderBadge = computed(() => {
 
         <!-- 2. Folder Navigation & Tools -->
         <button
+          v-if="!isLeftPaneRemote"
           @click="emit('openInDefaultApp', currentLocalPath); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
@@ -410,7 +412,7 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Pair Current Folder for Live Sync -->
         <button
-          v-if="sessionId"
+          v-if="sessionId && !isLeftPaneRemote"
           @click="emit('pairFolder', currentLocalPath); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
           :style="{ color: 'var(--color-accent)' }"

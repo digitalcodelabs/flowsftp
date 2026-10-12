@@ -31,8 +31,15 @@ export interface UseSftpDragDropOptions {
   leftPaneSource?: Ref<string>
   lastLocalClickedIndex: Ref<number | null>
   lastRemoteClickedIndex: Ref<number | null>
-  onBatchUpload: (files: LocalFileEntry[], destinationDir?: string) => Promise<void>
+  onBatchUpload: (files: (LocalFileEntry | SftpFileEntry)[], destinationDir?: string) => Promise<void>
   onBatchDownload: (files: SftpFileEntry[], destinationDir?: string) => Promise<void>
+}
+
+const normalizeSessionId = (s: any): string | null => {
+  if (!s) return null
+  if (typeof s === 'string') return s
+  if (typeof s === 'object' && 'value' in s && typeof s.value === 'string') return s.value
+  return typeof s === 'string' ? s : null
 }
 
 export function useSftpDragDrop(options: UseSftpDragDropOptions) {
@@ -139,9 +146,10 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     }, 350)
   }
 
-  const handleRemoteDragStart = (e: DragEvent, file: SftpFileEntry, dragSessionId?: string) => {
-    const sid = dragSessionId || getSessionId()
-    const isLeftRemote = !!options.leftPaneSource && options.leftPaneSource.value !== 'local' && sid === options.leftPaneSource.value
+  const handleRemoteDragStart = (e: DragEvent, file: SftpFileEntry, dragSessionId?: string | Ref<string>) => {
+    const sid = normalizeSessionId(dragSessionId) || getSessionId()
+    const leftSourceStr = normalizeSessionId(options.leftPaneSource)
+    const isLeftRemote = !!leftSourceStr && leftSourceStr !== 'local' && sid === leftSourceStr
 
     let filesToDrag: SftpFileEntry[] = [file]
 
@@ -233,14 +241,14 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     isRemoteDragActive.value = false
   }
 
-  const handleRemoteDrop = async (e: DragEvent, destSessionId?: string) => {
+  const handleRemoteDrop = async (e: DragEvent, destSessionId?: string | Ref<string>) => {
     e.preventDefault()
     e.stopPropagation()
     remoteDragCounter = 0
     isRemoteDragActive.value = false
     const targetFolder = activeDropFolder.value ? { ...activeDropFolder.value } : null
     activeDropFolder.value = null
-    const sid = destSessionId || getSessionId()
+    const sid = normalizeSessionId(destSessionId) || getSessionId()
     if (!sid) return
 
     const destDir = targetFolder?.pane === 'remote' ? targetFolder.path : (sftpStore.sessionRemotePaths[sid] || sftpStore.remotePath)
@@ -257,7 +265,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       }
     } else if (dragPayload?.source === 'remote') {
       const files = [...dragPayload.files] as SftpFileEntry[]
-      const srcSid = dragPayload.sessionId || sid
+      const srcSid = normalizeSessionId(dragPayload.sessionId) || sid
       activeDragging.value = null
       inMemoryDragPayload = null
       if (files.length > 0) {
@@ -296,7 +304,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
           Array.isArray(data.files) &&
           data.files.length > 0
         ) {
-          const srcSid = data.sessionId || sid
+          const srcSid = normalizeSessionId(data.sessionId) || sid
           if (srcSid !== sid) {
             await sftpStore.startBatchRemoteToRemoteTransfer(srcSid, sid, data.files, destDir)
           } else {
@@ -379,7 +387,10 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     const targetFolder = activeDropFolder.value ? { ...activeDropFolder.value } : null
     activeDropFolder.value = null
 
-    const destDir = targetFolder?.pane === 'local' ? targetFolder.path : sftpStore.localPath
+    const leftSourceStr = normalizeSessionId(options.leftPaneSource)
+    const isLeftRemote = !!leftSourceStr && leftSourceStr !== 'local'
+    const leftRemotePath = isLeftRemote && leftSourceStr ? (sftpStore.sessionRemotePaths[leftSourceStr] || '/') : '/'
+    const destDir = targetFolder?.pane === 'local' ? targetFolder.path : (isLeftRemote ? leftRemotePath : sftpStore.localPath)
 
     // 1. In-memory drag state (100% reliable within webview)
     const dragPayload = activeDragging.value || inMemoryDragPayload
@@ -498,7 +509,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     handleFolderDragLeave(pane, virtualEntry)
   }
 
-  const handleParentFolderDrop = async (e: DragEvent, pane: 'local' | 'remote', destSessionId?: string) => {
+  const handleParentFolderDrop = async (e: DragEvent, pane: 'local' | 'remote', destSessionId?: string | Ref<string>) => {
     const parentPath = pane === 'local' ? options.localParentPath.value : options.remoteParentPath.value
     if (!parentPath) return
     const virtualEntry: LocalFileEntry | SftpFileEntry = {
@@ -517,7 +528,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     e: DragEvent,
     pane: 'local' | 'remote',
     entry: LocalFileEntry | SftpFileEntry,
-    destSessionId?: string
+    destSessionId?: string | Ref<string>
   ) => {
     if (!entry.is_dir) return
     e.preventDefault()
@@ -528,7 +539,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     isRemoteDragActive.value = false
     isLocalDragActive.value = false
 
-    const sid = destSessionId || getSessionId()
+    const sid = normalizeSessionId(destSessionId) || getSessionId()
 
     // 1. In-memory drag state
     const dragPayload = activeDragging.value || inMemoryDragPayload
@@ -565,7 +576,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
         return
       } else if (pane === 'remote' && dragPayload.source === 'remote' && sid) {
         const files = [...dragPayload.files] as SftpFileEntry[]
-        const srcSid = dragPayload.sessionId || sid
+        const srcSid = normalizeSessionId(dragPayload.sessionId) || sid
         activeDragging.value = null
         inMemoryDragPayload = null
         if (srcSid !== sid) {
@@ -610,7 +621,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
             data.source === 'remote' &&
             Array.isArray(data.files)
           ) {
-            const srcSid = data.sessionId || sid
+            const srcSid = normalizeSessionId(data.sessionId) || sid
             if (srcSid !== sid) {
               await sftpStore.startBatchRemoteToRemoteTransfer(srcSid, sid, data.files, entry.path)
               return

@@ -104,6 +104,7 @@ export interface TransferItem {
   local_path?: string
   remote_path?: string
   session_id?: string
+  src_session_id?: string
   server_url?: string
   priority?: TransferPriority
   started_at?: number
@@ -2024,6 +2025,7 @@ export const useSftpStore = defineStore('sftp', () => {
         local_path: srcFile.path,
         remote_path: targetDest,
         session_id: destSessionId,
+        src_session_id: srcSessionId,
         server_url: getServerUrlForSession(destSessionId),
         priority: 'Normal',
         started_at: Date.now(),
@@ -2142,6 +2144,7 @@ export const useSftpStore = defineStore('sftp', () => {
         local_path: task.file.path,
         remote_path: task.targetDest,
         session_id: destSessionId,
+        src_session_id: srcSessionId,
         server_url: getServerUrlForSession(destSessionId),
         priority: 'Normal',
         started_at: Date.now(),
@@ -2487,6 +2490,27 @@ export const useSftpStore = defineStore('sftp', () => {
           skipRefresh: true,
           preEnqueuedTransferId: item.transfer_id,
         })
+      } else if (item.src_session_id && item.session_id && item.src_session_id !== item.session_id && item.local_path) {
+        const fileEntry: SftpFileEntry = {
+          name: item.file_name,
+          path: item.local_path,
+          is_dir: !!item.is_dir,
+          is_symlink: false,
+          size: item.total_bytes,
+          modified: 0,
+          permissions: 0o644,
+        }
+        await transferRemoteToRemote(
+          item.src_session_id,
+          item.session_id,
+          fileEntry,
+          undefined,
+          {
+            preEnqueuedTransferId: item.transfer_id,
+            exactDestPath: item.remote_path,
+            skipRefresh: true,
+          }
+        )
       } else if (item.direction === 'upload' && item.local_path) {
         const parentDir = item.remote_path
           ? item.remote_path.substring(0, item.remote_path.lastIndexOf('/'))
