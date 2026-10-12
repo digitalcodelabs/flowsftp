@@ -5,17 +5,13 @@ import { listen } from '@tauri-apps/api/event'
 import { useSshStore } from './ssh'
 import { useSettingsStore } from './settings'
 import {
-  getPreCheckAction,
-  getExistingAction,
-  resolveDecision,
   isPathUnderRoots,
   canSkipConflictCheck,
   createConflictBatch,
-  type ConflictPolicy,
-  type ConflictDecision,
   type ConflictAction,
   type ConflictBatch,
 } from '../utils/conflict'
+import { useConflictResolution } from '../lib/sftp/useConflictResolution'
 import { TaskPump, type PumpTask } from '../utils/taskPump'
 import {
   SKIPPED_MESSAGE,
@@ -341,11 +337,9 @@ export const useSftpStore = defineStore('sftp', () => {
     return Math.min(100, Math.round((totalTransferredBytes.value / totalActiveBytes.value) * 100))
   })
 
-  // Conflict Resolution
-  const conflictPolicy = ref<ConflictPolicy>('ask')
-  // "Skip All" / "Overwrite All" is NOT stored here: it lives in the ConflictBatch owned by
-  // each transfer operation, so concurrent batches can't affect each other.
-  const activeConflictDialog = ref<ConflictDialogState | null>(null)
+  // Conflict Resolution (policy, dialog and decisions; see lib/sftp/useConflictResolution.ts)
+  const { conflictPolicy, activeConflictDialog, resolveConflict, determineConflictAction } =
+    useConflictResolution()
 
   // Transfer Settings
   const maxSimultaneousTransfers = ref<number>(
@@ -439,49 +433,6 @@ export const useSftpStore = defineStore('sftp', () => {
       pool.push(next())
     }
     await Promise.all(pool)
-  }
-
-  function resolveConflict(decision: ConflictDecision) {
-    // The dialog's resolver also applies "All" decisions to the batch that asked.
-    activeConflictDialog.value?.resolveDecision?.(decision)
-    activeConflictDialog.value = null
-  }
-
-  let conflictQueue: Promise<void> = Promise.resolve()
-
-  async function promptConflictDialog(
-    data: Omit<ConflictDialogState, 'show' | 'resolveDecision'>,
-    batch: ConflictBatch
-  ): Promise<ConflictDecision> {
-    if (batch.override === 'overwrite') return 'overwrite'
-    if (batch.override === 'skip') return 'skip'
-
-    return new Promise<ConflictDecision>((resolve) => {
-      conflictQueue = conflictQueue.then(async () => {
-        // The user may have answered "All" for this batch while this prompt was waiting.
-        if (batch.override === 'overwrite') {
-          resolve('overwrite')
-          return
-        }
-        if (batch.override === 'skip') {
-          resolve('skip')
-          return
-        }
-        await new Promise<void>((dialogDone) => {
-          activeConflictDialog.value = {
-            ...data,
-            show: true,
-            resolveDecision: (decision) => {
-              // Set synchronously, before the next queued prompt is looked at.
-              const { batchOverride } = resolveDecision(decision)
-              if (batchOverride) batch.override = batchOverride
-              resolve(decision)
-              dialogDone()
-            },
-          }
-        })
-      })
-    })
   }
 
   async function initLocal() {
@@ -844,66 +795,6 @@ export const useSftpStore = defineStore('sftp', () => {
     invalidateLocalCache(oldPath)
     invalidateLocalCache(newPath)
     await fetchLocalDir(localPath.value, { force: true })
-  }
-
-  /**
-   * Decides whether to overwrite or skip a file that is about to be transferred, prompting
-   * the user when needed. `batch` carries the sticky "All" answer for the current operation;
-   * callers that transfer several files should share one, single transfers may omit it.
-   */
-  async function determineConflictAction(
-    direction: 'download' | 'upload' | 'transfer',
-    fileName: string,
-    sourceMeta: { size: number; modified: number; path: string },
-    destinationPath: string,
-    sessionId?: string,
-    destinationIsRemote?: boolean,
-    batch: ConflictBatch = createConflictBatch()
-  ): Promise<ConflictAction> {
-    const known = getPreCheckAction(conflictPolicy.value, batch.override)
-    if (known) {
-      return known
-    }
-
-    try {
-      const isRemote = destinationIsRemote !== undefined
-        ? destinationIsRemote
-        : (direction === 'upload' || direction === 'transfer')
-      const conflictInfo = await invoke<FileConflictInfo>('sftp_check_conflict', {
-        sessionId: isRemote ? (sessionId || null) : null,
-        path: destinationPath,
-        isRemote,
-      })
-
-      if (!conflictInfo.exists) {
-        return 'overwrite'
-      }
-
-      const existing = getExistingAction(conflictPolicy.value, batch.override)
-      if (existing !== 'ask') {
-        return existing
-      }
-
-      const decision = await promptConflictDialog(
-        {
-          fileName,
-          direction,
-          source: sourceMeta,
-          destination: {
-            size: conflictInfo.size,
-            modified: conflictInfo.modified,
-            path: destinationPath,
-          },
-        },
-        batch
-      )
-
-      // A sticky "All" answer was already stored on `batch` by the dialog's resolver.
-      return resolveDecision(decision).action
-    } catch (err) {
-      console.warn('Failed to check conflict, defaulting to overwrite:', err)
-      return 'overwrite'
-    }
   }
 
   async function ensureTransferReady() {
