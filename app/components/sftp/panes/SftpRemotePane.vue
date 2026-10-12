@@ -315,7 +315,7 @@ defineExpose({
         </div>
 
         <span v-if="sessionId" class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
-          ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${sftpStore.remoteFiles.length}` : `${filteredFiles.length}` }} items)
+          ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${isLeftPane ? (sftpStore.sessionRemoteFiles[sessionId]?.length ?? filteredFiles.length) : sftpStore.remoteFiles.length}` : `${filteredFiles.length}` }} items)
         </span>
         <span v-else class="text-[11px] text-amber-500 font-medium">(Disconnected)</span>
       </div>
@@ -325,7 +325,7 @@ defineExpose({
         <template v-if="selectedFiles.length > 0">
           <button
             @click="emit('batch-download', selectedFiles)"
-            :title="`Download ${selectedFiles.length} selected item(s) to local (Alt+F5)`"
+            :title="isLeftPane ? `Transfer ${selectedFiles.length} selected item(s) to right pane` : `Download ${selectedFiles.length} selected item(s) to local (Alt+F5)`"
             class="h-6 px-1.5 rounded text-xs transition flex items-center justify-center bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 shadow-sm"
           >
             <CatppuccinIcon name="download" :size="15" />
@@ -673,74 +673,74 @@ defineExpose({
           <tr>
             <th
               :class="[rowPaddingClass, 'font-medium min-w-[190px] cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
-              :style="sortBy === 'name' ? { color: 'var(--color-accent-secondary)' } : undefined"
+              :style="sortBy === 'name' ? { color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' } : undefined"
               @click="emit('sort', 'name')"
               :title="sortBy === 'name' ? (sortOrder === 'asc' ? 'Sorted by Name (Ascending) - Click to sort Descending' : 'Sorted by Name (Descending) - Click to sort Ascending') : 'Sort by Name'"
             >
               <div class="flex items-center gap-1.5">
                 <span :class="{ 'font-semibold': sortBy === 'name' }">Name</span>
-                <ArrowUp v-if="sortBy === 'name' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
-                <ArrowDown v-else-if="sortBy === 'name' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
+                <ArrowUp v-if="sortBy === 'name' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
+                <ArrowDown v-else-if="sortBy === 'name' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
               </div>
             </th>
             <th
               :class="[cellPaddingClass, 'w-24 min-w-[75px] font-medium whitespace-nowrap cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
-              :style="sortBy === 'type' ? { color: 'var(--color-accent-secondary)' } : undefined"
+              :style="sortBy === 'type' ? { color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' } : undefined"
               @click="emit('sort', 'type')"
               :title="sortBy === 'type' ? (sortOrder === 'asc' ? 'Sorted by Type (Ascending) - Click to sort Descending' : 'Sorted by Type (Descending) - Click to sort Ascending') : 'Sort by Type'"
             >
               <div class="flex items-center gap-1.5">
                 <span :class="{ 'font-semibold': sortBy === 'type' }">Type</span>
-                <ArrowUp v-if="sortBy === 'type' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
-                <ArrowDown v-else-if="sortBy === 'type' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
+                <ArrowUp v-if="sortBy === 'type' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
+                <ArrowDown v-else-if="sortBy === 'type' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
               </div>
             </th>
             <th
               :class="[cellPaddingClass, 'w-24 min-w-[80px] font-medium text-right whitespace-nowrap cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
-              :style="sortBy === 'size' ? { color: 'var(--color-accent-secondary)' } : undefined"
+              :style="sortBy === 'size' ? { color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' } : undefined"
               @click="emit('sort', 'size')"
               :title="sortBy === 'size' ? (sortOrder === 'asc' ? 'Sorted by Size (Ascending) - Click to sort Descending' : 'Sorted by Size (Descending) - Click to sort Ascending') : 'Sort by Size'"
             >
               <div class="flex items-center justify-end gap-1.5">
-                <ArrowUp v-if="sortBy === 'size' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
-                <ArrowDown v-else-if="sortBy === 'size' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
+                <ArrowUp v-if="sortBy === 'size' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
+                <ArrowDown v-else-if="sortBy === 'size' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
                 <span :class="{ 'font-semibold': sortBy === 'size' }">Size</span>
               </div>
             </th>
             <th
               :class="[cellPaddingClass, 'w-36 min-w-[125px] font-medium whitespace-nowrap cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
-              :style="sortBy === 'modified' ? { color: 'var(--color-accent-secondary)' } : undefined"
+              :style="sortBy === 'modified' ? { color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' } : undefined"
               @click="emit('sort', 'modified')"
               :title="sortBy === 'modified' ? (sortOrder === 'asc' ? 'Sorted by Modified (Ascending) - Click to sort Descending' : 'Sorted by Modified (Descending) - Click to sort Ascending') : 'Sort by Modified'"
             >
               <div class="flex items-center gap-1.5">
                 <span :class="{ 'font-semibold': sortBy === 'modified' }">Modified</span>
-                <ArrowUp v-if="sortBy === 'modified' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
-                <ArrowDown v-else-if="sortBy === 'modified' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
+                <ArrowUp v-if="sortBy === 'modified' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
+                <ArrowDown v-else-if="sortBy === 'modified' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
               </div>
             </th>
             <th
               :class="[cellPaddingClass, 'w-28 min-w-[105px] font-medium whitespace-nowrap font-mono cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
-              :style="sortBy === 'permissions' ? { color: 'var(--color-accent-secondary)' } : undefined"
+              :style="sortBy === 'permissions' ? { color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' } : undefined"
               @click="emit('sort', 'permissions')"
               :title="sortBy === 'permissions' ? (sortOrder === 'asc' ? 'Sorted by Permissions (Ascending) - Click to sort Descending' : 'Sorted by Permissions (Descending) - Click to sort Ascending') : 'Sort by Permissions'"
             >
               <div class="flex items-center gap-1.5">
                 <span :class="{ 'font-semibold': sortBy === 'permissions' }">Permissions</span>
-                <ArrowUp v-if="sortBy === 'permissions' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
-                <ArrowDown v-else-if="sortBy === 'permissions' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
+                <ArrowUp v-if="sortBy === 'permissions' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
+                <ArrowDown v-else-if="sortBy === 'permissions' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
               </div>
             </th>
             <th
               :class="[cellPaddingClass, 'w-28 min-w-[95px] font-medium whitespace-nowrap cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
-              :style="sortBy === 'owner' ? { color: 'var(--color-accent-secondary)' } : undefined"
+              :style="sortBy === 'owner' ? { color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' } : undefined"
               @click="emit('sort', 'owner')"
               :title="sortBy === 'owner' ? (sortOrder === 'asc' ? 'Sorted by Owner / Group (Ascending) - Click to sort Descending' : 'Sorted by Owner / Group (Descending) - Click to sort Ascending') : 'Sort by Owner / Group'"
             >
               <div class="flex items-center gap-1.5">
                 <span :class="{ 'font-semibold': sortBy === 'owner' }">Owner / Group</span>
-                <ArrowUp v-if="sortBy === 'owner' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
-                <ArrowDown v-else-if="sortBy === 'owner' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent-secondary)' }" />
+                <ArrowUp v-if="sortBy === 'owner' && sortOrder === 'asc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
+                <ArrowDown v-else-if="sortBy === 'owner' && sortOrder === 'desc'" class="w-3.5 h-3.5 shrink-0" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }" />
               </div>
             </th>
           </tr>
@@ -757,16 +757,16 @@ defineExpose({
             @dragleave="emit('parent-folder-dragleave')"
             @drop="emit('parent-folder-drop', $event)"
             class="group cursor-pointer select-none file-row"
-            :style="activeDropFolder?.pane === 'remote' && activeDropFolder?.path === parentPath
-              ? { backgroundColor: 'var(--color-bg-hover)', borderLeft: '3px solid var(--color-accent-secondary)', color: 'var(--color-text-main)' }
+            :style="activeDropFolder?.pane === (isLeftPane ? 'local' : 'remote') && activeDropFolder?.path === parentPath
+              ? { backgroundColor: 'var(--color-bg-hover)', borderLeft: `3px solid ${isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)'}`, color: 'var(--color-text-main)' }
               : isParentSelected
-              ? { backgroundColor: 'var(--color-bg-hover)', borderLeft: '3px solid var(--color-accent-secondary)', color: 'var(--color-text-main)' }
+              ? { backgroundColor: 'var(--color-bg-hover)', borderLeft: `3px solid ${isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)'}`, color: 'var(--color-text-main)' }
               : { borderLeft: '3px solid transparent', color: 'var(--color-text-main)' }"
             title="Double-click or press Enter to go to parent directory"
           >
             <td :class="[rowPaddingClass, 'whitespace-nowrap']">
               <div class="flex items-center space-x-1.5 leading-none">
-                <FileIcon name=".." :is-dir="true" :is-open="activeDropFolder?.pane === 'remote' && activeDropFolder?.path === parentPath" :size="15" />
+                <FileIcon name=".." :is-dir="true" :is-open="activeDropFolder?.pane === (isLeftPane ? 'local' : 'remote') && activeDropFolder?.path === parentPath" :size="15" />
                 <span class="font-bold text-sm tracking-wide leading-tight" :style="{ color: 'var(--color-text-main)' }">..</span>
               </div>
             </td>
@@ -791,13 +791,13 @@ defineExpose({
             <td colspan="6" class="py-8 text-center italic" :style="{ color: 'var(--color-text-muted)' }">
               <template v-if="searchQuery">
                 No files matching "<span class="font-semibold text-amber-300 font-mono">{{ searchQuery }}</span>"
-                <button @click="emit('update:searchQuery', '')" class="ml-2 underline text-xs not-italic cursor-pointer hover:opacity-80" :style="{ color: 'var(--color-accent-secondary)' }">
+                <button @click="emit('update:searchQuery', '')" class="ml-2 underline text-xs not-italic cursor-pointer hover:opacity-80" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }">
                   Clear filter
                 </button>
               </template>
               <template v-else-if="isComparing && hideIdenticalFiles">
-                All {{ sftpStore.remoteFiles.length }} files match local (identical files are hidden)
-                <button @click="$emit('toggle-comparison')" class="ml-2 underline text-xs not-italic cursor-pointer hover:opacity-80" :style="{ color: 'var(--color-accent-secondary)' }">
+                All {{ isLeftPane ? (sftpStore.sessionRemoteFiles[sessionId || '']?.length ?? filteredFiles.length) : sftpStore.remoteFiles.length }} files match local (identical files are hidden)
+                <button @click="$emit('toggle-comparison')" class="ml-2 underline text-xs not-italic cursor-pointer hover:opacity-80" :style="{ color: isLeftPane ? 'var(--color-accent)' : 'var(--color-accent-secondary)' }">
                   Show all files
                 </button>
               </template>
@@ -820,7 +820,7 @@ defineExpose({
             @dragleave="file.is_dir ? emit('folder-dragleave', file) : undefined"
             @drop="file.is_dir ? emit('folder-drop', $event, file) : emit('drop', $event)"
             class="group cursor-pointer select-none file-row"
-            :style="getRowStyle(false, file.path, file)"
+            :style="getRowStyle(!!isLeftPane, file.path, file)"
           >
             <td :class="[rowPaddingClass, 'whitespace-nowrap']" :title="file.name">
               <div class="flex items-center space-x-1.5 leading-none">

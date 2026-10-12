@@ -635,7 +635,9 @@ const {
 
 const getRowStyle = (isLocal: boolean, path: string, file: LocalFileEntry | SftpFileEntry) => {
   const isDropTarget = activeDropFolder.value?.pane === (isLocal ? 'local' : 'remote') && activeDropFolder.value?.path === path
-  const isSelected = isLocal ? selectedLocalPaths.value.has(path) : selectedRemotePaths.value.has(path)
+  const isSelected = isLocal
+    ? (leftPaneSource.value === 'local' ? selectedLocalPaths.value.has(path) : selectedLeftRemotePaths.value.has(path))
+    : selectedRemotePaths.value.has(path)
   const accentColor = isLocal ? 'var(--color-accent)' : 'var(--color-accent-secondary)'
 
   if (isDropTarget || isSelected) {
@@ -646,7 +648,9 @@ const getRowStyle = (isLocal: boolean, path: string, file: LocalFileEntry | Sftp
     }
   }
 
-  const compareStyle = isLocal ? getLocalRowCompareStyle(file as LocalFileEntry) : getRemoteRowCompareStyle(file as SftpFileEntry)
+  const compareStyle = isLocal
+    ? (leftPaneSource.value === 'local' ? getLocalRowCompareStyle(file as LocalFileEntry) : undefined)
+    : getRemoteRowCompareStyle(file as SftpFileEntry)
   if (compareStyle) {
     return {
       borderLeft: '3px solid transparent',
@@ -736,6 +740,12 @@ const filteredRemoteFiles = computed(() => {
 // -------------------------------------------------------------
 const handleLeftSwitchSource = async (newSource: 'local' | string) => {
   leftPaneSource.value = newSource
+  selectedLeftRemotePaths.value.clear()
+  selectedLocalPaths.value.clear()
+  lastLeftRemoteClickedIndex.value = null
+  lastLocalClickedIndex.value = null
+  isLeftRemoteParentSelected.value = false
+  isLocalParentSelected.value = false
   if (newSource !== 'local') {
     if (!sftpStore.sessionRemoteFiles[newSource] || !sftpStore.sessionRemotePaths[newSource]) {
       await sftpStore.fetchRemoteDir(newSource, '.')
@@ -829,6 +839,9 @@ const canNavigateLeftRemoteForward = computed(
 watch(
   () => leftRemotePath.value,
   (newPath) => {
+    selectedLeftRemotePaths.value.clear()
+    lastLeftRemoteClickedIndex.value = null
+    isLeftRemoteParentSelected.value = false
     if (!newPath || leftPaneSource.value === 'local') return
     if (isNavigatingLeftRemoteHistory) {
       isNavigatingLeftRemoteHistory = false
@@ -940,7 +953,7 @@ const openLeftRemoteContextMenu = (e: MouseEvent, file?: SftpFileEntry) => {
     show: true,
     x,
     y,
-    pane: 'remote',
+    pane: 'local',
     targetItem: file || null,
   }
 }
@@ -1816,9 +1829,16 @@ const handleRemoteEmptyClick = (_event?: MouseEvent) => {
 
 const selectAll = (pane: 'local' | 'remote') => {
   if (pane === 'local') {
-    selectedLocalPaths.value = new Set(filteredLocalFiles.value.map((f) => f.path))
-    if (filteredLocalFiles.value.length > 0) {
-      lastLocalClickedIndex.value = 0
+    if (leftPaneSource.value === 'local') {
+      selectedLocalPaths.value = new Set(filteredLocalFiles.value.map((f) => f.path))
+      if (filteredLocalFiles.value.length > 0) {
+        lastLocalClickedIndex.value = 0
+      }
+    } else {
+      selectedLeftRemotePaths.value = new Set(filteredLeftRemoteFiles.value.map((f) => f.path))
+      if (filteredLeftRemoteFiles.value.length > 0) {
+        lastLeftRemoteClickedIndex.value = 0
+      }
     }
   } else {
     selectedRemotePaths.value = new Set(filteredRemoteFiles.value.map((f) => f.path))
@@ -1913,6 +1933,11 @@ const {
   selectedRemoteFiles,
   selectedLocalPaths,
   selectedRemotePaths,
+  selectedLeftRemotePaths,
+  selectedLeftRemoteFiles,
+  filteredLeftRemoteFiles,
+  lastLeftRemoteClickedIndex,
+  leftPaneSource,
   lastLocalClickedIndex,
   lastRemoteClickedIndex,
   onBatchUpload: (files, dest) => handleBatchUpload(files, dest),
@@ -1922,6 +1947,55 @@ const {
 // -------------------------------------------------------------
 // Keyboard Navigation & Shortcuts
 // -------------------------------------------------------------
+const activeLeftSelectedPaths = computed<Set<string>>({
+  get: () => (leftPaneSource.value === 'local' ? selectedLocalPaths.value : selectedLeftRemotePaths.value),
+  set: (val) => {
+    if (leftPaneSource.value === 'local') {
+      selectedLocalPaths.value = val
+    } else {
+      selectedLeftRemotePaths.value = val
+    }
+  },
+})
+
+const activeLeftSelectedFiles = computed<(LocalFileEntry | SftpFileEntry)[]>(() =>
+  leftPaneSource.value === 'local' ? selectedLocalFiles.value : selectedLeftRemoteFiles.value
+)
+
+const activeLeftLastClickedIndex = computed<number | null>({
+  get: () => (leftPaneSource.value === 'local' ? lastLocalClickedIndex.value : lastLeftRemoteClickedIndex.value),
+  set: (val) => {
+    if (leftPaneSource.value === 'local') {
+      lastLocalClickedIndex.value = val
+    } else {
+      lastLeftRemoteClickedIndex.value = val
+    }
+  },
+})
+
+const activeLeftIsParentSelected = computed<boolean>({
+  get: () => (leftPaneSource.value === 'local' ? isLocalParentSelected.value : isLeftRemoteParentSelected.value),
+  set: (val) => {
+    if (leftPaneSource.value === 'local') {
+      isLocalParentSelected.value = val
+    } else {
+      isLeftRemoteParentSelected.value = val
+    }
+  },
+})
+
+const activeLeftParentPath = computed<string | null>(() =>
+  leftPaneSource.value === 'local' ? localParentPath.value : leftRemoteParentPath.value
+)
+
+const activeLeftCanNavigateUp = computed<boolean>(() =>
+  leftPaneSource.value === 'local' ? canNavigateLocalUp.value : canNavigateLeftRemoteUp.value
+)
+
+const activeLeftFilteredFiles = computed<(LocalFileEntry | SftpFileEntry)[]>(() =>
+  leftPaneSource.value === 'local' ? filteredLocalFiles.value : filteredLeftRemoteFiles.value
+)
+
 const {
   focusFirstItem,
   handleGlobalKeyDown,
@@ -1931,21 +2005,21 @@ const {
   active: () => props.active,
   sessionId: () => props.sessionId,
   activePane,
-  selectedLocalFiles,
+  selectedLocalFiles: activeLeftSelectedFiles as any,
   selectedRemoteFiles,
-  selectedLocalPaths,
+  selectedLocalPaths: activeLeftSelectedPaths,
   selectedRemotePaths,
   localSelectionAnchor,
   remoteSelectionAnchor,
-  lastLocalClickedIndex,
+  lastLocalClickedIndex: activeLeftLastClickedIndex,
   lastRemoteClickedIndex,
-  isLocalParentSelected,
+  isLocalParentSelected: activeLeftIsParentSelected,
   isRemoteParentSelected,
-  localParentPath,
+  localParentPath: activeLeftParentPath,
   remoteParentPath,
-  filteredLocalFiles,
+  filteredLocalFiles: activeLeftFilteredFiles as any,
   filteredRemoteFiles,
-  canNavigateLocalUp,
+  canNavigateLocalUp: activeLeftCanNavigateUp,
   canNavigateRemoteUp,
   showQuickLook,
   quickLookFile,
@@ -1960,7 +2034,7 @@ const {
   localFilterInputRef,
   remoteFilterInputRef,
   onRenameSelected: () => triggerRenameSelected(),
-  onDeleteLocal: (files) => handleBatchDeleteLocal(files),
+  onDeleteLocal: (files) => (leftPaneSource.value === 'local' ? handleBatchDeleteLocal(files as LocalFileEntry[]) : handleBatchDeleteLeftRemote(files as SftpFileEntry[])),
   onDeleteRemote: (files) => handleBatchDeleteRemote(files),
   onToggleComparison: () => toggleComparison(),
   onToggleFilter: (pane) => toggleFilter(pane),
@@ -1983,9 +2057,9 @@ const {
     settingsStore.closeSettings()
     showPermissionsModal.value = false
   },
-  onNavigateLocalUp: () => navigateLocalUp(),
+  onNavigateLocalUp: () => (leftPaneSource.value === 'local' ? navigateLocalUp() : navigateLeftRemoteUp()),
   onNavigateRemoteUp: () => navigateRemoteUp(),
-  onLocalRowDoubleClick: (entry) => handleLocalRowDoubleClick(entry),
+  onLocalRowDoubleClick: (entry) => (leftPaneSource.value === 'local' ? handleLocalRowDoubleClick(entry as LocalFileEntry) : handleLeftRemoteRowDoubleClick(entry as SftpFileEntry)),
   onRemoteRowDoubleClick: (entry) => handleRemoteRowDoubleClick(entry),
   onScrollToRow: (pane, idx) => scrollToRow(pane, idx),
   onTogglePane: () => toggleActivePane(),
@@ -1994,8 +2068,8 @@ const {
   onTransferCopy: () => handleTransferCopy(),
   onTransferMove: () => handleTransferMove(),
   onNewFolder: (pane) => openNewFolder(pane),
-  onNavigateBack: (pane) => (pane === 'local' ? navigateLocalBack() : navigateRemoteBack()),
-  onNavigateForward: (pane) => (pane === 'local' ? navigateLocalForward() : navigateRemoteForward()),
+  onNavigateBack: (pane) => (pane === 'local' ? (leftPaneSource.value === 'local' ? navigateLocalBack() : navigateLeftRemoteBack()) : navigateRemoteBack()),
+  onNavigateForward: (pane) => (pane === 'local' ? (leftPaneSource.value === 'local' ? navigateLocalForward() : navigateLeftRemoteForward()) : navigateRemoteForward()),
   isAnyModalOpen,
 })
 
@@ -3183,7 +3257,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :cell-padding-class="cellPaddingClass"
         :remote-bookmarks="remoteBookmarks"
         :current-path="leftRemotePath"
-        :get-row-style="getRowStyle"
+        :get-row-style="(isLoc, path, file) => getRowStyle(true, path, file)"
         :get-git-status="getGitStatus"
         @switch-source="handleLeftSwitchSource"
         @select-pane="activePane = 'local'"
@@ -3271,7 +3345,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
         :cell-padding-class="cellPaddingClass"
         :remote-bookmarks="remoteBookmarks"
         :current-path="sftpStore.remotePath"
-        :get-row-style="getRowStyle"
+        :get-row-style="(isLoc, path, file) => getRowStyle(false, path, file)"
         :get-git-status="getGitStatus"
         @switch-source="handleRightSwitchSource"
         @select-pane="activePane = 'remote'"
@@ -3330,11 +3404,11 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       :y="contextMenu.y"
       :pane="contextMenu.pane"
       :session-id="props.sessionId"
-      :selected-local-files="selectedLocalFiles"
+      :selected-local-files="leftPaneSource === 'local' ? selectedLocalFiles : (selectedLeftRemoteFiles as any)"
       :selected-remote-files="selectedRemoteFiles"
-      :local-bookmarks="localBookmarks"
+      :local-bookmarks="leftPaneSource === 'local' ? localBookmarks : remoteBookmarks"
       :remote-bookmarks="remoteBookmarks"
-      :current-local-path="sftpStore.localPath"
+      :current-local-path="leftPaneSource === 'local' ? sftpStore.localPath : leftRemotePath"
       :current-remote-path="sftpStore.remotePath"
       :is-comparing="isComparing"
       @close="closeContextMenu"

@@ -24,6 +24,11 @@ export interface UseSftpDragDropOptions {
   selectedRemoteFiles: Ref<SftpFileEntry[]>
   selectedLocalPaths: Ref<Set<string>>
   selectedRemotePaths: Ref<Set<string>>
+  selectedLeftRemotePaths?: Ref<Set<string>>
+  selectedLeftRemoteFiles?: Ref<SftpFileEntry[]>
+  filteredLeftRemoteFiles?: Ref<SftpFileEntry[]>
+  lastLeftRemoteClickedIndex?: Ref<number | null>
+  leftPaneSource?: Ref<string>
   lastLocalClickedIndex: Ref<number | null>
   lastRemoteClickedIndex: Ref<number | null>
   onBatchUpload: (files: LocalFileEntry[], destinationDir?: string) => Promise<void>
@@ -136,14 +141,31 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
 
   const handleRemoteDragStart = (e: DragEvent, file: SftpFileEntry, dragSessionId?: string) => {
     const sid = dragSessionId || getSessionId()
-    if (!options.selectedRemotePaths.value.has(file.path)) {
-      options.selectedRemotePaths.value = new Set([file.path])
-      options.lastRemoteClickedIndex.value = sftpStore.remoteFiles.findIndex((f) => f.path === file.path)
+    const isLeftRemote = !!options.leftPaneSource && options.leftPaneSource.value !== 'local' && sid === options.leftPaneSource.value
+
+    let filesToDrag: SftpFileEntry[] = [file]
+
+    if (isLeftRemote && options.selectedLeftRemotePaths && options.selectedLeftRemoteFiles) {
+      if (!options.selectedLeftRemotePaths.value.has(file.path)) {
+        options.selectedLeftRemotePaths.value = new Set([file.path])
+        if (options.lastLeftRemoteClickedIndex && options.filteredLeftRemoteFiles) {
+          options.lastLeftRemoteClickedIndex.value = options.filteredLeftRemoteFiles.value.findIndex((f) => f.path === file.path)
+        }
+      }
+      filesToDrag =
+        options.selectedLeftRemoteFiles.value.length > 0 && options.selectedLeftRemotePaths.value.has(file.path)
+          ? [...options.selectedLeftRemoteFiles.value]
+          : [file]
+    } else {
+      if (!options.selectedRemotePaths.value.has(file.path)) {
+        options.selectedRemotePaths.value = new Set([file.path])
+        options.lastRemoteClickedIndex.value = sftpStore.remoteFiles.findIndex((f) => f.path === file.path)
+      }
+      filesToDrag =
+        options.selectedRemoteFiles.value.length > 0 && options.selectedRemotePaths.value.has(file.path)
+          ? [...options.selectedRemoteFiles.value]
+          : [file]
     }
-    const filesToDrag =
-      options.selectedRemoteFiles.value.length > 0 && options.selectedRemotePaths.value.has(file.path)
-        ? [...options.selectedRemoteFiles.value]
-        : [file]
 
     const payload: DraggingState = {
       source: 'remote',
