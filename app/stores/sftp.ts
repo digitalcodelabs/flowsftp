@@ -10,6 +10,7 @@ export interface SftpFileEntry {
   path: string
   is_dir: boolean
   is_symlink: boolean
+  symlink_target?: string | null
   size: number
   modified: number
   permissions: number
@@ -22,8 +23,16 @@ export interface LocalFileEntry {
   path: string
   is_dir: boolean
   is_symlink: boolean
+  symlink_target?: string | null
   size: number
   modified: number
+}
+
+export interface FileClipboardItem {
+  files: (LocalFileEntry | SftpFileEntry)[]
+  sourcePane: 'local' | 'remote'
+  mode: 'copy' | 'cut'
+  sessionId?: string | null
 }
 
 export interface LocalCrawlTask {
@@ -716,7 +725,7 @@ export const useSftpStore = defineStore('sftp', () => {
   const sessionRemotePaths = ref<Record<string, string>>({})
   const sessionRemoteFiles = ref<Record<string, SftpFileEntry[]>>({})
 
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, defaultPath?: string) {
     if (!sessionId) {
       currentSessionId.value = null
       remoteFiles.value = []
@@ -731,14 +740,14 @@ export const useSftpStore = defineStore('sftp', () => {
     remoteError.value = null
     selectedRemotePath.value = null
 
-    if (sessionRemoteFiles.value[sessionId] && sessionRemotePaths.value[sessionId]) {
+    if (sessionRemoteFiles.value[sessionId] && sessionRemotePaths.value[sessionId] && !defaultPath) {
       remotePath.value = sessionRemotePaths.value[sessionId]
       remoteFiles.value = sessionRemoteFiles.value[sessionId]
       fetchRemoteGitStatus(sessionId, remotePath.value)
       fetchRemoteDir(sessionId, remotePath.value)
     } else {
       const saved = typeof window !== 'undefined' ? localStorage.getItem(`flowsftp_last_remote_path_${sessionId}`) : null
-      const initialPath = saved || '.'
+      const initialPath = defaultPath || saved || '.'
       remotePath.value = initialPath
       remoteFiles.value = []
       await fetchRemoteDir(sessionId, initialPath)
@@ -2395,6 +2404,118 @@ export const useSftpStore = defineStore('sftp', () => {
     return res
   }
 
+  // File Clipboard (Copy / Cut / Paste)
+  const clipboard = ref<FileClipboardItem | null>(null)
+
+  function copyToClipboard(pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) {
+    if (!files || files.length === 0) return
+    clipboard.value = {
+      files: [...files],
+      sourcePane: pane,
+      mode: 'copy',
+      sessionId: pane === 'remote' ? currentSessionId.value : undefined,
+    }
+  }
+
+  function cutToClipboard(pane: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) {
+    if (!files || files.length === 0) return
+    clipboard.value = {
+      files: [...files],
+      sourcePane: pane,
+      mode: 'cut',
+      sessionId: pane === 'remote' ? currentSessionId.value : undefined,
+    }
+  }
+
+  async function pasteFromClipboard(targetPane: 'local' | 'remote', targetDir?: string) {
+    if (!clipboard.value || clipboard.value.files.length === 0) return
+    const clip = clipboard.value
+    const dest = targetDir || (targetPane === 'local' ? localPath.value : remotePath.value)
+    if (!dest) return
+
+    try {
+      if (clip.sourcePane === 'local' && targetPane === 'local') {
+        const paths = clip.files.map((f) => f.path)
+        if (clip.mode === 'cut') {
+          await invoke('sftp_move_local_paths', { paths, targetDir: dest })
+          clipboard.value = null
+        } else {
+          await invoke('sftp_copy_local_paths', { paths, targetDir: dest })
+        }
+        await fetchLocalDir(localPath.value, { force: true })
+      } else if (clip.sourcePane === 'remote' && targetPane === 'remote' && currentSessionId.value) {
+        const paths = clip.files.map((f) => f.path)
+        if (clip.mode === 'cut') {
+          await invoke('sftp_move_remote_paths', { sessionId: currentSessionId.value, paths, targetDir: dest })
+          clipboard.value = null
+        } else {
+          for (const path of paths) {
+            await invoke('sftp_duplicate_remote_path', { sessionId: currentSessionId.value, path, newName: null })
+          }
+        }
+        await fetchRemoteDir(currentSessionId.value, remotePath.value, { force: true })
+      } else if (clip.sourcePane === 'local' && targetPane === 'remote' && currentSessionId.value) {
+        await startBatchUpload(clip.files as LocalFileEntry[], dest)
+        if (clip.mode === 'cut') {
+          clipboard.value = null
+        }
+      } else if (clip.sourcePane === 'remote' && targetPane === 'local' && currentSessionId.value) {
+        await startBatchDownload(clip.files as SftpFileEntry[], dest)
+        if (clip.mode === 'cut') {
+          clipboard.value = null
+        }
+      }
+    } catch (err) {
+      console.error('Failed to paste from clipboard:', err)
+      throw err
+    }
+  }
+
+  async function duplicateItem(pane: 'local' | 'remote', item: LocalFileEntry | SftpFileEntry) {
+    if (pane === 'local') {
+      await invoke('sftp_duplicate_local_path', { path: item.path, newName: null })
+      await fetchLocalDir(localPath.value, { force: true })
+    } else if (currentSessionId.value) {
+      await invoke('sftp_duplicate_remote_path', { sessionId: currentSessionId.value, path: item.path, newName: null })
+      await fetchRemoteDir(currentSessionId.value, remotePath.value, { force: true })
+    }
+  }
+
+  // Calculated Directory Sizes
+  const calculatedDirSizes = ref<Record<string, number>>({})
+
+  async function calculateDirSize(pane: 'local' | 'remote', path: string): Promise<number> {
+    if (pane === 'local') {
+      const size = await invoke<number>('sftp_get_local_dir_size', { path })
+      calculatedDirSizes.value[path] = size
+      return size
+    } else if (currentSessionId.value) {
+      const size = await invoke<number>('sftp_get_remote_dir_size', { sessionId: currentSessionId.value, path })
+      calculatedDirSizes.value[path] = size
+      return size
+    }
+    return 0
+  }
+
+  async function calculateChecksum(pane: 'local' | 'remote', path: string, algorithm: 'md5' | 'sha256'): Promise<string> {
+    if (pane === 'local') {
+      return await invoke<string>('sftp_calculate_local_checksum', { path, algorithm })
+    } else if (currentSessionId.value) {
+      return await invoke<string>('sftp_calculate_remote_checksum', { sessionId: currentSessionId.value, path, algorithm })
+    }
+    throw new Error('No active session')
+  }
+
+  async function createSymlink(pane: 'local' | 'remote', target: string, linkPath: string): Promise<void> {
+    if (pane === 'local') {
+      await invoke('sftp_create_local_symlink', { target, linkPath })
+      await fetchLocalDir(localPath.value, { force: true })
+    } else if (currentSessionId.value) {
+      await invoke('sftp_create_remote_symlink', { sessionId: currentSessionId.value, target, linkPath })
+      await fetchRemoteDir(currentSessionId.value, remotePath.value, { force: true })
+    }
+  }
+
   return {
     currentSessionId,
     remotePath,
@@ -2481,5 +2602,14 @@ export const useSftpStore = defineStore('sftp', () => {
     stopActiveFolderUpload,
     activeFolderDownload,
     stopActiveFolderDownload,
+    clipboard,
+    copyToClipboard,
+    cutToClipboard,
+    pasteFromClipboard,
+    duplicateItem,
+    calculatedDirSizes,
+    calculateDirSize,
+    calculateChecksum,
+    createSymlink,
   }
 })

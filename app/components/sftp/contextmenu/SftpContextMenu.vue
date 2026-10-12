@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ExternalLink } from 'lucide-vue-next'
-import type { LocalFileEntry, SftpFileEntry } from '../../../stores/sftp'
+import {
+  ExternalLink,
+  Copy,
+  Scissors,
+  ClipboardPaste,
+  Files,
+  Hash,
+  Link2,
+  Calculator,
+} from 'lucide-vue-next'
+import { useSftpStore, type LocalFileEntry, type SftpFileEntry } from '../../../stores/sftp'
 import { isArchiveFile } from '../../../utils/formatters'
 import CatppuccinIcon from '../../CatppuccinIcon.vue'
 
@@ -37,6 +46,7 @@ const emit = defineEmits<{
   (e: 'compress', target: 'local' | 'remote'): void
   (e: 'newFile', target: 'local' | 'remote'): void
   (e: 'newFolder', target: 'local' | 'remote'): void
+  (e: 'newSymlink', target: 'local' | 'remote', item?: LocalFileEntry | SftpFileEntry): void
   (e: 'rename', target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry): void
   (e: 'copyPath', path: string): void
   (e: 'toggleBookmark', target: 'local' | 'remote', path?: string): void
@@ -45,7 +55,21 @@ const emit = defineEmits<{
   (e: 'batchDeleteLocal', files: LocalFileEntry[]): void
   (e: 'batchDeleteRemote', files: SftpFileEntry[]): void
   (e: 'refresh', target: 'local' | 'remote'): void
+  (e: 'copy', target: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]): void
+  (e: 'cut', target: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]): void
+  (e: 'paste', target: 'local' | 'remote', targetDir?: string): void
+  (e: 'duplicate', target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry): void
+  (e: 'calculateDirSize', target: 'local' | 'remote', path: string): void
+  (e: 'calculateChecksum', target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry): void
 }>()
+
+const sftpStore = useSftpStore()
+const hasClipboard = computed(() => !!sftpStore.clipboard && sftpStore.clipboard.files.length > 0)
+const clipboardDesc = computed(() => {
+  if (!sftpStore.clipboard) return ''
+  const count = sftpStore.clipboard.files.length
+  return `(${count} item${count > 1 ? 's' : ''})`
+})
 
 
 const isLocalBookmarked = computed(() => props.localBookmarks.includes(props.currentLocalPath))
@@ -213,6 +237,89 @@ const menuHeaderBadge = computed(() => {
           <span class="truncate">{{ localBookmarks.includes(selectedLocalFiles[0].path) ? 'Remove Bookmark' : 'Bookmark Folder' }}</span>
         </button>
 
+        <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
+
+        <!-- Duplicate (Single item) -->
+        <button
+          v-if="selectedLocalFiles.length === 1"
+          @click="emit('duplicate', 'local', selectedLocalFiles[0]); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Files :size="15" class="opacity-80" />
+            <span class="truncate">Duplicate</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+D</span>
+        </button>
+
+        <!-- Copy -->
+        <button
+          @click="emit('copy', 'local', selectedLocalFiles); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Copy :size="15" class="opacity-80" />
+            <span class="truncate">Copy</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+C</span>
+        </button>
+
+        <!-- Cut -->
+        <button
+          @click="emit('cut', 'local', selectedLocalFiles); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Scissors :size="15" class="opacity-80" />
+            <span class="truncate">Cut</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+X</span>
+        </button>
+
+        <!-- Paste into Folder (if 1 folder selected and clipboard has items) -->
+        <button
+          v-if="hasClipboard && selectedLocalFiles.length === 1 && selectedLocalFiles[0].is_dir"
+          @click="emit('paste', 'local', selectedLocalFiles[0].path); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+          :style="{ color: 'var(--color-accent)' }"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <ClipboardPaste :size="15" class="opacity-80" />
+            <span class="truncate">Paste into Folder {{ clipboardDesc }}</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+V</span>
+        </button>
+
+        <!-- Calculate Directory Size (Single Folder) -->
+        <button
+          v-if="selectedLocalFiles.length === 1 && selectedLocalFiles[0].is_dir"
+          @click="emit('calculateDirSize', 'local', selectedLocalFiles[0].path); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Calculator :size="15" class="opacity-80" />
+          <span class="truncate">Calculate Directory Size</span>
+        </button>
+
+        <!-- Calculate Checksum / Hash (Single File) -->
+        <button
+          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0].is_dir"
+          @click="emit('calculateChecksum', 'local', selectedLocalFiles[0]); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Hash :size="15" class="opacity-80" />
+          <span class="truncate">Checksum (MD5 / SHA-256)...</span>
+        </button>
+
+        <!-- Create Symlink pointing to this item -->
+        <button
+          v-if="selectedLocalFiles.length === 1"
+          @click="emit('newSymlink', 'local', selectedLocalFiles[0]); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Link2 :size="15" class="opacity-80" />
+          <span class="truncate">Create Symbolic Link...</span>
+        </button>
+
         <!-- Rename (Single item) -->
         <button
           v-if="selectedLocalFiles.length === 1"
@@ -266,6 +373,28 @@ const menuHeaderBadge = computed(() => {
         >
           <CatppuccinIcon name="new-folder" :size="15" />
           <span class="truncate">New Directory</span>
+        </button>
+
+        <button
+          @click="emit('newSymlink', 'local'); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Link2 :size="15" class="opacity-80" />
+          <span class="truncate">Create Symbolic Link...</span>
+        </button>
+
+        <!-- Paste into current directory if clipboard has items -->
+        <button
+          v-if="hasClipboard"
+          @click="emit('paste', 'local'); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left font-medium"
+          :style="{ color: 'var(--color-accent)' }"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <ClipboardPaste :size="15" class="opacity-80" />
+            <span class="truncate">Paste {{ clipboardDesc }}</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+V</span>
         </button>
 
         <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
@@ -475,6 +604,91 @@ const menuHeaderBadge = computed(() => {
           <span class="truncate">{{ remoteBookmarks.includes(selectedRemoteFiles[0].path) ? 'Remove Bookmark' : 'Bookmark Folder' }}</span>
         </button>
 
+        <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
+
+        <!-- Duplicate (Single item) -->
+        <button
+          v-if="sessionId && selectedRemoteFiles.length === 1"
+          @click="emit('duplicate', 'remote', selectedRemoteFiles[0]); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Files :size="15" class="opacity-80" />
+            <span class="truncate">Duplicate</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+D</span>
+        </button>
+
+        <!-- Copy -->
+        <button
+          v-if="sessionId"
+          @click="emit('copy', 'remote', selectedRemoteFiles); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Copy :size="15" class="opacity-80" />
+            <span class="truncate">Copy</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+C</span>
+        </button>
+
+        <!-- Cut -->
+        <button
+          v-if="sessionId"
+          @click="emit('cut', 'remote', selectedRemoteFiles); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Scissors :size="15" class="opacity-80" />
+            <span class="truncate">Cut</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+X</span>
+        </button>
+
+        <!-- Paste into Folder (if 1 folder selected and clipboard has items) -->
+        <button
+          v-if="sessionId && hasClipboard && selectedRemoteFiles.length === 1 && selectedRemoteFiles[0].is_dir"
+          @click="emit('paste', 'remote', selectedRemoteFiles[0].path); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
+          :style="{ color: 'var(--color-accent-secondary)' }"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <ClipboardPaste :size="15" class="opacity-80" />
+            <span class="truncate">Paste into Folder {{ clipboardDesc }}</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+V</span>
+        </button>
+
+        <!-- Calculate Directory Size (Single Folder) -->
+        <button
+          v-if="sessionId && selectedRemoteFiles.length === 1 && selectedRemoteFiles[0].is_dir"
+          @click="emit('calculateDirSize', 'remote', selectedRemoteFiles[0].path); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Calculator :size="15" class="opacity-80" />
+          <span class="truncate">Calculate Directory Size</span>
+        </button>
+
+        <!-- Calculate Checksum / Hash (Single File) -->
+        <button
+          v-if="sessionId && selectedRemoteFiles.length === 1 && !selectedRemoteFiles[0].is_dir"
+          @click="emit('calculateChecksum', 'remote', selectedRemoteFiles[0]); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Hash :size="15" class="opacity-80" />
+          <span class="truncate">Checksum (MD5 / SHA-256)...</span>
+        </button>
+
+        <!-- Create Symlink pointing to this item -->
+        <button
+          v-if="sessionId && selectedRemoteFiles.length === 1"
+          @click="emit('newSymlink', 'remote', selectedRemoteFiles[0]); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Link2 :size="15" class="opacity-80" />
+          <span class="truncate">Create Symbolic Link...</span>
+        </button>
+
         <!-- Rename (Single item) -->
         <button
           v-if="selectedRemoteFiles.length === 1"
@@ -530,6 +744,29 @@ const menuHeaderBadge = computed(() => {
         >
           <CatppuccinIcon name="new-folder" :size="15" />
           <span class="truncate">New Directory</span>
+        </button>
+
+        <button
+          v-if="sessionId"
+          @click="emit('newSymlink', 'remote'); emit('close')"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+        >
+          <Link2 :size="15" class="opacity-80" />
+          <span class="truncate">Create Symbolic Link...</span>
+        </button>
+
+        <!-- Paste into current directory if clipboard has items -->
+        <button
+          v-if="sessionId && hasClipboard"
+          @click="emit('paste', 'remote'); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left font-medium"
+          :style="{ color: 'var(--color-accent-secondary)' }"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <ClipboardPaste :size="15" class="opacity-80" />
+            <span class="truncate">Paste {{ clipboardDesc }}</span>
+          </div>
+          <span class="menu-shortcut">Ctrl+V</span>
         </button>
 
         <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />

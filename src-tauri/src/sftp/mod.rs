@@ -23,6 +23,8 @@ pub struct SftpFileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+    #[serde(default)]
+    pub symlink_target: Option<String>,
     pub size: u64,
     pub modified: u64,
     pub permissions: u32,
@@ -36,6 +38,8 @@ pub struct LocalFileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+    #[serde(default)]
+    pub symlink_target: Option<String>,
     pub size: u64,
     pub modified: u64,
 }
@@ -217,11 +221,18 @@ pub async fn list_remote_dir(sftp: &SftpSession, dir_path: &str) -> Result<(Stri
             format!("{}/{}", target_dir, file_name)
         };
 
+        let symlink_target = if is_symlink {
+            sftp.read_link(&full_path).await.ok()
+        } else {
+            None
+        };
+
         result.push(SftpFileEntry {
             name: file_name,
             path: full_path,
             is_dir,
             is_symlink,
+            symlink_target,
             size,
             modified,
             permissions,
@@ -940,6 +951,16 @@ pub async fn download_file(
 
     // Flush and complete
     let _ = local_file.flush().await;
+    drop(local_file);
+
+    // Preserve remote modification timestamp on downloaded local file
+    if let Ok(meta) = sftp.metadata(&remote_path).await {
+        if let Some(mtime) = meta.mtime {
+            let ft = filetime::FileTime::from_unix_time(mtime as i64, 0);
+            let _ = filetime::set_file_mtime(&native_local, ft);
+        }
+    }
+
     log::info!(
         "[download_file] Finished successfully: '{}' ({} bytes)",
         remote_path, transferred
@@ -1162,6 +1183,19 @@ pub async fn upload_file(
     }
 
     let _ = remote_file.flush().await;
+    drop(remote_file);
+
+    // Preserve local modification timestamp on uploaded remote file
+    if let Ok(meta) = fs::metadata(&native_local).await {
+        if let Ok(mtime) = meta.modified() {
+            if let Ok(duration) = mtime.duration_since(UNIX_EPOCH) {
+                let mut attrs = russh_sftp::protocol::FileAttributes::default();
+                attrs.mtime = Some(duration.as_secs() as u32);
+                let _ = sftp.set_metadata(&remote_path, attrs).await;
+            }
+        }
+    }
+
     log::info!(
         "[upload_file] Finished successfully: '{}' ({} bytes)",
         remote_path, transferred
@@ -1433,11 +1467,21 @@ pub async fn list_local_dir(dir_path: Option<String>) -> Result<(String, Vec<Loc
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
+        let symlink_target = if is_symlink {
+            fs::read_link(&entry.path())
+                .await
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+        } else {
+            None
+        };
+
         result.push(LocalFileEntry {
             name: file_name,
             path: clean_path,
             is_dir,
             is_symlink,
+            symlink_target,
             size,
             modified,
         });
@@ -1569,6 +1613,180 @@ fn copy_dir_recursive<'a>(
         }
         Ok(())
     })
+}
+
+pub async fn move_local_paths(paths: Vec<String>, target_dir: &str) -> Result<(), String> {
+    let (target_native, _) = normalize_to_native_path(target_dir);
+    if !target_native.exists() {
+        fs::create_dir_all(&target_native)
+            .await
+            .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+    }
+
+    for path_str in paths {
+        let (src_native, _) = normalize_to_native_path(&path_str);
+        if !src_native.exists() {
+            continue;
+        }
+
+        let file_name = match src_native.file_name() {
+            Some(n) => n.to_os_string(),
+            None => continue,
+        };
+
+        let dest_native = target_native.join(file_name);
+        if src_native == dest_native {
+            continue;
+        }
+
+        if fs::rename(&src_native, &dest_native).await.is_err() {
+            let meta = fs::symlink_metadata(&src_native)
+                .await
+                .map_err(|e| format!("Failed to read metadata for '{}': {}", path_str, e))?;
+
+            if meta.is_dir() {
+                copy_dir_recursive(&src_native, &dest_native).await?;
+                let _ = fs::remove_dir_all(&src_native).await;
+            } else {
+                fs::copy(&src_native, &dest_native)
+                    .await
+                    .map_err(|e| format!("Failed to copy file to '{}': {}", dest_native.display(), e))?;
+                let _ = fs::remove_file(&src_native).await;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn duplicate_local_path(path: &str, new_name: Option<String>) -> Result<String, String> {
+    let (src_native, _) = normalize_to_native_path(path);
+    if !src_native.exists() {
+        return Err(format!("Source path '{}' does not exist", path));
+    }
+
+    let parent = src_native.parent().unwrap_or(&src_native);
+    let orig_name = src_native.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+
+    let dest_name = if let Some(n) = new_name.filter(|s| !s.trim().is_empty()) {
+        n.trim().to_string()
+    } else {
+        if let Some((stem, ext)) = orig_name.rsplit_once('.') {
+            format!("{} - Copy.{}", stem, ext)
+        } else {
+            format!("{} - Copy", orig_name)
+        }
+    };
+
+    let dest_native = parent.join(&dest_name);
+    let meta = fs::symlink_metadata(&src_native)
+        .await
+        .map_err(|e| format!("Failed to inspect '{}': {}", path, e))?;
+
+    if meta.is_dir() {
+        copy_dir_recursive(&src_native, &dest_native).await?;
+    } else {
+        fs::copy(&src_native, &dest_native)
+            .await
+            .map_err(|e| format!("Failed to duplicate file to '{}': {}", dest_native.display(), e))?;
+    }
+
+    Ok(dest_native.to_string_lossy().replace('\\', "/"))
+}
+
+pub async fn get_local_dir_size(path: &str) -> Result<u64, String> {
+    let (native, _) = normalize_to_native_path(path);
+    if !native.exists() {
+        return Err(format!("Path '{}' does not exist", path));
+    }
+
+    let mut total_bytes: u64 = 0;
+    let mut stack = vec![native];
+
+    while let Some(current) = stack.pop() {
+        if let Ok(mut entries) = fs::read_dir(&current).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if let Ok(meta) = entry.metadata().await {
+                    if meta.is_dir() {
+                        stack.push(entry.path());
+                    } else {
+                        total_bytes += meta.len();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(total_bytes)
+}
+
+pub async fn calculate_local_checksum(path: &str, algorithm: &str) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+
+    let (native, _) = normalize_to_native_path(path);
+    if !native.exists() {
+        return Err(format!("File '{}' does not exist", path));
+    }
+
+    let mut file = fs::File::open(&native)
+        .await
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+
+    let mut buffer = [0u8; 65536];
+
+    if algorithm.eq_ignore_ascii_case("md5") {
+        let mut context = md5::Context::new();
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            context.consume(&buffer[..n]);
+        }
+        let digest = context.compute();
+        Ok(format!("{:x}", digest))
+    } else {
+        let mut hasher = Sha256::new();
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        let result = hasher.finalize();
+        Ok(format!("{:x}", result))
+    }
+}
+
+pub async fn create_local_symlink(target: &str, link_path: &str) -> Result<(), String> {
+    let (native_target, _) = normalize_to_native_path(target);
+    let (native_link, _) = normalize_to_native_path(link_path);
+
+    #[cfg(windows)]
+    {
+        if native_target.is_dir() {
+            std::os::windows::fs::symlink_dir(&native_target, &native_link)
+                .map_err(|e| format!("Failed to create directory symlink: {}", e))?;
+        } else {
+            std::os::windows::fs::symlink_file(&native_target, &native_link)
+                .map_err(|e| format!("Failed to create file symlink: {}", e))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    {
+        tokio::fs::symlink(&native_target, &native_link)
+            .await
+            .map_err(|e| format!("Failed to create symlink: {}", e))
+    }
 }
 
 pub async fn get_wsl_distributions() -> Result<Vec<String>, String> {

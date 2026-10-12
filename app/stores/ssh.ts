@@ -47,6 +47,7 @@ export interface SshSessionItem {
   protocol?: 'sftp' | 'ftp' | 'ftps'
   status: 'connecting' | 'connected' | 'disconnected' | 'error'
   error?: string
+  defaultRemotePath?: string
 }
 
 export interface BackendSessionInfo {
@@ -116,7 +117,7 @@ export const useSshStore = defineStore('ssh', () => {
     }
   }
 
-  async function connect(config: SshConnectConfig): Promise<string> {
+  async function connect(config: SshConnectConfig, defaultRemotePath?: string): Promise<string> {
     const tempId = `temp-${Date.now()}`
     const item: SshSessionItem = {
       sessionId: tempId,
@@ -125,6 +126,7 @@ export const useSshStore = defineStore('ssh', () => {
       username: config.username,
       protocol: 'sftp',
       status: 'connecting',
+      defaultRemotePath,
     }
     sessions.value.push(item)
 
@@ -144,6 +146,7 @@ export const useSshStore = defineStore('ssh', () => {
       // Update session item with actual backend session ID
       item.sessionId = sessionId
       item.status = 'connected'
+      item.defaultRemotePath = defaultRemotePath
       activeSessionId.value = sessionId
       saveConfig(sessionId, config)
       return sessionId
@@ -154,7 +157,7 @@ export const useSshStore = defineStore('ssh', () => {
     }
   }
 
-  async function connectFtp(config: FtpConnectConfig): Promise<string> {
+  async function connectFtp(config: FtpConnectConfig, defaultRemotePath?: string): Promise<string> {
     const tempId = `temp-${Date.now()}`
     const item: SshSessionItem = {
       sessionId: tempId,
@@ -163,6 +166,7 @@ export const useSshStore = defineStore('ssh', () => {
       username: config.username,
       protocol: config.secure ? 'ftps' : 'ftp',
       status: 'connecting',
+      defaultRemotePath,
     }
     sessions.value.push(item)
 
@@ -177,6 +181,7 @@ export const useSshStore = defineStore('ssh', () => {
 
       item.sessionId = sessionId
       item.status = 'connected'
+      item.defaultRemotePath = defaultRemotePath
       activeSessionId.value = sessionId
       localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId)
       saveConfig(sessionId, config)

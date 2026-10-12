@@ -750,6 +750,17 @@ defineExpose({
                 </span>
                 <span v-else class="font-normal truncate leading-tight" :style="{ color: 'var(--color-text-main)' }">{{ file.name }}</span>
 
+                <!-- Symlink Target Indicator -->
+                <span
+                  v-if="file.is_symlink"
+                  class="text-[10px] font-mono opacity-70 flex items-center gap-1 shrink-0"
+                  :style="{ color: 'var(--color-accent)' }"
+                  :title="file.symlink_target ? `Symlink to: ${file.symlink_target}` : 'Symbolic Link'"
+                >
+                  <span class="opacity-60">➔</span>
+                  <span v-if="file.symlink_target" class="truncate max-w-[140px] underline decoration-dotted">{{ file.symlink_target }}</span>
+                </span>
+
                 <!-- Comparison Status Badge -->
                 <SftpComparisonBadge
                   v-if="isComparing"
@@ -780,7 +791,17 @@ defineExpose({
               {{ getFileType(file) }}
             </td>
             <td :class="[cellPaddingClass, 'text-right font-mono text-[0.92em] whitespace-nowrap']" :style="{ color: 'var(--color-text-muted)' }">
-              {{ file.is_dir ? '-' : formatBytes(file.size) }}
+              <span
+                v-if="file.is_dir && sftpStore.calculatedDirSizes[file.path] !== undefined"
+                :title="`Calculated Directory Size: ${formatBytes(sftpStore.calculatedDirSizes[file.path])}`"
+                :style="{ color: 'var(--color-accent)' }"
+                class="font-semibold"
+              >
+                {{ formatBytes(sftpStore.calculatedDirSizes[file.path]) }}
+              </span>
+              <span v-else>
+                {{ file.is_dir ? '-' : formatBytes(file.size) }}
+              </span>
             </td>
             <td :class="[cellPaddingClass, 'text-[0.92em] whitespace-nowrap']" :style="{ color: 'var(--color-text-muted)' }">
               {{ formatDate(file.modified) }}

@@ -35,6 +35,9 @@ use commands::sftp::{
     sftp_extract_remote_archive, sftp_compress_remote_archive,
     sftp_extract_local_archive, sftp_compress_local_archive,
     sftp_crawl_local_paths, sftp_crawl_remote_paths, sftp_batch_create_remote_dirs, exit_app,
+    sftp_move_remote_paths, sftp_move_local_paths, sftp_duplicate_remote_path, sftp_duplicate_local_path,
+    sftp_create_remote_symlink, sftp_create_local_symlink, sftp_get_remote_dir_size, sftp_get_local_dir_size,
+    sftp_calculate_remote_checksum, sftp_calculate_local_checksum,
 };
 use commands::ssh::{
     ssh_connect, ssh_disconnect, ssh_get_history, ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
@@ -105,6 +108,16 @@ pub fn run() {
             sftp_compress_local_archive,
             sftp_crawl_local_paths,
             sftp_crawl_remote_paths,
+            sftp_move_remote_paths,
+            sftp_move_local_paths,
+            sftp_duplicate_remote_path,
+            sftp_duplicate_local_path,
+            sftp_create_remote_symlink,
+            sftp_create_local_symlink,
+            sftp_get_remote_dir_size,
+            sftp_get_local_dir_size,
+            sftp_calculate_remote_checksum,
+            sftp_calculate_local_checksum,
             // External Editor & Live Auto-Sync Commands
             sftp_start_external_edit,
             sftp_stop_external_edit,

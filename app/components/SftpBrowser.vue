@@ -30,6 +30,8 @@ import SftpCompressModal from './sftp/modals/SftpCompressModal.vue'
 import SftpExtractModal from './sftp/modals/SftpExtractModal.vue'
 import SftpConflictModal from './sftp/modals/SftpConflictModal.vue'
 import SftpDeleteConfirmModal from './sftp/modals/SftpDeleteConfirmModal.vue'
+import SftpNewSymlinkModal from './sftp/modals/SftpNewSymlinkModal.vue'
+import SftpChecksumModal from './sftp/modals/SftpChecksumModal.vue'
 import SftpTransferQueue from './sftp/queue/SftpTransferQueue.vue'
 import SftpComparisonBar from './sftp/compare/SftpComparisonBar.vue'
 import SftpExternalEditBar from './sftp/SftpExternalEditBar.vue'
@@ -43,7 +45,7 @@ import { useSftpDragDrop } from './sftp/composables/useSftpDragDrop'
 import SftpLocalPane from './sftp/panes/SftpLocalPane.vue'
 import SftpRemotePane from './sftp/panes/SftpRemotePane.vue'
 import SftpContextMenu from './sftp/contextmenu/SftpContextMenu.vue'
-import { isArchiveFile } from '../utils/formatters'
+import { isArchiveFile, formatBytes } from '../utils/formatters'
 import {
   type FileSortField,
   type FileSortOrder,
@@ -196,6 +198,80 @@ const extractArchiveFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
 const extractSubfolderName = ref('')
 const isExtractingArchive = ref(false)
 const extractInputRef = ref<HTMLInputElement | null>(null)
+
+// Symlink Modal State
+const showNewSymlinkModal = ref(false)
+const newSymlinkTarget = ref<'local' | 'remote'>('remote')
+const newSymlinkItem = ref<LocalFileEntry | SftpFileEntry | null>(null)
+
+// Checksum Modal State
+const showChecksumModal = ref(false)
+const checksumTarget = ref<'local' | 'remote'>('remote')
+const checksumFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
+
+const openNewSymlink = (target: 'local' | 'remote', item?: LocalFileEntry | SftpFileEntry) => {
+  newSymlinkTarget.value = target
+  newSymlinkItem.value = item || null
+  showNewSymlinkModal.value = true
+}
+
+const submitNewSymlink = async (data: { target: string; linkName: string }) => {
+  showNewSymlinkModal.value = false
+  try {
+    const parentPath = newSymlinkTarget.value === 'local' ? sftpStore.localPath : sftpStore.remotePath
+    const cleanParent = parentPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const linkFullPath = `${cleanParent}/${data.linkName}`
+    await sftpStore.createSymlink(newSymlinkTarget.value, data.target, linkFullPath)
+    sftpStore.triggerTransferToast(`Created symlink: ${data.linkName}`)
+  } catch (err: any) {
+    showArchiveToast(`Failed to create symlink: ${err?.message || err}`, true)
+  }
+}
+
+const openChecksum = (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
+  checksumTarget.value = target
+  checksumFile.value = file
+  showChecksumModal.value = true
+}
+
+const handleCalculateDirSize = async (target: 'local' | 'remote', path: string) => {
+  try {
+    sftpStore.triggerTransferToast('Calculating folder size...')
+    const size = await sftpStore.calculateDirSize(target, path)
+    sftpStore.triggerTransferToast(`Folder size: ${formatBytes(size)}`)
+  } catch (err: any) {
+    showArchiveToast(`Failed to calculate directory size: ${err?.message || err}`, true)
+  }
+}
+
+const handleDuplicate = async (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry) => {
+  try {
+    await sftpStore.duplicateItem(target, file)
+    sftpStore.triggerTransferToast(`Duplicated ${file.name}`)
+  } catch (err: any) {
+    showArchiveToast(`Failed to duplicate: ${err?.message || err}`, true)
+  }
+}
+
+const handleCopy = (target: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) => {
+  sftpStore.copyToClipboard(target, files)
+  sftpStore.triggerTransferToast(`Copied ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+}
+
+const handleCut = (target: 'local' | 'remote', files: (LocalFileEntry | SftpFileEntry)[]) => {
+  sftpStore.cutToClipboard(target, files)
+  sftpStore.triggerTransferToast(`Cut ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+}
+
+const handlePaste = async (target: 'local' | 'remote', targetDir?: string) => {
+  if (!sftpStore.clipboard) return
+  try {
+    await sftpStore.pasteFromClipboard(target, targetDir)
+    sftpStore.triggerTransferToast('Pasted items successfully')
+  } catch (err: any) {
+    showArchiveToast(`Paste failed: ${err?.message || err}`, true)
+  }
+}
 
 const archiveToast = ref<{ message: string; isError: boolean; isLoading: boolean } | null>(null)
 let archiveToastTimer: any = null
@@ -1054,6 +1130,8 @@ const isAnyModalOpen = () => {
     showRenameModal.value ||
     showCompressModal.value ||
     showExtractModal.value ||
+    showNewSymlinkModal.value ||
+    showChecksumModal.value ||
     showEditorModal.value ||
     showPermissionsModal.value ||
     showDeleteConfirmModal.value ||
@@ -1640,6 +1718,8 @@ const {
     showRenameModal.value = false
     showCompressModal.value = false
     showExtractModal.value = false
+    showNewSymlinkModal.value = false
+    showChecksumModal.value = false
     showSearchModal.value = false
     showDirWatcherModal.value = false
     localPaneComp.value?.closeAllDropdowns()
@@ -2918,6 +2998,13 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       @batch-delete-local="(files) => handleBatchDeleteLocal(files)"
       @batch-delete-remote="(files) => handleBatchDeleteRemote(files)"
       @refresh="(target) => handleRefresh(target)"
+      @copy="(target, files) => handleCopy(target, files)"
+      @cut="(target, files) => handleCut(target, files)"
+      @paste="(target, dir) => handlePaste(target, dir)"
+      @duplicate="(target, file) => handleDuplicate(target, file)"
+      @calculate-dir-size="(target, path) => handleCalculateDirSize(target, path)"
+      @calculate-checksum="(target, file) => openChecksum(target, file)"
+      @new-symlink="(target, item) => openNewSymlink(target, item)"
     />
 
     <!-- Rename Modal -->
@@ -2967,6 +3054,24 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       :existing-items="newFileTarget === 'local' ? sftpStore.localFiles : sftpStore.remoteFiles"
       @close="showNewFileModal = false"
       @submit="submitNewFile"
+    />
+
+    <!-- New Symbolic Link Modal -->
+    <SftpNewSymlinkModal
+      :show="showNewSymlinkModal"
+      :target="newSymlinkTarget"
+      :current-path="newSymlinkTarget === 'local' ? sftpStore.localPath : sftpStore.remotePath"
+      :selected-item="newSymlinkItem"
+      @close="showNewSymlinkModal = false"
+      @submit="submitNewSymlink"
+    />
+
+    <!-- File Checksum Modal -->
+    <SftpChecksumModal
+      :show="showChecksumModal"
+      :target="checksumTarget"
+      :file="checksumFile"
+      @close="showChecksumModal = false"
     />
 
     <!-- Conflict Resolution Modal -->

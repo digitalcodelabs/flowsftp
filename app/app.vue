@@ -91,8 +91,8 @@ const scrollActiveTabIntoView = (sessionId: string) => {
 
 const selectSession = (sessionId: string) => {
   sshStore.setActiveSession(sessionId)
-  sftpStore.switchSession(sessionId)
   const sess = sshStore.sessions.find((s) => s.sessionId === sessionId)
+  sftpStore.switchSession(sessionId, sess?.defaultRemotePath)
   if (sess && (sess.protocol === 'ftp' || sess.protocol === 'ftps')) {
     currentTab.value = 'sftp'
   }

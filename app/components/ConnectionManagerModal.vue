@@ -126,6 +126,7 @@ const form = ref({
   authType: 'Password' as 'Password' | 'KeyFile',
   secret: '',
   keyPath: '',
+  defaultRemotePath: '',
   saveToKeychain: true,
 })
 
@@ -332,6 +333,7 @@ const handleStartAdd = () => {
     authType: 'Password',
     secret: '',
     keyPath: '',
+    defaultRemotePath: '',
     saveToKeychain: true,
   }
   errorMessage.value = null
@@ -350,6 +352,7 @@ const handleStartEdit = (profile: SavedConnectionProfile) => {
     authType: (profile.auth_type as 'Password' | 'KeyFile') || 'Password',
     secret: '', // Left blank so existing secret is preserved unless intentionally updated
     keyPath: profile.key_path || '',
+    defaultRemotePath: profile.default_remote_path || '',
     saveToKeychain: profile.has_saved_secret,
   }
   errorMessage.value = null
@@ -372,7 +375,7 @@ const doConnect = async (profile: SavedConnectionProfile, authPayload: any) => {
       username: profile.username,
       password: password || undefined,
       secure: profile.protocol === 'ftps',
-    })
+    }, profile.default_remote_path)
 
     addLog('FTP session ready. Launching...', 'success')
     emit('connected', sessionId)
@@ -386,7 +389,7 @@ const doConnect = async (profile: SavedConnectionProfile, authPayload: any) => {
     port: profile.port,
     username: profile.username,
     auth: authPayload,
-  })
+  }, profile.default_remote_path)
 
   addLog('SSH session established. Launching...', 'success')
   emit('connected', sessionId)
@@ -542,6 +545,7 @@ const saveProfileData = async (shouldConnect: boolean) => {
       auth_type: form.value.protocol === 'sftp' ? form.value.authType : 'Password',
       key_path: form.value.protocol === 'sftp' && form.value.authType === 'KeyFile' ? form.value.keyPath.trim() : undefined,
       has_saved_secret: willHaveSecret,
+      default_remote_path: form.value.defaultRemotePath.trim() || undefined,
       created_at: existingProfile?.created_at || Math.floor(Date.now() / 1000),
     }
 
@@ -1569,6 +1573,23 @@ const handleFormSubmit = () => {
               :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
+        </div>
+
+        <!-- Default Remote Directory (Optional) -->
+        <div>
+          <label class="block text-[11px] font-medium uppercase tracking-wider mb-1" :style="{ color: 'var(--color-text-muted)' }">
+            Default Remote Directory (Optional)
+          </label>
+          <input
+            v-model="form.defaultRemotePath"
+            type="text"
+            placeholder="/var/www/html or /home/username or leave blank for server default"
+            class="w-full px-3 py-1.5 rounded-lg border text-xs font-mono focus:outline-none input-theme"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+          />
+          <p class="text-[10px] mt-1" :style="{ color: 'var(--color-text-muted)' }">
+            Automatically navigates to this directory upon connecting.
+          </p>
         </div>
 
         <!-- Keychain Save Checkbox -->

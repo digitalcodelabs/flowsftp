@@ -552,11 +552,18 @@ pub async fn sftp_get_paths_metadata(paths: Vec<String>) -> Result<Vec<LocalFile
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
 
+            let symlink_target = if is_symlink {
+                std::fs::read_link(&native).ok().map(|p| p.to_string_lossy().replace('\\', "/"))
+            } else {
+                None
+            };
+
             entries.push(LocalFileEntry {
                 name,
                 path: native.to_string_lossy().to_string(),
                 is_dir,
                 is_symlink,
+                symlink_target,
                 size,
                 modified,
             });
@@ -1404,6 +1411,216 @@ fn crawl_remote_dir_recursive<'a>(
 pub fn exit_app(app: AppHandle) {
     eprintln!("[FLOWSFTP_BACKEND] exit_app invoked. Exiting application.");
     app.exit(0);
+}
+
+#[tauri::command]
+pub async fn sftp_move_remote_paths(
+    state: State<'_, AppState>,
+    session_id: String,
+    paths: Vec<String>,
+    target_dir: String,
+) -> Result<(), String> {
+    let clean_target = target_dir.trim().replace('\\', "/");
+    let target_base = clean_target.trim_end_matches('/');
+
+    for path in paths {
+        let clean_path = path.trim().replace('\\', "/");
+        let file_name = clean_path.split('/').filter(|s| !s.is_empty()).last().unwrap_or("");
+        if file_name.is_empty() || file_name == "." || file_name == ".." {
+            continue;
+        }
+
+        let new_path = if target_base.is_empty() {
+            format!("/{}", file_name)
+        } else {
+            format!("{}/{}", target_base, file_name)
+        };
+
+        if clean_path == new_path {
+            continue;
+        }
+
+        if let Some(ftp) = state.get_ftp_session(&session_id).await {
+            ftp.rename(&clean_path, &new_path).await?;
+        } else {
+            let session = state
+                .get_session(&session_id)
+                .await
+                .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+            let sftp = session.get_sftp().await?;
+            rename_remote(&sftp, &clean_path, &new_path).await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_move_local_paths(paths: Vec<String>, target_dir: String) -> Result<(), String> {
+    crate::sftp::move_local_paths(paths, &target_dir).await
+}
+
+#[tauri::command]
+pub async fn sftp_duplicate_remote_path(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    new_name: Option<String>,
+) -> Result<String, String> {
+    let clean_path = path.trim().replace('\\', "/");
+    let parent = clean_path.rfind('/').map(|i| &clean_path[..i]).unwrap_or("");
+    let original_name = clean_path.split('/').filter(|s| !s.is_empty()).last().unwrap_or("file");
+
+    let dest_name = if let Some(n) = new_name.filter(|s| !s.trim().is_empty()) {
+        n.trim().to_string()
+    } else {
+        if let Some((stem, ext)) = original_name.rsplit_once('.') {
+            format!("{} - Copy.{}", stem, ext)
+        } else {
+            format!("{} - Copy", original_name)
+        }
+    };
+
+    let new_path = if parent.is_empty() || parent == "/" {
+        format!("/{}", dest_name)
+    } else {
+        format!("{}/{}", parent, dest_name)
+    };
+
+    if let Some(session) = state.get_session(&session_id).await {
+        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+        let escaped_src = clean_path.replace('\'', "'\\''");
+        let escaped_dst = new_path.replace('\'', "'\\''");
+        let cmd = format!("cp -a '{}' '{}' 2>&1 || cp -r '{}' '{}' 2>&1", escaped_src, escaped_dst, escaped_src, escaped_dst);
+        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
+        let mut stream = channel.into_stream();
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        Ok(new_path)
+    } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        let data = ftp.read_file_binary(&clean_path).await?;
+        ftp.write_file_binary(&new_path, &data).await?;
+        Ok(new_path)
+    } else {
+        Err(format!("Session '{}' not found", session_id))
+    }
+}
+
+#[tauri::command]
+pub async fn sftp_duplicate_local_path(
+    path: String,
+    new_name: Option<String>,
+) -> Result<String, String> {
+    crate::sftp::duplicate_local_path(&path, new_name).await
+}
+
+#[tauri::command]
+pub async fn sftp_create_remote_symlink(
+    state: State<'_, AppState>,
+    session_id: String,
+    target: String,
+    link_path: String,
+) -> Result<(), String> {
+    let clean_target = target.trim().replace('\\', "/");
+    let clean_link = link_path.trim().replace('\\', "/");
+
+    if let Some(session) = state.get_session(&session_id).await {
+        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+        let escaped_tgt = clean_target.replace('\'', "'\\''");
+        let escaped_lnk = clean_link.replace('\'', "'\\''");
+        let cmd = format!("ln -s '{}' '{}'", escaped_tgt, escaped_lnk);
+        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
+        let mut stream = channel.into_stream();
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        Ok(())
+    } else {
+        Err("Symlink creation is not supported on FTP sessions".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn sftp_create_local_symlink(target: String, link_path: String) -> Result<(), String> {
+    crate::sftp::create_local_symlink(&target, &link_path).await
+}
+
+#[tauri::command]
+pub async fn sftp_get_remote_dir_size(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<u64, String> {
+    let clean_path = path.trim().replace('\\', "/");
+
+    if let Some(session) = state.get_session(&session_id).await {
+        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+        let escaped = clean_path.replace('\'', "'\\''");
+        let cmd = format!("du -sb '{}' 2>/dev/null || du -sk '{}' 2>/dev/null", escaped, escaped);
+        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
+        let mut stream = channel.into_stream();
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(30), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        let text = String::from_utf8_lossy(&out);
+        if let Some(first_word) = text.split_whitespace().next() {
+            if let Ok(bytes) = first_word.parse::<u64>() {
+                return Ok(bytes);
+            }
+        }
+    }
+    Err("Failed to calculate remote directory size".to_string())
+}
+
+#[tauri::command]
+pub async fn sftp_get_local_dir_size(path: String) -> Result<u64, String> {
+    crate::sftp::get_local_dir_size(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_calculate_remote_checksum(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    algorithm: String,
+) -> Result<String, String> {
+    let clean_path = path.trim().replace('\\', "/");
+
+    if let Some(session) = state.get_session(&session_id).await {
+        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+        let escaped = clean_path.replace('\'', "'\\''");
+        let cmd = if algorithm.eq_ignore_ascii_case("md5") {
+            format!("md5sum '{}' 2>/dev/null || md5 -q '{}' 2>/dev/null", escaped, escaped)
+        } else {
+            format!("sha256sum '{}' 2>/dev/null || shasum -a 256 '{}' 2>/dev/null", escaped, escaped)
+        };
+        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
+        let mut stream = channel.into_stream();
+        let mut out = Vec::new();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        let text = String::from_utf8_lossy(&out);
+        if let Some(hash) = text.split_whitespace().next() {
+            return Ok(hash.to_string());
+        }
+    } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        let data = ftp.read_file_binary(&clean_path).await?;
+        if algorithm.eq_ignore_ascii_case("md5") {
+            let digest = md5::compute(&data);
+            return Ok(format!("{:x}", digest));
+        } else {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            return Ok(format!("{:x}", hasher.finalize()));
+        }
+    }
+    Err("Failed to calculate remote file checksum".to_string())
+}
+
+#[tauri::command]
+pub async fn sftp_calculate_local_checksum(
+    path: String,
+    algorithm: String,
+) -> Result<String, String> {
+    crate::sftp::calculate_local_checksum(&path, &algorithm).await
 }
 
 

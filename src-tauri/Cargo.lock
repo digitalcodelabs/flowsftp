@@ -107,8 +107,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
+ "filetime",
  "keyring",
  "log",
+ "md5 0.7.0",
  "notify",
  "rfd",
  "russh",
@@ -117,6 +119,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "suppaftp",
  "tauri",
  "tauri-build",
@@ -1514,6 +1517,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2747,6 +2760,12 @@ dependencies = [
  "tendril",
  "web_atoms",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "md5"
@@ -3997,7 +4016,7 @@ dependencies = [
  "inout",
  "keccak",
  "log",
- "md5",
+ "md5 0.8.1",
  "ml-kem",
  "module-lattice",
  "num-bigint",

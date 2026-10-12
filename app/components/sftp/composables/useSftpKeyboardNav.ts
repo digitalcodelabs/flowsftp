@@ -465,6 +465,71 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       return
     }
 
+    // Ctrl+C / Cmd+C: Copy selected files to clipboard
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'c') {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+      e.preventDefault()
+      e.stopPropagation()
+      const pane = options.activePane.value
+      const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
+      if (files.length > 0) {
+        sftpStore.copyToClipboard(pane, files)
+        sftpStore.triggerTransferToast(`Copied ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+      }
+      return
+    }
+
+    // Ctrl+X / Cmd+X: Cut selected files to clipboard
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+      e.preventDefault()
+      e.stopPropagation()
+      const pane = options.activePane.value
+      const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
+      if (files.length > 0) {
+        sftpStore.cutToClipboard(pane, files)
+        sftpStore.triggerTransferToast(`Cut ${files.length} item${files.length > 1 ? 's' : ''} to clipboard`)
+      }
+      return
+    }
+
+    // Ctrl+V / Cmd+V: Paste from clipboard
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (sftpStore.clipboard && sftpStore.clipboard.files.length > 0) {
+        const pane = options.activePane.value
+        sftpStore.pasteFromClipboard(pane).then(() => {
+          sftpStore.triggerTransferToast('Pasted items successfully')
+        }).catch((err: any) => {
+          sftpStore.triggerTransferToast(`Paste failed: ${err?.message || err}`)
+        })
+      }
+      return
+    }
+
+    // Ctrl+D / Cmd+D: Duplicate selected item
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+      if (isTypingInInput(e)) return
+      if (options.isAnyModalOpen()) return
+      e.preventDefault()
+      e.stopPropagation()
+      const pane = options.activePane.value
+      const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
+      if (files.length === 1) {
+        sftpStore.duplicateItem(pane, files[0]).then(() => {
+          sftpStore.triggerTransferToast(`Duplicated ${files[0].name}`)
+        }).catch((err: any) => {
+          sftpStore.triggerTransferToast(`Duplicate failed: ${err?.message || err}`)
+        })
+      }
+      return
+    }
+
     // Ctrl+F / Cmd+F: Toggle In-Pane Instant Live Filter
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
       e.preventDefault()

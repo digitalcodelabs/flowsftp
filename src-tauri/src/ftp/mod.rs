@@ -1318,6 +1318,7 @@ pub fn parse_ftp_list_line(line: &str, current_dir: &str) -> Option<SftpFileEntr
                 path: full_path,
                 is_dir,
                 is_symlink: false,
+                symlink_target: None,
                 size,
                 modified: 0,
                 permissions: if is_dir { 0o755 } else { 0o644 },
@@ -1362,10 +1363,13 @@ pub fn parse_ftp_list_line(line: &str, current_dir: &str) -> Option<SftpFileEntr
 
     // Filename is from index 8 onwards
     let raw_name = parts[8..].join(" ");
-    let name = if is_symlink {
-        raw_name.split(" -> ").next().unwrap_or(&raw_name).to_string()
+    let (name, symlink_target) = if is_symlink {
+        let mut split = raw_name.split(" -> ");
+        let n = split.next().unwrap_or(&raw_name).to_string();
+        let target = split.next().map(|s| s.to_string());
+        (n, target)
     } else {
-        raw_name
+        (raw_name, None)
     };
 
     if name == "." || name == ".." {
@@ -1383,6 +1387,7 @@ pub fn parse_ftp_list_line(line: &str, current_dir: &str) -> Option<SftpFileEntr
         path: full_path,
         is_dir,
         is_symlink,
+        symlink_target,
         size,
         modified: 0,
         permissions: perm,

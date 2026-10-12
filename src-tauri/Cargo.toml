@@ -36,8 +36,7 @@ suppaftp = { version = "6.0", features = ["rustls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1"
 notify = "8.2.0"
-
-
-
-
+sha2 = "0.10"
+md5 = "0.7"
+filetime = "0.2"
 

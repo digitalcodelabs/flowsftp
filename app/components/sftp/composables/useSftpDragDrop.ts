@@ -493,6 +493,22 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
           console.error('Failed to copy files locally:', err)
         }
         return
+      } else if (pane === 'remote' && dragPayload.source === 'remote' && sid) {
+        const files = [...dragPayload.files] as SftpFileEntry[]
+        activeDragging.value = null
+        inMemoryDragPayload = null
+        const paths = files.map((f) => f.path)
+        try {
+          await invoke('sftp_move_remote_paths', {
+            sessionId: sid,
+            paths,
+            targetDir: entry.path,
+          })
+          await sftpStore.fetchRemoteDir(sid, sftpStore.remotePath)
+        } catch (err) {
+          console.error('Failed to move remote files:', err)
+        }
+        return
       }
     }
 
@@ -509,6 +525,21 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
             Array.isArray(data.files)
           ) {
             await options.onBatchUpload(data.files, entry.path)
+            return
+          } else if (
+            data.type === 'flowsftp-drag' &&
+            data.source === 'remote' &&
+            Array.isArray(data.files)
+          ) {
+            const paths = data.files.map((f: any) => f.path).filter(Boolean)
+            if (paths.length > 0) {
+              await invoke('sftp_move_remote_paths', {
+                sessionId: sid,
+                paths,
+                targetDir: entry.path,
+              })
+              await sftpStore.fetchRemoteDir(sid, sftpStore.remotePath)
+            }
             return
           }
         } else if (pane === 'local') {
