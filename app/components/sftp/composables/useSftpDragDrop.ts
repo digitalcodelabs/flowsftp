@@ -92,10 +92,20 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
     el.style.zIndex = '99999'
     el.style.pointerEvents = 'none'
 
-    const arrow = isUpload ? '↑' : '↓'
-    el.innerHTML = `<span>${arrow}</span><span>${title}</span>`
+    const arrowSpan = document.createElement('span')
+    arrowSpan.textContent = isUpload ? '↑' : '↓'
+    const titleSpan = document.createElement('span')
+    titleSpan.textContent = title
+    el.appendChild(arrowSpan)
+    el.appendChild(titleSpan)
     if (count > 1) {
-      el.innerHTML += `<span style="background:rgba(255,255,255,0.25);padding:1px 5px;border-radius:10px;font-size:10px;">+${count - 1}</span>`
+      const countSpan = document.createElement('span')
+      countSpan.style.background = 'rgba(255,255,255,0.25)'
+      countSpan.style.padding = '1px 5px'
+      countSpan.style.borderRadius = '10px'
+      countSpan.style.fontSize = '10px'
+      countSpan.textContent = `+${count - 1}`
+      el.appendChild(countSpan)
     }
     document.body.appendChild(el)
     setTimeout(() => {
@@ -284,7 +294,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
             await sftpStore.copyRemotePaths(sid, paths, destDir)
           } else {
             await invoke('sftp_move_remote_paths', { sessionId: sid, paths, targetDir: destDir })
-            await sftpStore.fetchRemoteDir(sid, destDir)
+            await sftpStore.fetchRemoteDir(sid, destDir, { force: true })
           }
         }
         return
@@ -321,7 +331,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
                 await sftpStore.copyRemotePaths(sid, paths, destDir)
               } else {
                 await invoke('sftp_move_remote_paths', { sessionId: sid, paths, targetDir: destDir })
-                await sftpStore.fetchRemoteDir(sid, destDir)
+                await sftpStore.fetchRemoteDir(sid, destDir, { force: true })
               }
             }
           }
@@ -396,7 +406,9 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
 
     const leftSourceStr = normalizeSessionId(options.leftPaneSource)
     const isLeftRemote = !!leftSourceStr && leftSourceStr !== 'local'
-    const leftRemotePath = isLeftRemote && leftSourceStr ? (sftpStore.sessionRemotePaths[leftSourceStr] || '/') : '/'
+    const leftRemotePath = isLeftRemote
+      ? (options.leftRemotePath?.value || (leftSourceStr ? sftpStore.sessionRemotePaths[leftSourceStr] : '/') || '/')
+      : '/'
     const destDir = targetFolder?.pane === 'local' ? targetFolder.path : (isLeftRemote ? leftRemotePath : sftpStore.localPath)
 
     // 1. In-memory drag state (100% reliable within webview)
@@ -455,7 +467,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
               paths: filePaths,
               targetDir: destDir,
             })
-            await sftpStore.fetchLocalDir(sftpStore.localPath)
+            await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
           }
         } catch (err) {
           console.error('Failed to copy/upload files to left pane:', err)
@@ -497,7 +509,11 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
   }
 
   const handleParentFolderDragOver = (e: DragEvent, pane: 'local' | 'remote') => {
-    const parentPath = pane === 'local' ? options.localParentPath.value : options.remoteParentPath.value
+    const leftSourceStr = normalizeSessionId(options.leftPaneSource)
+    const isLeftRemote = !!leftSourceStr && leftSourceStr !== 'local'
+    const parentPath = pane === 'local'
+      ? (isLeftRemote ? (options.leftRemoteParentPath?.value ?? null) : options.localParentPath.value)
+      : options.remoteParentPath.value
     if (!parentPath) return
     const virtualEntry: LocalFileEntry | SftpFileEntry = {
       name: '..',
@@ -506,13 +522,17 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       is_symlink: false,
       size: 0,
       modified: 0,
-      ...(pane === 'remote' ? { permissions: 0o755 } : {}),
+      ...((pane === 'remote' || isLeftRemote) ? { permissions: 0o755 } : {}),
     }
     handleFolderDragOver(e, pane, virtualEntry)
   }
 
   const handleParentFolderDragLeave = (pane: 'local' | 'remote') => {
-    const parentPath = pane === 'local' ? options.localParentPath.value : options.remoteParentPath.value
+    const leftSourceStr = normalizeSessionId(options.leftPaneSource)
+    const isLeftRemote = !!leftSourceStr && leftSourceStr !== 'local'
+    const parentPath = pane === 'local'
+      ? (isLeftRemote ? (options.leftRemoteParentPath?.value ?? null) : options.localParentPath.value)
+      : options.remoteParentPath.value
     if (!parentPath) return
     const virtualEntry: LocalFileEntry | SftpFileEntry = {
       name: '..',
@@ -521,7 +541,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       is_symlink: false,
       size: 0,
       modified: 0,
-      ...(pane === 'remote' ? { permissions: 0o755 } : {}),
+      ...((pane === 'remote' || isLeftRemote) ? { permissions: 0o755 } : {}),
     }
     handleFolderDragLeave(pane, virtualEntry)
   }
@@ -590,7 +610,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
             paths,
             targetDir: entry.path,
           })
-          await sftpStore.fetchLocalDir(sftpStore.localPath)
+          await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
         } catch (err) {
           console.error('Failed to copy files locally:', err)
         }
@@ -614,7 +634,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
               paths,
               targetDir: entry.path,
             })
-            await sftpStore.fetchRemoteDir(sid, entry.path)
+            await sftpStore.fetchRemoteDir(sid, entry.path, { force: true })
           }
         } catch (err) {
           console.error('Failed to move/copy remote files:', err)
@@ -657,7 +677,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
                   paths,
                   targetDir: entry.path,
                 })
-                await sftpStore.fetchRemoteDir(sid, entry.path)
+                await sftpStore.fetchRemoteDir(sid, entry.path, { force: true })
               }
             }
             return
@@ -683,7 +703,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
                 paths,
                 targetDir: entry.path,
               })
-              await sftpStore.fetchLocalDir(sftpStore.localPath)
+              await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
             }
             return
           }
@@ -707,7 +727,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
               paths: filePaths,
               targetDir: entry.path,
             })
-            await sftpStore.fetchLocalDir(sftpStore.localPath)
+            await sftpStore.fetchLocalDir(sftpStore.localPath, { force: true })
             return
           } catch (err) {
             console.error('Failed to copy files to folder:', err)
@@ -727,6 +747,8 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       }
     }
   }
+
+  let isDragDropUnmounted = false
 
   onMounted(() => {
     // Listen to OS desktop file drag & drop into webview
@@ -854,7 +876,11 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
           }
         })
         .then((unlisten) => {
-          unlistenDragDrop = unlisten
+          if (isDragDropUnmounted) {
+            unlisten()
+          } else {
+            unlistenDragDrop = unlisten
+          }
         })
         .catch((err) => {
           console.warn('Failed to register webview drag-drop handler:', err)
@@ -865,6 +891,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
   })
 
   onUnmounted(() => {
+    isDragDropUnmounted = true
     if (unlistenDragDrop) {
       unlistenDragDrop()
       unlistenDragDrop = null

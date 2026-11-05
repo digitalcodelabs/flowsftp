@@ -127,6 +127,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
 
     if (nextIndex >= 0 && nextIndex < files.length) {
       const file = files[nextIndex]
+      if (!file) return
       if (isLocal) {
         options.isLocalParentSelected.value = false
         if (isShift && prevIndex !== null && prevIndex >= 0) {
@@ -135,7 +136,8 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
           const end = Math.max(anchor, nextIndex)
           const newSet = new Set<string>()
           for (let i = start; i <= end; i++) {
-            if (files[i]) newSet.add(files[i].path)
+            const item = files[i]
+            if (item) newSet.add(item.path)
           }
           options.selectedLocalPaths.value = newSet
           options.lastLocalClickedIndex.value = nextIndex
@@ -154,7 +156,8 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
           const end = Math.max(anchor, nextIndex)
           const newSet = new Set<string>()
           for (let i = start; i <= end; i++) {
-            if (files[i]) newSet.add(files[i].path)
+            const item = files[i]
+            if (item) newSet.add(item.path)
           }
           options.selectedRemotePaths.value = newSet
           options.lastRemoteClickedIndex.value = nextIndex
@@ -226,8 +229,9 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
         nextIndex = Math.min(maxIndex, curr + 1)
       }
       applySelection(isLocal, nextIndex, curr, e.shiftKey)
-      if (options.showQuickLook.value && files[nextIndex] && !files[nextIndex].is_dir) {
-        options.quickLookFile.value = files[nextIndex]
+      const nextDownFile = files[nextIndex]
+      if (options.showQuickLook.value && nextDownFile && !nextDownFile.is_dir) {
+        options.quickLookFile.value = nextDownFile
       }
       return
     }
@@ -242,8 +246,9 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
         nextIndex = Math.max(minIndex, curr - 1)
       }
       applySelection(isLocal, nextIndex, curr, e.shiftKey)
-      if (options.showQuickLook.value && files[nextIndex] && !files[nextIndex].is_dir) {
-        options.quickLookFile.value = files[nextIndex]
+      const nextUpFile = files[nextIndex]
+      if (options.showQuickLook.value && nextUpFile && !nextUpFile.is_dir) {
+        options.quickLookFile.value = nextUpFile
       }
       return
     }
@@ -536,12 +541,13 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
       e.stopPropagation()
       const pane = options.activePane.value
       const files = pane === 'local' ? options.selectedLocalFiles.value : options.selectedRemoteFiles.value
-      if (files.length === 1) {
+      const singleFile = files.length === 1 ? files[0] : undefined
+      if (singleFile) {
         if (options.onDuplicate) {
-          options.onDuplicate(pane, files[0])
+          options.onDuplicate(pane, singleFile)
         } else {
-          sftpStore.duplicateItem(pane, files[0]).then(() => {
-            sftpStore.triggerTransferToast(`Duplicated ${files[0].name}`)
+          sftpStore.duplicateItem(pane, singleFile).then(() => {
+            sftpStore.triggerTransferToast(`Duplicated ${singleFile.name}`)
           }).catch((err: any) => {
             sftpStore.triggerTransferToast(`Duplicate failed: ${err?.message || err}`)
           })

@@ -59,7 +59,7 @@ pub async fn sftp_create_remote_dir(
     path: String,
 ) -> Result<(), String> {
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        return ftp.create_dir(&path).await;
+        return ftp.ensure_dir_recursive(&path).await;
     }
 
     let session = state
@@ -83,7 +83,7 @@ pub async fn sftp_batch_create_remote_dirs(
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
         for path in paths {
-            let _ = ftp.create_dir(&path).await;
+            let _ = ftp.ensure_dir_recursive(&path).await;
         }
         return Ok(());
     }
@@ -127,19 +127,22 @@ pub async fn sftp_remove_remote_dir(
 ) -> Result<(), String> {
     let clean = path.trim().replace('\\', "/");
     let clean_path = clean.trim_end_matches('/').to_string();
-    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}, deletion_id={:?}", session_id, path, clean_path, use_fast_rm, deletion_id);
+    log::debug!(
+        "[FLOWSFTP_BACKEND] sftp_remove_remote_dir: session={}, path='{}', clean_path='{}', use_fast_rm={:?}, deletion_id={:?}",
+        session_id, path, clean_path, use_fast_rm, deletion_id
+    );
 
     if clean_path.is_empty() || clean_path == "/" || clean_path == "." || clean_path == ".." {
         let err = "Cannot delete root or empty directory".to_string();
-        eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
+        log::debug!("[FLOWSFTP_BACKEND] Error: {}", err);
         return Err(err);
     }
 
-    if let Some(ref del_id) = deletion_id {
-        if state.is_deletion_cancelled(del_id) {
-            eprintln!("[FLOWSFTP_BACKEND] Deletion was cancelled by user: {}", del_id);
-            return Err("Deletion cancelled by user".to_string());
-        }
+    if let Some(ref del_id) = deletion_id
+        && state.is_deletion_cancelled(del_id)
+    {
+        log::debug!("[FLOWSFTP_BACKEND] Deletion was cancelled by user: {}", del_id);
+        return Err("Deletion cancelled by user".to_string());
     }
 
     let del_id_clone = deletion_id.clone();
@@ -158,7 +161,7 @@ pub async fn sftp_remove_remote_dir(
     };
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        eprintln!("[FLOWSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
+        log::debug!("[FLOWSFTP_BACKEND] Removing directory via FTP session: '{}'", clean_path);
         let ftp_work = async {
             tokio::time::timeout(tokio::time::Duration::from_secs(60), ftp.remove_dir(&clean_path))
                 .await
@@ -167,16 +170,16 @@ pub async fn sftp_remove_remote_dir(
 
         tokio::select! {
             res = ftp_work => {
-                eprintln!("[FLOWSFTP_BACKEND] FTP remove_dir result: {:?}", res);
-                if let Some(ref del_id) = deletion_id {
-                    if state.is_deletion_cancelled(del_id) {
-                        return Err("Deletion cancelled by user".to_string());
-                    }
+                log::debug!("[FLOWSFTP_BACKEND] FTP remove_dir result: {:?}", res);
+                if let Some(ref del_id) = deletion_id
+                    && state.is_deletion_cancelled(del_id)
+                {
+                    return Err("Deletion cancelled by user".to_string());
                 }
                 res
             }
             _ = cancel_watcher => {
-                eprintln!("[FLOWSFTP_BACKEND] FTP remove_dir cancelled by user: {:?}", deletion_id);
+                log::debug!("[FLOWSFTP_BACKEND] FTP remove_dir cancelled by user: {:?}", deletion_id);
                 Err("Deletion cancelled by user".to_string())
             }
         }
@@ -186,7 +189,7 @@ pub async fn sftp_remove_remote_dir(
             .await
             .ok_or_else(|| {
                 let err = format!("Session '{}' not found", session_id);
-                eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
+                log::debug!("[FLOWSFTP_BACKEND] Error: {}", err);
                 err
             })?;
 
@@ -195,55 +198,30 @@ pub async fn sftp_remove_remote_dir(
         let dir_work = async {
             if use_fast_rm.unwrap_or(false) {
                 log::info!("Attempting fast rm -rf for remote directory '{}'", clean_path);
-                eprintln!("[FLOWSFTP_BACKEND] Attempting fast rm -rf for remote directory '{}'", clean_path);
                 let escaped_path = crate::shell::escape_single_quotes(&clean_path);
                 let cmd = format!("rm -rf -- '{}'", escaped_path);
 
-                let exec_result: Result<(), String> = async {
-                    let channel = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        session.handle.channel_open_session(),
-                    )
-                    .await
-                    .map_err(|_| "Timeout opening SSH channel".to_string())?
-                    .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
-
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        channel.exec(true, cmd),
-                    )
-                    .await
-                    .map_err(|_| "Timeout executing rm -rf command".to_string())?
-                    .map_err(|e| format!("Failed to execute rm -rf: {}", e))?;
-
-                    use tokio::io::AsyncReadExt;
-                    let mut stream = channel.into_stream();
-                    let mut dummy = Vec::new();
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        stream.read_to_end(&mut dummy),
-                    )
-                    .await;
-
-                    Ok(())
-                }
+                let exec_result = crate::ssh::exec::run_command(
+                    &session.handle,
+                    cmd,
+                    std::time::Duration::from_secs(20),
+                )
                 .await;
 
-                if exec_result.is_ok() {
-                    let exists = match tokio::time::timeout(std::time::Duration::from_secs(5), sftp.metadata(&clean_path)).await {
-                        Ok(Ok(_)) => true,
-                        _ => false,
-                    };
+                if let Ok(ref res) = exec_result
+                    && res.succeeded()
+                {
+                    let exists = matches!(
+                        tokio::time::timeout(std::time::Duration::from_secs(5), sftp.metadata(&clean_path)).await,
+                        Ok(Ok(_))
+                    );
                     if !exists {
                         log::info!("Fast rm -rf succeeded for '{}'", clean_path);
-                        eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf verified succeeded for '{}'", clean_path);
                         return Ok(());
                     }
                     log::warn!("rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
-                    eprintln!("[FLOWSFTP_BACKEND] rm -rf executed but directory '{}' still exists; falling back to recursive SFTP deletion", clean_path);
                 } else {
                     log::warn!("Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
-                    eprintln!("[FLOWSFTP_BACKEND] Fast rm -rf failed ({:?}); falling back to recursive SFTP deletion", exec_result);
                 }
             }
 
@@ -252,16 +230,16 @@ pub async fn sftp_remove_remote_dir(
 
         tokio::select! {
             res = dir_work => {
-                eprintln!("[FLOWSFTP_BACKEND] remove_remote_dir result for '{}': {:?}", clean_path, res);
-                if let Some(ref del_id) = deletion_id {
-                    if state.is_deletion_cancelled(del_id) {
-                        return Err("Deletion cancelled by user".to_string());
-                    }
+                log::debug!("[FLOWSFTP_BACKEND] remove_remote_dir result for '{}': {:?}", clean_path, res);
+                if let Some(ref del_id) = deletion_id
+                    && state.is_deletion_cancelled(del_id)
+                {
+                    return Err("Deletion cancelled by user".to_string());
                 }
                 res
             }
             _ = cancel_watcher => {
-                eprintln!("[FLOWSFTP_BACKEND] remove_remote_dir cancelled by user: {:?}", deletion_id);
+                log::debug!("[FLOWSFTP_BACKEND] remove_remote_dir cancelled by user: {:?}", deletion_id);
                 Err("Deletion cancelled by user".to_string())
             }
         }
@@ -276,12 +254,15 @@ pub async fn sftp_remove_remote_file(
     deletion_id: Option<String>,
 ) -> Result<(), String> {
     let clean_path = path.trim().replace('\\', "/");
-    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}', deletion_id={:?}", session_id, clean_path, deletion_id);
-    if let Some(ref del_id) = deletion_id {
-        if state.is_deletion_cancelled(del_id) {
-            eprintln!("[FLOWSFTP_BACKEND] File deletion cancelled by user: {}", del_id);
-            return Err("Deletion cancelled by user".to_string());
-        }
+    log::debug!(
+        "[FLOWSFTP_BACKEND] sftp_remove_remote_file: session={}, path='{}', deletion_id={:?}",
+        session_id, clean_path, deletion_id
+    );
+    if let Some(ref del_id) = deletion_id
+        && state.is_deletion_cancelled(del_id)
+    {
+        log::debug!("[FLOWSFTP_BACKEND] File deletion cancelled by user: {}", del_id);
+        return Err("Deletion cancelled by user".to_string());
     }
 
     let del_id_clone = deletion_id.clone();
@@ -308,16 +289,16 @@ pub async fn sftp_remove_remote_file(
 
         tokio::select! {
             res = ftp_work => {
-                eprintln!("[FLOWSFTP_BACKEND] FTP remove_file result: {:?}", res);
-                if let Some(ref del_id) = deletion_id {
-                    if state.is_deletion_cancelled(del_id) {
-                        return Err("Deletion cancelled by user".to_string());
-                    }
+                log::debug!("[FLOWSFTP_BACKEND] FTP remove_file result: {:?}", res);
+                if let Some(ref del_id) = deletion_id
+                    && state.is_deletion_cancelled(del_id)
+                {
+                    return Err("Deletion cancelled by user".to_string());
                 }
                 res
             }
             _ = cancel_watcher => {
-                eprintln!("[FLOWSFTP_BACKEND] FTP remove_file cancelled by user: {:?}", deletion_id);
+                log::debug!("[FLOWSFTP_BACKEND] FTP remove_file cancelled by user: {:?}", deletion_id);
                 Err("Deletion cancelled by user".to_string())
             }
         }
@@ -327,7 +308,7 @@ pub async fn sftp_remove_remote_file(
             .await
             .ok_or_else(|| {
                 let err = format!("Session '{}' not found", session_id);
-                eprintln!("[FLOWSFTP_BACKEND] Error: {}", err);
+                log::debug!("[FLOWSFTP_BACKEND] Error: {}", err);
                 err
             })?;
 
@@ -335,16 +316,16 @@ pub async fn sftp_remove_remote_file(
 
         tokio::select! {
             res = remove_remote_file(&sftp, &clean_path) => {
-                eprintln!("[FLOWSFTP_BACKEND] SFTP remove_file result: {:?}", res);
-                if let Some(ref del_id) = deletion_id {
-                    if state.is_deletion_cancelled(del_id) {
-                        return Err("Deletion cancelled by user".to_string());
-                    }
+                log::debug!("[FLOWSFTP_BACKEND] SFTP remove_file result: {:?}", res);
+                if let Some(ref del_id) = deletion_id
+                    && state.is_deletion_cancelled(del_id)
+                {
+                    return Err("Deletion cancelled by user".to_string());
                 }
                 res
             }
             _ = cancel_watcher => {
-                eprintln!("[FLOWSFTP_BACKEND] SFTP remove_file cancelled by user: {:?}", deletion_id);
+                log::debug!("[FLOWSFTP_BACKEND] SFTP remove_file cancelled by user: {:?}", deletion_id);
                 Err("Deletion cancelled by user".to_string())
             }
         }
@@ -371,6 +352,7 @@ pub async fn sftp_rename_remote(
     rename_remote(&sftp, &old_path, &new_path).await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn sftp_download(
     app: AppHandle,
@@ -402,6 +384,7 @@ pub async fn sftp_download(
     download_file(app, &sftp, transfer_id, remote_path, local_path, conflict_action, file_size).await
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn sftp_upload(
     app: AppHandle,
@@ -508,12 +491,12 @@ pub async fn sftp_create_local_file(path: String, overwrite: Option<bool>) -> Re
 
 #[tauri::command]
 pub async fn sftp_remove_local(path: String) -> Result<(), String> {
-    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_local: path='{}'", path);
+    log::debug!("sftp_remove_local: path='{}'", path);
     let res = match tokio::time::timeout(tokio::time::Duration::from_secs(15), remove_local_item(&path)).await {
         Ok(inner) => inner,
         Err(_) => Err(format!("Timed out removing local item '{}'", path)),
     };
-    eprintln!("[FLOWSFTP_BACKEND] sftp_remove_local result: {:?}", res);
+    log::debug!("sftp_remove_local result: {:?}", res);
     res
 }
 
@@ -756,43 +739,7 @@ pub async fn sftp_get_remote_git_status(
     }
 
     let branch = header_lines.get(1).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let mut files = std::collections::HashMap::new();
-
-    for line in status_part.lines() {
-        let line = line.trim();
-        if line.len() < 4 {
-            continue;
-        }
-        let xy = &line[0..2];
-        let file_part = line[3..].trim();
-        let file_path = if let Some(idx) = file_part.find(" -> ") {
-            &file_part[idx + 4..]
-        } else {
-            file_part
-        }
-        .trim_matches('"');
-
-        let status_type = match xy {
-            "??" => "untracked",
-            " M" | "M " | "MM" | "AM" => "modified",
-            "A " => "staged",
-            "D " | " D" => "deleted",
-            "R " => "renamed",
-            "UU" | "AA" | "DD" => "conflict",
-            s if s.starts_with('M') || s.ends_with('M') => "modified",
-            s if s.starts_with('A') => "staged",
-            _ => "modified",
-        };
-
-        let norm_path = file_path.replace('\\', "/");
-        files.insert(norm_path.clone(), status_type.to_string());
-        if let Some(ref r) = root {
-            files.insert(format!("{}/{}", r.trim_end_matches('/'), norm_path), status_type.to_string());
-        }
-        if let Some(fname) = norm_path.split('/').last() {
-            files.entry(fname.to_string()).or_insert_with(|| status_type.to_string());
-        }
-    }
+    let files = crate::sftp::parse_git_status_porcelain(status_part, root.as_deref().unwrap_or(""));
 
     Ok(GitRepoStatus {
         is_repo: true,
@@ -1044,6 +991,7 @@ pub async fn sftp_crawl_local_paths(
     .map_err(|e| format!("Local crawler failed: {}", e))?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn crawl_local_dir_recursive(
     app: &AppHandle,
     cancel_token: &std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1223,7 +1171,7 @@ pub async fn sftp_crawl_remote_paths(
         match sftp.read_dir(&clean_p).await {
             Ok(_) => {
                 dirs_count += 1;
-                let folder_name = clean_p.split('/').last().unwrap_or("folder");
+                let folder_name = clean_p.split('/').next_back().unwrap_or("folder");
                 let local_base = if clean_local.is_empty() {
                     folder_name.to_string()
                 } else {
@@ -1244,7 +1192,7 @@ pub async fn sftp_crawl_remote_paths(
                 ).await?;
             }
             Err(_) => {
-                let file_name = clean_p.split('/').last().unwrap_or("file").to_string();
+                let file_name = clean_p.split('/').next_back().unwrap_or("file").to_string();
                 if is_path_ignored(&file_name, &file_name, &patterns) {
                     continue;
                 }
@@ -1295,6 +1243,7 @@ pub async fn sftp_crawl_remote_paths(
     Ok(results)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn crawl_remote_dir_recursive<'a>(
     app: &'a AppHandle,
     cancel_token: &'a std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1408,8 +1357,10 @@ fn crawl_remote_dir_recursive<'a>(
 }
 
 #[tauri::command]
-pub fn exit_app(app: AppHandle) {
-    eprintln!("[FLOWSFTP_BACKEND] exit_app invoked. Exiting application.");
+pub fn exit_app(app: AppHandle, state: State<'_, AppState>) {
+    log::debug!("exit_app invoked. Cleaning up active watchers and exiting application.");
+    state.stop_all_external_edits(None);
+    state.stop_all_dir_watchers(None);
     app.exit(0);
 }
 
@@ -1425,7 +1376,7 @@ pub async fn sftp_move_remote_paths(
 
     for path in paths {
         let clean_path = path.trim().replace('\\', "/");
-        let file_name = clean_path.split('/').filter(|s| !s.is_empty()).last().unwrap_or("");
+        let file_name = clean_path.split('/').rfind(|s| !s.is_empty()).unwrap_or("");
         if file_name.is_empty() || file_name == "." || file_name == ".." {
             continue;
         }
@@ -1462,30 +1413,50 @@ pub async fn sftp_copy_remote_paths(
     paths: Vec<String>,
     target_dir: String,
 ) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
     let clean_target = target_dir.trim().replace('\\', "/");
     let dest_dir = clean_target.trim_end_matches('/');
 
     if let Some(session) = state.get_session(&session_id).await {
-        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
-        let escaped_dest = crate::shell::escape_single_quotes(&dest_dir);
-        let mut files_escaped = String::new();
+        let escaped_dest = crate::shell::escape_single_quotes(dest_dir);
+        let mut files_escaped = Vec::new();
         for p in &paths {
             let clean = p.trim().replace('\\', "/");
-            files_escaped.push_str(&format!(" '{}'", crate::shell::escape_single_quotes(&clean)));
+            if !clean.is_empty() {
+                files_escaped.push(format!("'{}'", crate::shell::escape_single_quotes(&clean)));
+            }
         }
-        let cmd = format!("cp -a -t '{}'{} 2>&1 || cp -r -t '{}'{} 2>&1", escaped_dest, files_escaped, escaped_dest, files_escaped);
-        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
-        let mut stream = channel.into_stream();
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        if files_escaped.is_empty() {
+            return Ok(());
+        }
+        let sources_str = files_escaped.join(" ");
+        let cmd = format!(
+            "cp -RPp -- {} '{}/' 2>&1 || cp -r -- {} '{}/' 2>&1",
+            sources_str, escaped_dest, sources_str, escaped_dest
+        );
+        let result = crate::ssh::exec::run_command(
+            &session.handle,
+            cmd,
+            std::time::Duration::from_secs(120),
+        )
+        .await?;
+        if !result.succeeded() {
+            return Err(format!("Failed to copy remote files: {}", result.output.trim()));
+        }
         Ok(())
     } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
         for p in paths {
             let clean_p = p.trim().replace('\\', "/");
-            let file_name = clean_p.split('/').filter(|s| !s.is_empty()).last().unwrap_or("file");
-            let dest_file = format!("{}/{}", dest_dir, file_name);
-            let data = ftp.read_file_binary(&clean_p).await?;
-            ftp.write_file_binary(&dest_file, &data).await?;
+            let file_name = clean_p.split('/').rfind(|s| !s.is_empty()).unwrap_or("file");
+            let dest_file = if dest_dir.is_empty() {
+                format!("/{}", file_name)
+            } else {
+                format!("{}/{}", dest_dir, file_name)
+            };
+            ftp.copy_file(&clean_p, &dest_file).await?;
         }
         Ok(())
     } else {
@@ -1494,6 +1465,7 @@ pub async fn sftp_copy_remote_paths(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn sftp_transfer_remote_to_remote(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1503,15 +1475,17 @@ pub async fn sftp_transfer_remote_to_remote(
     src_path: String,
     dest_path: String,
     file_size: Option<u64>,
+    conflict_action: Option<String>,
 ) -> Result<(), String> {
     log::info!(
-        "Command sftp_transfer_remote_to_remote: src_session='{}', dest_session='{}', transfer_id='{}', src='{}' -> dest='{}'",
-        src_session_id, dest_session_id, transfer_id, src_path, dest_path
+        "Command sftp_transfer_remote_to_remote: src_session='{}', dest_session='{}', transfer_id='{}', src='{}' -> dest='{}', conflict={:?}",
+        src_session_id, dest_session_id, transfer_id, src_path, dest_path, conflict_action
     );
 
+    let conflict = conflict_action.as_deref().unwrap_or("overwrite");
     let clean_src = src_path.trim().replace('\\', "/");
     let clean_dest = dest_path.trim().replace('\\', "/");
-    let file_name = clean_src.split('/').filter(|s| !s.is_empty()).last().unwrap_or("file").to_string();
+    let file_name = clean_src.split('/').rfind(|s| !s.is_empty()).unwrap_or("file").to_string();
     let event_name = format!("sftp:progress:{}", transfer_id);
 
     let total_bytes = file_size.unwrap_or(0);
@@ -1529,18 +1503,54 @@ pub async fn sftp_transfer_remote_to_remote(
         },
     );
 
-    if src_session_id == dest_session_id {
+    if conflict == "skip" {
+        let dest_exists = if let Some(ftp) = state.get_ftp_session(&dest_session_id).await {
+            ftp.file_size(&clean_dest).await.is_ok()
+        } else if let Some(session) = state.get_session(&dest_session_id).await {
+            if let Ok(sftp) = session.get_sftp().await {
+                sftp.metadata(&clean_dest).await.is_ok()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if dest_exists {
+            let _ = app.emit(
+                &event_name,
+                crate::sftp::TransferProgress {
+                    transfer_id: transfer_id.clone(),
+                    file_name: file_name.clone(),
+                    direction: "upload".to_string(),
+                    bytes_transferred: total_bytes,
+                    total_bytes,
+                    speed_bytes_per_sec: 0,
+                    is_complete: true,
+                    error: None,
+                },
+            );
+            return Ok(());
+        }
+    }
+
+    if src_session_id == dest_session_id && conflict != "resume" {
         // Same server: let the server copy the file itself, which avoids a round trip of the
         // data through this machine. Any problem other than a hang falls back to streaming.
         if let Some(session) = state.get_session(&src_session_id).await {
             let escaped_src = crate::shell::escape_single_quotes(&clean_src);
             let escaped_dest = crate::shell::escape_single_quotes(&clean_dest);
             let parent = clean_dest.rfind('/').map(|i| &clean_dest[..i]).unwrap_or("");
-            let escaped_parent = crate::shell::escape_single_quotes(&parent);
+            let escaped_parent = crate::shell::escape_single_quotes(parent);
             let cmd = if !parent.is_empty() {
-                format!("mkdir -p '{}' && cp -a '{}' '{}'", escaped_parent, escaped_src, escaped_dest)
+                format!(
+                    "mkdir -p -- '{}' && (cp -RPp -- '{}' '{}' || cp -r -- '{}' '{}')",
+                    escaped_parent, escaped_src, escaped_dest, escaped_src, escaped_dest
+                )
             } else {
-                format!("cp -a '{}' '{}'", escaped_src, escaped_dest)
+                format!(
+                    "cp -RPp -- '{}' '{}' || cp -r -- '{}' '{}'",
+                    escaped_src, escaped_dest, escaped_src, escaped_dest
+                )
             };
 
             match crate::ssh::exec::run_command(&session.handle, cmd, std::time::Duration::from_secs(900)).await {
@@ -1594,17 +1604,62 @@ pub async fn sftp_transfer_remote_to_remote(
         let mut src_file = src_sftp.open(&clean_src).await
             .map_err(|e| format!("Failed to open source remote file '{}': {}", clean_src, e))?;
 
-        if let Some(parent) = clean_dest.rfind('/').map(|i| &clean_dest[..i]) {
-            if !parent.is_empty() {
-                let _ = crate::sftp::ensure_remote_dir_recursive(&dest_sftp, parent).await;
-            }
+        if let Some(parent) = clean_dest.rfind('/').map(|i| &clean_dest[..i])
+            && !parent.is_empty()
+        {
+            let _ = crate::sftp::ensure_remote_dir_recursive(&dest_sftp, parent).await;
         }
 
-        let mut dest_file = dest_sftp.create(&clean_dest).await
-            .map_err(|e| format!("Failed to create destination remote file '{}': {}", clean_dest, e))?;
+        let mut resume_offset: u64 = 0;
+        if conflict == "resume"
+            && let Ok(meta) = dest_sftp.metadata(&clean_dest).await
+        {
+            let existing = meta.size.unwrap_or(0);
+            if total_bytes > 0 && existing >= total_bytes {
+                let _ = app.emit(
+                    &event_name,
+                    crate::sftp::TransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        file_name: file_name.clone(),
+                        direction: "upload".to_string(),
+                        bytes_transferred: total_bytes,
+                        total_bytes,
+                        speed_bytes_per_sec: 0,
+                        is_complete: true,
+                        error: None,
+                    },
+                );
+                return Ok(());
+            }
+            resume_offset = existing;
+        }
+
+        let mut dest_file = if resume_offset > 0 {
+            use tokio::io::AsyncSeekExt;
+            src_file
+                .seek(std::io::SeekFrom::Start(resume_offset))
+                .await
+                .map_err(|e| format!("Failed to seek source remote file '{}': {}", clean_src, e))?;
+            let mut df = dest_sftp
+                .open_with_flags(
+                    &clean_dest,
+                    russh_sftp::protocol::OpenFlags::WRITE | russh_sftp::protocol::OpenFlags::APPEND,
+                )
+                .await
+                .map_err(|e| format!("Failed to open destination remote file '{}' for resume: {}", clean_dest, e))?;
+            df.seek(std::io::SeekFrom::Start(resume_offset))
+                .await
+                .map_err(|e| format!("Failed to seek destination remote file '{}': {}", clean_dest, e))?;
+            df
+        } else {
+            dest_sftp
+                .create(&clean_dest)
+                .await
+                .map_err(|e| format!("Failed to create destination remote file '{}': {}", clean_dest, e))?
+        };
 
         let mut buffer = vec![0u8; 128 * 1024];
-        let mut transferred: u64 = 0;
+        let mut transferred: u64 = resume_offset;
         let start_time = std::time::Instant::now();
         let mut last_emit = std::time::Instant::now();
 
@@ -1641,8 +1696,9 @@ pub async fn sftp_transfer_remote_to_remote(
 
             if last_emit.elapsed().as_millis() >= 100 {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
+                let session_bytes = transferred.saturating_sub(resume_offset);
                 let speed = if elapsed_secs > 0.0 {
-                    (transferred as f64 / elapsed_secs) as u64
+                    (session_bytes as f64 / elapsed_secs) as u64
                 } else {
                     0
                 };
@@ -1667,8 +1723,9 @@ pub async fn sftp_transfer_remote_to_remote(
         let _ = tokio::io::AsyncWriteExt::shutdown(&mut dest_file).await;
 
         let elapsed_secs = start_time.elapsed().as_secs_f64();
+        let session_bytes = transferred.saturating_sub(resume_offset);
         let final_speed = if elapsed_secs > 0.0 {
-            (transferred as f64 / elapsed_secs) as u64
+            (session_bytes as f64 / elapsed_secs) as u64
         } else {
             0
         };
@@ -1689,25 +1746,42 @@ pub async fn sftp_transfer_remote_to_remote(
 
         Ok(())
     } else {
-        let data = if let Some(ftp) = state.get_ftp_session(&src_session_id).await {
-            ftp.read_file_binary(&clean_src).await?
+        let temp_path = std::env::temp_dir().join(format!(
+            "flowsftp_r2r_{}",
+            uuid::Uuid::new_v4()
+        ));
+
+        let download_res = if let Some(ftp) = state.get_ftp_session(&src_session_id).await {
+            ftp.download_to_local_file(&clean_src, &temp_path).await
         } else if let Some(session) = state.get_session(&src_session_id).await {
             let sftp = session.get_sftp().await?;
-            crate::sftp::read_remote_file_binary(&sftp, &clean_src).await?
+            crate::sftp::download_remote_to_local_file(&sftp, &clean_src, &temp_path).await
         } else {
-            return Err(format!("Source session '{}' not found", src_session_id));
+            Err(format!("Source session '{}' not found", src_session_id))
         };
 
-        if let Some(ftp) = state.get_ftp_session(&dest_session_id).await {
-            ftp.write_file_binary(&clean_dest, &data).await?;
-        } else if let Some(session) = state.get_session(&dest_session_id).await {
-            let sftp = session.get_sftp().await?;
-            crate::sftp::write_remote_file_binary(&sftp, &clean_dest, &data).await?;
-        } else {
-            return Err(format!("Destination session '{}' not found", dest_session_id));
+        if let Err(e) = download_res {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(e);
         }
 
-        let total = data.len() as u64;
+        let total = tokio::fs::metadata(&temp_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(total_bytes);
+
+        let upload_res = if let Some(ftp) = state.get_ftp_session(&dest_session_id).await {
+            ftp.upload_from_local_file(&temp_path, &clean_dest).await
+        } else if let Some(session) = state.get_session(&dest_session_id).await {
+            let sftp = session.get_sftp().await?;
+            crate::sftp::upload_local_to_remote_file(&sftp, &temp_path, &clean_dest).await
+        } else {
+            Err(format!("Destination session '{}' not found", dest_session_id))
+        };
+
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        upload_res?;
+
         let _ = app.emit(
             &event_name,
             crate::sftp::TransferProgress {
@@ -1740,16 +1814,14 @@ pub async fn sftp_duplicate_remote_path(
 ) -> Result<String, String> {
     let clean_path = path.trim().replace('\\', "/");
     let parent = clean_path.rfind('/').map(|i| &clean_path[..i]).unwrap_or("");
-    let original_name = clean_path.split('/').filter(|s| !s.is_empty()).last().unwrap_or("file");
+    let original_name = clean_path.split('/').rfind(|s| !s.is_empty()).unwrap_or("file");
 
     let dest_name = if let Some(n) = new_name.filter(|s| !s.trim().is_empty()) {
         n.trim().to_string()
+    } else if let Some((stem, ext)) = original_name.rsplit_once('.') {
+        format!("{} - Copy.{}", stem, ext)
     } else {
-        if let Some((stem, ext)) = original_name.rsplit_once('.') {
-            format!("{} - Copy.{}", stem, ext)
-        } else {
-            format!("{} - Copy", original_name)
-        }
+        format!("{} - Copy", original_name)
     };
 
     let new_path = if parent.is_empty() || parent == "/" {
@@ -1759,18 +1831,24 @@ pub async fn sftp_duplicate_remote_path(
     };
 
     if let Some(session) = state.get_session(&session_id).await {
-        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         let escaped_src = crate::shell::escape_single_quotes(&clean_path);
         let escaped_dst = crate::shell::escape_single_quotes(&new_path);
-        let cmd = format!("cp -a '{}' '{}' 2>&1 || cp -r '{}' '{}' 2>&1", escaped_src, escaped_dst, escaped_src, escaped_dst);
-        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
-        let mut stream = channel.into_stream();
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        let cmd = format!(
+            "cp -RPp -- '{}' '{}' 2>&1 || cp -r -- '{}' '{}' 2>&1",
+            escaped_src, escaped_dst, escaped_src, escaped_dst
+        );
+        let result = crate::ssh::exec::run_command(
+            &session.handle,
+            cmd,
+            std::time::Duration::from_secs(120),
+        )
+        .await?;
+        if !result.succeeded() {
+            return Err(format!("Failed to duplicate remote path: {}", result.output.trim()));
+        }
         Ok(new_path)
     } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        let data = ftp.read_file_binary(&clean_path).await?;
-        ftp.write_file_binary(&new_path, &data).await?;
+        ftp.copy_file(&clean_path, &new_path).await?;
         Ok(new_path)
     } else {
         Err(format!("Session '{}' not found", session_id))
@@ -1796,14 +1874,18 @@ pub async fn sftp_create_remote_symlink(
     let clean_link = link_path.trim().replace('\\', "/");
 
     if let Some(session) = state.get_session(&session_id).await {
-        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         let escaped_tgt = crate::shell::escape_single_quotes(&clean_target);
         let escaped_lnk = crate::shell::escape_single_quotes(&clean_link);
-        let cmd = format!("ln -s '{}' '{}'", escaped_tgt, escaped_lnk);
-        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
-        let mut stream = channel.into_stream();
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
+        let cmd = format!("ln -s -- '{}' '{}' 2>&1", escaped_tgt, escaped_lnk);
+        let result = crate::ssh::exec::run_command(
+            &session.handle,
+            cmd,
+            std::time::Duration::from_secs(15),
+        )
+        .await?;
+        if !result.succeeded() {
+            return Err(format!("Failed to create remote symlink: {}", result.output.trim()));
+        }
         Ok(())
     } else {
         Err("Symlink creation is not supported on FTP sessions".to_string())
@@ -1824,18 +1906,21 @@ pub async fn sftp_get_remote_dir_size(
     let clean_path = path.trim().replace('\\', "/");
 
     if let Some(session) = state.get_session(&session_id).await {
-        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         let escaped = crate::shell::escape_single_quotes(&clean_path);
-        let cmd = format!("du -sb '{}' 2>/dev/null || du -sk '{}' 2>/dev/null", escaped, escaped);
-        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
-        let mut stream = channel.into_stream();
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(30), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
-        let text = String::from_utf8_lossy(&out);
-        if let Some(first_word) = text.split_whitespace().next() {
-            if let Ok(bytes) = first_word.parse::<u64>() {
-                return Ok(bytes);
-            }
+        let cmd = format!(
+            "du -sb -- '{}' 2>/dev/null || (du -sk -- '{}' 2>/dev/null | awk '{{print $1 * 1024}}')",
+            escaped, escaped
+        );
+        let result = crate::ssh::exec::run_command(
+            &session.handle,
+            cmd,
+            std::time::Duration::from_secs(30),
+        )
+        .await?;
+        if let Some(first_word) = result.output.split_whitespace().next()
+            && let Ok(bytes) = first_word.parse::<u64>()
+        {
+            return Ok(bytes);
         }
     }
     Err("Failed to calculate remote directory size".to_string())
@@ -1856,32 +1941,30 @@ pub async fn sftp_calculate_remote_checksum(
     let clean_path = path.trim().replace('\\', "/");
 
     if let Some(session) = state.get_session(&session_id).await {
-        let channel = session.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         let escaped = crate::shell::escape_single_quotes(&clean_path);
         let cmd = if algorithm.eq_ignore_ascii_case("md5") {
-            format!("md5sum '{}' 2>/dev/null || md5 -q '{}' 2>/dev/null", escaped, escaped)
+            format!("md5sum -- '{}' 2>/dev/null || md5 -q -- '{}' 2>/dev/null", escaped, escaped)
         } else {
-            format!("sha256sum '{}' 2>/dev/null || shasum -a 256 '{}' 2>/dev/null", escaped, escaped)
+            format!("sha256sum -- '{}' 2>/dev/null || shasum -a 256 -- '{}' 2>/dev/null", escaped, escaped)
         };
-        channel.exec(true, cmd).await.map_err(|e| e.to_string())?;
-        let mut stream = channel.into_stream();
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(60), tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out)).await;
-        let text = String::from_utf8_lossy(&out);
-        if let Some(hash) = text.split_whitespace().next() {
-            return Ok(hash.to_string());
+        if let Ok(result) = crate::ssh::exec::run_command(
+            &session.handle,
+            cmd,
+            std::time::Duration::from_secs(60),
+        )
+        .await
+            && result.succeeded()
+            && let Some(hash) = result.output.split_whitespace().next()
+        {
+            let clean_hash = hash.trim_start_matches('\\');
+            if !clean_hash.is_empty() {
+                return Ok(clean_hash.to_string());
+            }
         }
+        let sftp = session.get_sftp().await?;
+        return crate::sftp::calculate_remote_sftp_checksum(&sftp, &clean_path, &algorithm).await;
     } else if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        let data = ftp.read_file_binary(&clean_path).await?;
-        if algorithm.eq_ignore_ascii_case("md5") {
-            let digest = md5::compute(&data);
-            return Ok(format!("{:x}", digest));
-        } else {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(&data);
-            return Ok(format!("{:x}", hasher.finalize()));
-        }
+        return ftp.calculate_checksum(&clean_path, &algorithm).await;
     }
     Err("Failed to calculate remote file checksum".to_string())
 }

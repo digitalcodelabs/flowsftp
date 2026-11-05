@@ -117,7 +117,6 @@ const cancelOverwrite = () => {
           ref="inputRef"
           v-model="fileName"
           @keydown.enter.prevent="handleSubmit"
-          @keyup.enter="handleSubmit"
           @keydown.esc.prevent.stop="emit('close')"
           placeholder="e.g. index.ts, config.json"
           class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none transition-colors"

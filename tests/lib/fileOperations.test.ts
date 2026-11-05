@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ref } from 'vue'
 
 const invokeMock = vi.fn()
 
@@ -9,6 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useDirectoryBrowser } from '../../app/lib/sftp/useDirectoryBrowser'
 import { useFileOperations } from '../../app/lib/sftp/useFileOperations'
 import { LOCAL_PANE, remotePane } from '../../app/lib/sftp/pane'
+import type { TransferProgressEvent } from '../../app/lib/sftp/types'
 
 const entry = (path: string, is_dir = false) => ({
   name: path.split('/').pop()!,
@@ -36,9 +38,11 @@ async function setup() {
     startBatchUpload: vi.fn(async () => {}),
     startBatchRemoteToRemoteTransfer: vi.fn(async () => {}),
   }
-  const ops = useFileOperations({ browser, pipeline })
+  const failedTransfers = ref<TransferProgressEvent[]>([])
+  const isCancellingAll = ref(false)
+  const ops = useFileOperations({ browser, pipeline, queue: { failedTransfers, isCancellingAll } })
   invokeMock.mockClear()
-  return { browser, pipeline, ops }
+  return { browser, pipeline, ops, failedTransfers, isCancellingAll }
 }
 
 const calls = (cmd: string) => invokeMock.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1])
@@ -113,14 +117,89 @@ describe('useFileOperations (by-pane API)', () => {
       expect(ops.clipboard.value).not.toBeNull()
     })
 
-    it('downloads remote files to a local pane and clears the clipboard on cut', async () => {
+    it('downloads remote files to a local pane, deletes cut source files on success, and clears the clipboard', async () => {
       const { ops, pipeline } = await setup()
       ops.cutToClipboard('remote', [entry('/srv/a.txt')], 's1')
 
       await ops.byPane.paste(LOCAL_PANE)
 
       expect(pipeline.startBatchDownload).toHaveBeenCalledWith('s1', [expect.objectContaining({ path: '/srv/a.txt' })], '/home/a')
+      expect(calls('sftp_remove_remote_file')).toEqual([{ sessionId: 's1', path: '/srv/a.txt', deletionId: null }])
       expect(ops.clipboard.value).toBeNull()
+    })
+
+    it('uploads local files to a remote pane, deletes cut local source files on success, and clears the clipboard', async () => {
+      const { ops, pipeline } = await setup()
+      ops.cutToClipboard('local', [entry('/home/a/a.txt'), entry('/home/a/folder', true)])
+
+      await ops.byPane.paste(remotePane('s1'), '/srv/in')
+
+      expect(pipeline.startBatchUpload).toHaveBeenCalledWith(
+        's1',
+        [expect.objectContaining({ path: '/home/a/a.txt' }), expect.objectContaining({ path: '/home/a/folder' })],
+        '/srv/in'
+      )
+      expect(calls('sftp_remove_local')).toEqual([
+        { path: '/home/a/a.txt' },
+        { path: '/home/a/folder' },
+      ])
+      expect(ops.clipboard.value).toBeNull()
+    })
+
+    it('preserves cut source files when a cross-endpoint transfer fails or is skipped', async () => {
+      const { ops, pipeline, failedTransfers } = await setup()
+      pipeline.startBatchUpload.mockImplementationOnce(async () => {
+        failedTransfers.value.push({
+          transfer_id: 't1',
+          session_id: 's1',
+          file_name: 'bad.txt',
+          local_path: '/home/a/bad.txt',
+          remote_path: '/srv/in/bad.txt',
+          bytes_transferred: 0,
+          total_bytes: 1,
+          direction: 'upload',
+          is_complete: true,
+          error: 'Skipped (file already exists)',
+        })
+      })
+
+      ops.cutToClipboard('local', [entry('/home/a/bad.txt'), entry('/home/a/good.txt')])
+      await ops.byPane.paste(remotePane('s1'), '/srv/in')
+
+      // Only the succeeded file is deleted; the skipped/failed file is kept safe and remains in clipboard
+      expect(calls('sftp_remove_local')).toEqual([{ path: '/home/a/good.txt' }])
+      expect(ops.clipboard.value?.files.map((f) => f.path)).toEqual(['/home/a/bad.txt'])
+    })
+
+    it('preserves all cut source files when the transfer batch is cancelled', async () => {
+      const { ops, pipeline, isCancellingAll } = await setup()
+      pipeline.startBatchRemoteToRemoteTransfer.mockImplementationOnce(async () => {
+        isCancellingAll.value = true
+      })
+
+      ops.cutToClipboard('remote', [entry('/srv/a.txt')], 's1')
+      await ops.byPane.paste(remotePane('s2'), '/dst')
+
+      expect(calls('sftp_remove_remote_file')).toHaveLength(0)
+      expect(ops.clipboard.value?.files.map((f) => f.path)).toEqual(['/srv/a.txt'])
+    })
+
+    it('invalidates the source directory cache after a same-endpoint cut and paste', async () => {
+      const { browser, ops } = await setup()
+      await browser.fetchRemoteDir('s1', '/srv/from')
+      await browser.fetchRemoteDir('s1', '/srv/to')
+      ops.cutToClipboard('remote', [entry('/srv/from/a.txt')], 's1')
+      invokeMock.mockClear()
+
+      await ops.byPane.paste(remotePane('s1'), '/srv/to')
+
+      expect(calls('sftp_move_remote_paths')).toEqual([
+        { sessionId: 's1', paths: ['/srv/from/a.txt'], targetDir: '/srv/to' },
+      ])
+      // Re-fetching /srv/from should hit backend because its cache was invalidated by cut-paste
+      invokeMock.mockClear()
+      await browser.fetchRemoteDir('s1', '/srv/from')
+      expect(calls('sftp_list_remote')).toEqual([{ sessionId: 's1', path: '/srv/from' }])
     })
 
     it('copies between two remote sessions through the pipeline', async () => {

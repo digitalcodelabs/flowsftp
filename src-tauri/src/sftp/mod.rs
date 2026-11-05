@@ -118,8 +118,13 @@ pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns:
     let norm_path_lower = norm_path.to_lowercase();
 
     // Only check relative subpath parts (ignore Windows drive letters or absolute prefixes)
-    let clean_rel = if norm_path_lower.contains(':') {
-        norm_path_lower.split('/').last().unwrap_or("").to_string()
+    let is_windows_drive_path = norm_path_lower
+        .as_bytes()
+        .first()
+        .is_some_and(|b| b.is_ascii_alphabetic())
+        && norm_path_lower.as_bytes().get(1) == Some(&b':');
+    let clean_rel = if is_windows_drive_path {
+        norm_path_lower.split('/').next_back().unwrap_or("").to_string()
     } else {
         norm_path_lower.trim_start_matches('/').to_string()
     };
@@ -132,7 +137,7 @@ pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns:
         }
 
         // Exact match with name or any segment of the relative path (e.g. "node_modules", ".git")
-        if name_lower == pat || parts.iter().any(|&p| p == pat) {
+        if name_lower == pat || parts.contains(&pat.as_str()) {
             return Some(raw_pat.clone());
         }
 
@@ -145,22 +150,15 @@ pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns:
             return Some(raw_pat.clone());
         }
 
-        // Wildcard extension match (e.g. "*.log", "*.swp", "*.tmp", "*.bak")
-        if pat.starts_with("*.") {
-            let ext = &pat[1..];
-            if name_lower.ends_with(ext) || clean_rel.ends_with(ext) {
-                return Some(raw_pat.clone());
-            }
-        } else if pat.starts_with('*') {
-            let suffix = &pat[1..];
+        // Wildcard extension or suffix/prefix match (e.g. "*.log", "*.swp", "*~", "tmp_*")
+        if let Some(suffix) = pat.strip_prefix('*') {
             if name_lower.ends_with(suffix) || clean_rel.ends_with(suffix) {
                 return Some(raw_pat.clone());
             }
-        } else if pat.ends_with('*') {
-            let prefix = &pat[..pat.len() - 1];
-            if name_lower.starts_with(prefix) || clean_rel.starts_with(prefix) {
-                return Some(raw_pat.clone());
-            }
+        } else if let Some(prefix) = pat.strip_suffix('*')
+            && (name_lower.starts_with(prefix) || clean_rel.starts_with(prefix))
+        {
+            return Some(raw_pat.clone());
         }
     }
 
@@ -340,10 +338,8 @@ pub async fn batch_create_remote_dirs(sftp: &SftpSession, paths: Vec<String>) ->
 }
 
 pub async fn create_remote_file(sftp: &SftpSession, path: &str, overwrite: Option<bool>) -> Result<(), String> {
-    if !overwrite.unwrap_or(false) {
-        if sftp.metadata(path).await.is_ok() {
-            return Err(format!("File '{}' already exists on remote server", path));
-        }
+    if !overwrite.unwrap_or(false) && sftp.metadata(path).await.is_ok() {
+        return Err(format!("File '{}' already exists on remote server", path));
     }
     sftp.create(path)
         .await
@@ -371,10 +367,10 @@ pub async fn remove_remote_dir_recursive_with_cancel(
         return Err("Cannot delete root or special directory".to_string());
     }
 
-    if let Some(id) = deletion_id {
-        if state.is_deletion_cancelled(id) {
-            return Err("Deletion cancelled by user".to_string());
-        }
+    if let Some(id) = deletion_id
+        && state.is_deletion_cancelled(id)
+    {
+        return Err("Deletion cancelled by user".to_string());
     }
 
     // 1. Try direct rmdir first (fast for empty directories)
@@ -382,10 +378,10 @@ pub async fn remove_remote_dir_recursive_with_cancel(
         return Ok(());
     }
 
-    if let Some(id) = deletion_id {
-        if state.is_deletion_cancelled(id) {
-            return Err("Deletion cancelled by user".to_string());
-        }
+    if let Some(id) = deletion_id
+        && state.is_deletion_cancelled(id)
+    {
+        return Err("Deletion cancelled by user".to_string());
     }
 
     // 2. Read entries inside the directory to delete them recursively
@@ -406,10 +402,10 @@ pub async fn remove_remote_dir_recursive_with_cancel(
     };
 
     for entry in entries {
-        if let Some(id) = deletion_id {
-            if state.is_deletion_cancelled(id) {
-                return Err("Deletion cancelled by user".to_string());
-            }
+        if let Some(id) = deletion_id
+            && state.is_deletion_cancelled(id)
+        {
+            return Err("Deletion cancelled by user".to_string());
         }
 
         let name = entry.file_name();
@@ -422,17 +418,17 @@ pub async fn remove_remote_dir_recursive_with_cancel(
         if entry.file_type().is_dir() {
             Box::pin(remove_remote_dir_recursive_with_cancel(sftp, &child_path, state, deletion_id)).await?;
         } else {
-            let res = tokio::time::timeout(std::time::Duration::from_secs(10), sftp.remove_file(&child_path)).await;
-            if res.is_err() || matches!(res, Ok(Err(_))) {
-                Box::pin(remove_remote_dir_recursive_with_cancel(sftp, &child_path, state, deletion_id)).await?;
-            }
+            tokio::time::timeout(std::time::Duration::from_secs(10), sftp.remove_file(&child_path))
+                .await
+                .map_err(|_| format!("Timed out removing remote file '{}'", child_path))?
+                .map_err(|e| format!("Failed to remove remote file '{}': {}", child_path, e))?;
         }
     }
 
-    if let Some(id) = deletion_id {
-        if state.is_deletion_cancelled(id) {
-            return Err("Deletion cancelled by user".to_string());
-        }
+    if let Some(id) = deletion_id
+        && state.is_deletion_cancelled(id)
+    {
+        return Err("Deletion cancelled by user".to_string());
     }
 
     // 3. Directory should now be empty; remove it
@@ -475,8 +471,10 @@ pub async fn set_remote_permissions(
     target_type: Option<&str>,
 ) -> Result<(), String> {
     if !recursive {
-        let mut attrs = russh_sftp::protocol::FileAttributes::default();
-        attrs.permissions = Some(permissions);
+        let attrs = russh_sftp::protocol::FileAttributes {
+            permissions: Some(permissions),
+            ..Default::default()
+        };
         sftp.set_metadata(path, attrs)
             .await
             .map_err(|e| format!("Failed to set permissions on '{}': {}", path, e))?;
@@ -501,14 +499,21 @@ pub async fn set_remote_permissions(
         };
 
         if should_apply {
-            let mut attrs = russh_sftp::protocol::FileAttributes::default();
-            attrs.permissions = Some(permissions);
+            let attrs = russh_sftp::protocol::FileAttributes {
+                permissions: Some(permissions),
+                ..Default::default()
+            };
             let _ = sftp.set_metadata(&current_path, attrs).await;
         }
 
-        // Try reading as directory
-        if let Ok(entries) = sftp.read_dir(&current_path).await {
+        // Try reading as directory (only if it is a directory)
+        if is_dir
+            && let Ok(entries) = sftp.read_dir(&current_path).await
+        {
             for entry in entries {
+                if entry.file_type().is_symlink() {
+                    continue;
+                }
                 let name = entry.file_name();
                 if name != "." && name != ".." {
                     let sub_path = if current_path.ends_with('/') {
@@ -533,10 +538,15 @@ pub async fn read_remote_file_text(sftp: &SftpSession, path: &str) -> Result<Str
 
     let mut buf = Vec::new();
     // Safety limit: 10 MB
-    let mut take = (&mut file).take(10 * 1024 * 1024);
+    let max_bytes: u64 = 10 * 1024 * 1024;
+    let mut take = (&mut file).take(max_bytes + 1);
     take.read_to_end(&mut buf)
         .await
         .map_err(|e| format!("Failed to read remote file: {}", e))?;
+
+    if buf.len() as u64 > max_bytes {
+        return Err("File exceeds 10 MB text editor limit".to_string());
+    }
 
     match String::from_utf8(buf) {
         Ok(s) => Ok(s),
@@ -565,6 +575,119 @@ pub async fn write_remote_file_text(sftp: &SftpSession, path: &str, content: &st
     write_remote_file_binary(sftp, path, content.as_bytes()).await
 }
 
+pub async fn download_remote_to_local_file(
+    sftp: &SftpSession,
+    remote_path: &str,
+    local_path: &Path,
+) -> Result<(), String> {
+    let mut remote_file = sftp
+        .open(remote_path)
+        .await
+        .map_err(|e| format!("Failed to open remote file '{}': {}", remote_path, e))?;
+
+    if let Some(parent) = local_path.parent() {
+        let _ = fs::create_dir_all(parent).await;
+    }
+
+    let mut local_file = fs::File::create(local_path)
+        .await
+        .map_err(|e| format!("Failed to create local file '{}': {}", local_path.display(), e))?;
+
+    tokio::io::copy(&mut remote_file, &mut local_file)
+        .await
+        .map_err(|e| format!("Failed to stream remote file '{}': {}", remote_path, e))?;
+    local_file
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush local file '{}': {}", local_path.display(), e))?;
+
+    Ok(())
+}
+
+pub async fn upload_local_to_remote_file(
+    sftp: &SftpSession,
+    local_path: &Path,
+    remote_path: &str,
+) -> Result<(), String> {
+    let mut local_file = fs::File::open(local_path)
+        .await
+        .map_err(|e| format!("Failed to open local file '{}': {}", local_path.display(), e))?;
+
+    let mut remote_file = match sftp.create(remote_path).await {
+        Ok(f) => f,
+        Err(create_err) => {
+            if let Some(parent) = Path::new(remote_path).parent() {
+                let parent_str = parent.to_string_lossy().replace('\\', "/");
+                if !parent_str.is_empty() && parent_str != "/" && parent_str != "." {
+                    let _ = ensure_remote_dir_recursive(sftp, &parent_str).await;
+                }
+            }
+            sftp.create(remote_path).await.map_err(|e| {
+                format!(
+                    "Failed to create remote file '{}' (initial error: {}): {}",
+                    remote_path, create_err, e
+                )
+            })?
+        }
+    };
+
+    tokio::io::copy(&mut local_file, &mut remote_file)
+        .await
+        .map_err(|e| format!("Failed to stream file to '{}': {}", remote_path, e))?;
+    remote_file
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush remote file '{}': {}", remote_path, e))?;
+    let _ = remote_file.shutdown().await;
+
+    Ok(())
+}
+
+pub async fn calculate_remote_sftp_checksum(
+    sftp: &SftpSession,
+    path: &str,
+    algorithm: &str,
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+
+    let mut file = sftp
+        .open(path)
+        .await
+        .map_err(|e| format!("Failed to open remote file '{}': {}", path, e))?;
+
+    let mut buffer = [0u8; 65536];
+
+    if algorithm.eq_ignore_ascii_case("md5") {
+        let mut context = md5::Context::new();
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read remote file: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            context.consume(&buffer[..n]);
+        }
+        let digest = context.compute();
+        Ok(format!("{:x}", digest))
+    } else {
+        let mut hasher = Sha256::new();
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read remote file: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        let result = hasher.finalize();
+        Ok(format!("{:x}", result))
+    }
+}
+
 pub async fn read_local_file_text(path: &str) -> Result<String, String> {
     let (native, _) = normalize_to_native_path(path);
     tokio::fs::read_to_string(&native)
@@ -579,6 +702,8 @@ pub async fn write_local_file_text(path: &str, content: &str) -> Result<(), Stri
         .map_err(|e| format!("Failed to write local file: {}", e))
 }
 
+const MAX_IN_MEMORY_FILE_BYTES: u64 = 25 * 1024 * 1024;
+
 pub async fn read_remote_file_binary(sftp: &SftpSession, path: &str) -> Result<Vec<u8>, String> {
     let mut file = sftp
         .open(path)
@@ -586,10 +711,14 @@ pub async fn read_remote_file_binary(sftp: &SftpSession, path: &str) -> Result<V
         .map_err(|e| format!("Failed to open remote file '{}': {}", path, e))?;
 
     let mut buf = Vec::new();
-    let mut take = (&mut file).take(25 * 1024 * 1024);
+    let mut take = (&mut file).take(MAX_IN_MEMORY_FILE_BYTES + 1);
     take.read_to_end(&mut buf)
         .await
         .map_err(|e| format!("Failed to read remote file: {}", e))?;
+
+    if buf.len() as u64 > MAX_IN_MEMORY_FILE_BYTES {
+        return Err("File exceeds 25 MB in-memory limit".to_string());
+    }
 
     Ok(buf)
 }
@@ -601,10 +730,14 @@ pub async fn read_local_file_binary(path: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to open local file: {}", e))?;
 
     let mut buf = Vec::new();
-    let mut take = (&mut file).take(25 * 1024 * 1024);
+    let mut take = (&mut file).take(MAX_IN_MEMORY_FILE_BYTES + 1);
     take.read_to_end(&mut buf)
         .await
         .map_err(|e| format!("Failed to read local file: {}", e))?;
+
+    if buf.len() as u64 > MAX_IN_MEMORY_FILE_BYTES {
+        return Err("File exceeds 25 MB in-memory limit".to_string());
+    }
 
     Ok(buf)
 }
@@ -615,6 +748,59 @@ pub struct GitRepoStatus {
     pub root: Option<String>,
     pub branch: Option<String>,
     pub files: std::collections::HashMap<String, String>,
+}
+
+pub fn parse_git_status_porcelain(
+    text: &str,
+    base_prefix: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut files = std::collections::HashMap::new();
+    let clean_prefix = base_prefix.trim().trim_end_matches('/');
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim_end_matches(['\r', '\n']);
+        if line.len() < 4 || !line.is_char_boundary(2) || !line.is_char_boundary(3) {
+            continue;
+        }
+        let xy = &line[0..2];
+        let file_part = line[3..].trim();
+        if file_part.is_empty() {
+            continue;
+        }
+        let file_path = if let Some(idx) = file_part.find(" -> ") {
+            &file_part[idx + 4..]
+        } else {
+            file_part
+        }
+        .trim_matches('"');
+
+        let status_type = match xy {
+            "??" => "untracked",
+            " M" | "M " | "MM" | "AM" => "modified",
+            "A " => "staged",
+            "D " | " D" => "deleted",
+            "R " | "RM" | " R" => "renamed",
+            "UU" | "AA" | "DD" | "AU" | "UA" | "DU" | "UD" => "conflict",
+            s if s.starts_with('M') || s.ends_with('M') => "modified",
+            s if s.starts_with('A') => "staged",
+            s if s.starts_with('D') || s.ends_with('D') => "deleted",
+            s if s.starts_with('R') => "renamed",
+            _ => "modified",
+        };
+
+        let norm_path = file_path.replace('\\', "/");
+        files.insert(norm_path.clone(), status_type.to_string());
+        if !clean_prefix.is_empty() {
+            files.insert(format!("{}/{}", clean_prefix, norm_path), status_type.to_string());
+        }
+        if let Some(fname) = norm_path.split('/').next_back() {
+            files
+                .entry(fname.to_string())
+                .or_insert_with(|| status_type.to_string());
+        }
+    }
+
+    files
 }
 
 pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
@@ -671,51 +857,20 @@ pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
         _ => None,
     };
 
-    let mut files = std::collections::HashMap::new();
     let status_out = tokio::process::Command::new("git")
         .args(["status", "--porcelain=v1", "-uall"])
         .current_dir(&dir)
         .output()
         .await;
 
-    if let Ok(so) = status_out {
-        if so.status.success() {
-            let text = String::from_utf8_lossy(&so.stdout);
-            for line in text.lines() {
-                if line.len() < 4 {
-                    continue;
-                }
-                let xy = &line[0..2];
-                let file_part = line[3..].trim();
-                let file_path = if let Some(idx) = file_part.find(" -> ") {
-                    &file_part[idx + 4..]
-                } else {
-                    file_part
-                }
-                .trim_matches('"');
-
-                let status_type = match xy {
-                    "??" => "untracked",
-                    " M" | "M " | "MM" | "AM" => "modified",
-                    "A " => "staged",
-                    "D " | " D" => "deleted",
-                    "R " => "renamed",
-                    "UU" | "AA" | "DD" => "conflict",
-                    s if s.starts_with('M') || s.ends_with('M') => "modified",
-                    s if s.starts_with('A') => "staged",
-                    _ => "modified",
-                };
-
-                let norm_path = file_path.replace('\\', "/");
-                files.insert(norm_path.clone(), status_type.to_string());
-                let abs_path = format!("{}/{}", root_clean, norm_path);
-                files.insert(abs_path, status_type.to_string());
-                if let Some(fname) = norm_path.split('/').last() {
-                    files.entry(fname.to_string()).or_insert_with(|| status_type.to_string());
-                }
-            }
-        }
-    }
+    let files = if let Ok(so) = status_out
+        && so.status.success()
+    {
+        let text = String::from_utf8_lossy(&so.stdout);
+        parse_git_status_porcelain(&text, &root_clean)
+    } else {
+        std::collections::HashMap::new()
+    };
 
     Ok(GitRepoStatus {
         is_repo: true,
@@ -730,8 +885,8 @@ pub async fn open_in_default_app(path: &str) -> Result<(), String> {
     let (native, _) = normalize_to_native_path(path);
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", &native.to_string_lossy()])
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", &native.to_string_lossy()])
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
@@ -814,20 +969,69 @@ pub async fn download_file(
         })?;
 
     // 3. Create parent local directories if needed
-    if let Some(parent) = native_local.parent() {
-        if let Err(e) = fs::create_dir_all(parent).await {
-            log::warn!("[download_file] Warning creating parent dir '{:?}': {}", parent, e);
-        }
+    if let Some(parent) = native_local.parent()
+        && let Err(e) = fs::create_dir_all(parent).await
+    {
+        log::warn!("[download_file] Warning creating parent dir '{:?}': {}", parent, e);
     }
 
-    // 4. Create local file
-    let mut local_file = fs::File::create(&native_local)
-        .await
-        .map_err(|e| {
-            let msg = format!("Failed to create local file '{}': {}", local_path, e);
-            log::error!("[download_file] {}", msg);
-            msg
-        })?;
+    let mut resume_offset: u64 = 0;
+    if conflict == "resume"
+        && let Ok(meta) = fs::metadata(&native_local).await
+        && meta.len() > 0
+    {
+        resume_offset = meta.len();
+    }
+
+    if resume_offset > 0 && total_bytes > 0 && resume_offset >= total_bytes {
+        let event_name = format!("sftp:progress:{}", transfer_id);
+        let _ = app.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id,
+                file_name,
+                direction: "download".to_string(),
+                bytes_transferred: total_bytes,
+                total_bytes,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: None,
+            },
+        );
+        return Ok(());
+    }
+
+    // 4. Open or create local file
+    let mut local_file = if resume_offset > 0 {
+        use tokio::io::AsyncSeekExt;
+        if remote_file.seek(std::io::SeekFrom::Start(resume_offset)).await.is_ok() {
+            fs::OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(&native_local)
+                .await
+                .map_err(|e| {
+                    let msg = format!("Failed to open local file for resume '{}': {}", local_path, e);
+                    log::error!("[download_file] {}", msg);
+                    msg
+                })?
+        } else {
+            resume_offset = 0;
+            fs::File::create(&native_local).await.map_err(|e| {
+                let msg = format!("Failed to create local file '{}': {}", local_path, e);
+                log::error!("[download_file] {}", msg);
+                msg
+            })?
+        }
+    } else {
+        fs::File::create(&native_local)
+            .await
+            .map_err(|e| {
+                let msg = format!("Failed to create local file '{}': {}", local_path, e);
+                log::error!("[download_file] {}", msg);
+                msg
+            })?
+    };
 
     let event_name = format!("sftp:progress:{}", transfer_id);
     let buf_size = if total_bytes > 0 && total_bytes < 64 * 1024 {
@@ -836,11 +1040,11 @@ pub async fn download_file(
         64 * 1024
     };
     let mut buffer = vec![0u8; buf_size];
-    let mut transferred: u64 = 0;
+    let mut transferred: u64 = resume_offset;
     let start_time = Instant::now();
     let mut last_emit = Instant::now();
 
-    // For larger files (> 128 KB), emit initial 0% progress so UI displays active status.
+    // For larger files (> 128 KB), emit initial progress so UI displays active status.
     // For small files that complete in milliseconds, skip this to cut IPC overhead in half.
     if total_bytes > 128 * 1024 {
         let _ = app.emit(
@@ -849,7 +1053,7 @@ pub async fn download_file(
                 transfer_id: transfer_id.clone(),
                 file_name: file_name.clone(),
                 direction: "download".to_string(),
-                bytes_transferred: 0,
+                bytes_transferred: transferred,
                 total_bytes,
                 speed_bytes_per_sec: 0,
                 is_complete: false,
@@ -863,6 +1067,10 @@ pub async fn download_file(
         if state.is_transfer_cancelled(&transfer_id) {
             let err_msg = "Transfer cancelled by user".to_string();
             log::info!("[download_file] Cancelled by user: transfer_id='{}'", transfer_id);
+            drop(local_file);
+            if resume_offset == 0 {
+                let _ = fs::remove_file(&native_local).await;
+            }
             let _ = app.emit(
                 &event_name,
                 TransferProgress {
@@ -954,11 +1162,11 @@ pub async fn download_file(
     drop(local_file);
 
     // Preserve remote modification timestamp on downloaded local file
-    if let Ok(meta) = sftp.metadata(&remote_path).await {
-        if let Some(mtime) = meta.mtime {
-            let ft = filetime::FileTime::from_unix_time(mtime as i64, 0);
-            let _ = filetime::set_file_mtime(&native_local, ft);
-        }
+    if let Ok(meta) = sftp.metadata(&remote_path).await
+        && let Some(mtime) = meta.mtime
+    {
+        let ft = filetime::FileTime::from_unix_time(mtime as i64, 0);
+        let _ = filetime::set_file_mtime(&native_local, ft);
     }
 
     log::info!(
@@ -1036,6 +1244,33 @@ pub async fn upload_file(
         return Ok(());
     }
 
+    let mut resume_offset: u64 = 0;
+    if conflict == "resume"
+        && let Ok(meta) = sftp.metadata(&remote_path).await
+        && let Some(size) = meta.size
+        && size > 0
+    {
+        resume_offset = size;
+    }
+
+    if resume_offset > 0 && total_bytes > 0 && resume_offset >= total_bytes {
+        let event_name = format!("sftp:progress:{}", transfer_id);
+        let _ = app.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id,
+                file_name,
+                direction: "upload".to_string(),
+                bytes_transferred: total_bytes,
+                total_bytes,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: None,
+            },
+        );
+        return Ok(());
+    }
+
     // 2. Open local file
     let mut local_file = fs::File::open(&native_local)
         .await
@@ -1045,21 +1280,55 @@ pub async fn upload_file(
             msg
         })?;
 
-    // 3. Create remote file (with automatic parent directory creation if missing)
-    let mut remote_file = match sftp.create(&remote_path).await {
-        Ok(f) => f,
-        Err(create_err) => {
-            if let Some(parent) = std::path::Path::new(&remote_path).parent() {
-                let parent_str = parent.to_string_lossy().replace('\\', "/");
-                if !parent_str.is_empty() && parent_str != "/" && parent_str != "." {
-                    let _ = ensure_remote_dir_recursive(sftp, &parent_str).await;
+    // 3. Create or open remote file (with automatic parent directory creation if missing)
+    let mut remote_file = if resume_offset > 0 {
+        use tokio::io::AsyncSeekExt;
+        if local_file.seek(std::io::SeekFrom::Start(resume_offset)).await.is_ok() {
+            match sftp
+                .open_with_flags(
+                    &remote_path,
+                    russh_sftp::protocol::OpenFlags::WRITE | russh_sftp::protocol::OpenFlags::APPEND,
+                )
+                .await
+            {
+                Ok(mut rf) => {
+                    let _ = rf.seek(std::io::SeekFrom::Start(resume_offset)).await;
+                    rf
+                }
+                Err(_) => {
+                    resume_offset = 0;
+                    let _ = local_file.seek(std::io::SeekFrom::Start(0)).await;
+                    sftp.create(&remote_path).await.map_err(|e| {
+                        let msg = format!("Failed to create remote file '{}': {}", remote_path, e);
+                        log::error!("[upload_file] {}", msg);
+                        msg
+                    })?
                 }
             }
+        } else {
+            resume_offset = 0;
             sftp.create(&remote_path).await.map_err(|e| {
-                let msg = format!("Failed to create remote file '{}' (initial error: {}): {}", remote_path, create_err, e);
+                let msg = format!("Failed to create remote file '{}': {}", remote_path, e);
                 log::error!("[upload_file] {}", msg);
                 msg
             })?
+        }
+    } else {
+        match sftp.create(&remote_path).await {
+            Ok(f) => f,
+            Err(create_err) => {
+                if let Some(parent) = std::path::Path::new(&remote_path).parent() {
+                    let parent_str = parent.to_string_lossy().replace('\\', "/");
+                    if !parent_str.is_empty() && parent_str != "/" && parent_str != "." {
+                        let _ = ensure_remote_dir_recursive(sftp, &parent_str).await;
+                    }
+                }
+                sftp.create(&remote_path).await.map_err(|e| {
+                    let msg = format!("Failed to create remote file '{}' (initial error: {}): {}", remote_path, create_err, e);
+                    log::error!("[upload_file] {}", msg);
+                    msg
+                })?
+            }
         }
     };
 
@@ -1070,11 +1339,11 @@ pub async fn upload_file(
         64 * 1024
     };
     let mut buffer = vec![0u8; buf_size];
-    let mut transferred: u64 = 0;
+    let mut transferred: u64 = resume_offset;
     let start_time = Instant::now();
     let mut last_emit = Instant::now();
 
-    // For larger files (> 128 KB), emit initial 0% progress so UI displays active status.
+    // For larger files (> 128 KB), emit initial progress so UI displays active status.
     // For small files that complete in milliseconds, skip this to cut IPC overhead in half.
     if total_bytes > 128 * 1024 {
         let _ = app.emit(
@@ -1083,7 +1352,7 @@ pub async fn upload_file(
                 transfer_id: transfer_id.clone(),
                 file_name: file_name.clone(),
                 direction: "upload".to_string(),
-                bytes_transferred: 0,
+                bytes_transferred: transferred,
                 total_bytes,
                 speed_bytes_per_sec: 0,
                 is_complete: false,
@@ -1186,14 +1455,15 @@ pub async fn upload_file(
     drop(remote_file);
 
     // Preserve local modification timestamp on uploaded remote file
-    if let Ok(meta) = fs::metadata(&native_local).await {
-        if let Ok(mtime) = meta.modified() {
-            if let Ok(duration) = mtime.duration_since(UNIX_EPOCH) {
-                let mut attrs = russh_sftp::protocol::FileAttributes::default();
-                attrs.mtime = Some(duration.as_secs() as u32);
-                let _ = sftp.set_metadata(&remote_path, attrs).await;
-            }
-        }
+    if let Ok(meta) = fs::metadata(&native_local).await
+        && let Ok(mtime) = meta.modified()
+        && let Ok(duration) = mtime.duration_since(UNIX_EPOCH)
+    {
+        let attrs = russh_sftp::protocol::FileAttributes {
+            mtime: Some(duration.as_secs() as u32),
+            ..Default::default()
+        };
+        let _ = sftp.set_metadata(&remote_path, attrs).await;
     }
 
     log::info!(
@@ -1794,46 +2064,45 @@ pub async fn get_wsl_distributions() -> Result<Vec<String>, String> {
 
     // 1. Query Windows Registry for registered Lxss distributions
     if let Ok(output) = tokio::process::Command::new("reg")
-        .args(&["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss", "/s", "/v", "DistributionName"])
+        .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss", "/s", "/v", "DistributionName"])
         .output()
         .await
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("DistributionName") {
-                if let Some(val) = trimmed.split_whitespace().last() {
-                    let name = val.trim().to_string();
-                    if !name.is_empty() && !distros.contains(&name) {
-                        distros.push(name);
-                    }
+            if trimmed.starts_with("DistributionName")
+                && let Some(val) = trimmed.split_whitespace().last()
+            {
+                let name = val.trim().to_string();
+                if !name.is_empty() && !distros.contains(&name) {
+                    distros.push(name);
                 }
             }
         }
     }
 
     // 2. Fallback to wsl.exe -l -q if registry had no matches
-    if distros.is_empty() {
-        if let Ok(output) = tokio::process::Command::new("wsl.exe")
-            .args(&["-l", "-q"])
+    if distros.is_empty()
+        && let Ok(output) = tokio::process::Command::new("wsl.exe")
+            .args(["-l", "-q"])
             .output()
             .await
-        {
-            let text = if output.stdout.len() >= 2 && output.stdout[1] == 0 {
-                let u16_vec: Vec<u16> = output.stdout
-                    .chunks_exact(2)
-                    .map(|a| u16::from_le_bytes([a[0], a[1]]))
-                    .collect();
-                String::from_utf16_lossy(&u16_vec)
-            } else {
-                String::from_utf8_lossy(&output.stdout).to_string()
-            };
+    {
+        let text = if output.stdout.len() >= 2 && output.stdout[1] == 0 {
+            let u16_vec: Vec<u16> = output.stdout
+                .chunks_exact(2)
+                .map(|a| u16::from_le_bytes([a[0], a[1]]))
+                .collect();
+            String::from_utf16_lossy(&u16_vec)
+        } else {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        };
 
-            for line in text.lines() {
-                let name = line.trim().to_string();
-                if !name.is_empty() && !distros.contains(&name) {
-                    distros.push(name);
-                }
+        for line in text.lines() {
+            let name = line.trim().to_string();
+            if !name.is_empty() && !distros.contains(&name) {
+                distros.push(name);
             }
         }
     }
@@ -1850,12 +2119,6 @@ pub async fn extract_remote_archive(
     archive_path: &str,
     target_dir: &str,
 ) -> Result<String, String> {
-    let channel = session
-        .handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
-
     let clean_archive = archive_path.trim();
     let clean_target = if target_dir.trim().is_empty() {
         let path = std::path::Path::new(clean_archive);
@@ -1864,72 +2127,61 @@ pub async fn extract_remote_archive(
         target_dir.trim()
     };
 
-    let escaped_archive = crate::shell::escape_single_quotes(&clean_archive);
-    let escaped_target = crate::shell::escape_single_quotes(&clean_target);
+    let escaped_archive = crate::shell::escape_single_quotes(clean_archive);
+    let escaped_target = crate::shell::escape_single_quotes(clean_target);
 
     let lower = clean_archive.to_lowercase();
     let extract_cmd = if lower.ends_with(".zip") {
         format!(
-            "mkdir -p '{target}' && cd '{target}' && (unzip -q -o '{archive}' 2>&1 || tar -xf '{archive}' 2>&1 || python3 -c \"import zipfile; zipfile.ZipFile('{archive}').extractall('{target}')\" 2>&1 || python -c \"import zipfile; zipfile.ZipFile('{archive}').extractall('{target}')\" 2>&1)",
+            "mkdir -p -- '{target}' && (unzip -q -o '{archive}' -d '{target}' 2>&1 || tar -xf '{archive}' -C '{target}' 2>&1 || python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' '{archive}' '{target}' 2>&1 || python -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' '{archive}' '{target}' 2>&1)",
             target = escaped_target,
             archive = escaped_archive
         )
     } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
         format!(
-            "mkdir -p '{target}' && tar -xzf '{archive}' -C '{target}' 2>&1",
+            "mkdir -p -- '{target}' && tar -xzf '{archive}' -C '{target}' 2>&1",
             target = escaped_target,
             archive = escaped_archive
         )
     } else if lower.ends_with(".tar.bz2") || lower.ends_with(".tbz2") {
         format!(
-            "mkdir -p '{target}' && tar -xjf '{archive}' -C '{target}' 2>&1",
+            "mkdir -p -- '{target}' && tar -xjf '{archive}' -C '{target}' 2>&1",
             target = escaped_target,
             archive = escaped_archive
         )
     } else if lower.ends_with(".tar.xz") || lower.ends_with(".txz") {
         format!(
-            "mkdir -p '{target}' && tar -xJf '{archive}' -C '{target}' 2>&1",
+            "mkdir -p -- '{target}' && tar -xJf '{archive}' -C '{target}' 2>&1",
             target = escaped_target,
             archive = escaped_archive
         )
     } else if lower.ends_with(".7z") {
         format!(
-            "mkdir -p '{target}' && (7z x -y -o'{target}' '{archive}' 2>&1 || 7za x -y -o'{target}' '{archive}' 2>&1)",
+            "mkdir -p -- '{target}' && (7z x -y -o'{target}' -- '{archive}' 2>&1 || 7za x -y -o'{target}' -- '{archive}' 2>&1)",
             target = escaped_target,
             archive = escaped_archive
         )
     } else {
         format!(
-            "mkdir -p '{target}' && tar -xf '{archive}' -C '{target}' 2>&1",
+            "mkdir -p -- '{target}' && tar -xf '{archive}' -C '{target}' 2>&1",
             target = escaped_target,
             archive = escaped_archive
         )
     };
 
-    let full_cmd = format!(
-        "{} && echo '---FLOWSFTP_ARCHIVE_SUCCESS---' || echo '---FLOWSFTP_ARCHIVE_FAILED---'",
-        extract_cmd
-    );
-
-    channel
-        .exec(true, full_cmd)
-        .await
-        .map_err(|e| format!("Failed to execute remote extraction command: {}", e))?;
-
-    let mut stream = channel.into_stream();
-    let mut output_bytes = Vec::new();
-    let _ = tokio::time::timeout(
+    let result = crate::ssh::exec::run_command(
+        &session.handle,
+        extract_cmd,
         std::time::Duration::from_secs(300),
-        stream.read_to_end(&mut output_bytes),
     )
-    .await
-    .map_err(|_| "Archive extraction timed out after 5 minutes".to_string())?;
+    .await?;
 
-    let text = String::from_utf8_lossy(&output_bytes).to_string();
-    if text.contains("---FLOWSFTP_ARCHIVE_SUCCESS---") {
+    if result.succeeded() {
         Ok("Archive extracted successfully".to_string())
+    } else if result.outcome == crate::ssh::exec::ExecOutcome::TimedOut {
+        Err("Archive extraction timed out after 5 minutes".to_string())
     } else {
-        let err_detail = text.replace("---FLOWSFTP_ARCHIVE_FAILED---", "").trim().to_string();
+        let err_detail = result.output.trim();
         Err(if err_detail.is_empty() {
             "Archive extraction failed on remote server (check file format and permissions)".to_string()
         } else {
@@ -1948,84 +2200,67 @@ pub async fn compress_remote_archive(
         return Err("No items selected for compression".to_string());
     }
 
-    let channel = session
-        .handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
-
     let clean_parent = if parent_dir.trim().is_empty() { "." } else { parent_dir.trim() };
-    let escaped_parent = crate::shell::escape_single_quotes(&clean_parent);
-    let escaped_archive = crate::shell::escape_single_quotes(&archive_name.trim());
+    let escaped_parent = crate::shell::escape_single_quotes(clean_parent);
+    let escaped_archive = crate::shell::escape_single_quotes(archive_name.trim());
 
     let quoted_items = items
         .iter()
-        .map(|it| format!("'{}'", crate::shell::escape_single_quotes(&it)))
+        .map(|it| format!("'{}'", crate::shell::escape_single_quotes(it)))
         .collect::<Vec<_>>()
         .join(" ");
 
     let lower = archive_name.to_lowercase();
     let compress_cmd = if lower.ends_with(".zip") {
         format!(
-            "cd '{parent}' && (zip -r -q '{archive}' {items} 2>&1 || tar -acf '{archive}' {items} 2>&1)",
+            "cd -- '{parent}' && (zip -r -q '{archive}' -- {items} 2>&1 || tar -acf '{archive}' -- {items} 2>&1)",
             parent = escaped_parent,
             archive = escaped_archive,
             items = quoted_items
         )
     } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
         format!(
-            "cd '{parent}' && tar -czf '{archive}' {items} 2>&1",
+            "cd -- '{parent}' && tar -czf '{archive}' -- {items} 2>&1",
             parent = escaped_parent,
             archive = escaped_archive,
             items = quoted_items
         )
     } else if lower.ends_with(".tar.bz2") || lower.ends_with(".tbz2") {
         format!(
-            "cd '{parent}' && tar -cjf '{archive}' {items} 2>&1",
+            "cd -- '{parent}' && tar -cjf '{archive}' -- {items} 2>&1",
             parent = escaped_parent,
             archive = escaped_archive,
             items = quoted_items
         )
     } else if lower.ends_with(".tar.xz") || lower.ends_with(".txz") {
         format!(
-            "cd '{parent}' && tar -cJf '{archive}' {items} 2>&1",
+            "cd -- '{parent}' && tar -cJf '{archive}' -- {items} 2>&1",
             parent = escaped_parent,
             archive = escaped_archive,
             items = quoted_items
         )
     } else {
         format!(
-            "cd '{parent}' && tar -cf '{archive}' {items} 2>&1",
+            "cd -- '{parent}' && tar -cf '{archive}' -- {items} 2>&1",
             parent = escaped_parent,
             archive = escaped_archive,
             items = quoted_items
         )
     };
 
-    let full_cmd = format!(
-        "{} && echo '---FLOWSFTP_ARCHIVE_SUCCESS---' || echo '---FLOWSFTP_ARCHIVE_FAILED---'",
-        compress_cmd
-    );
-
-    channel
-        .exec(true, full_cmd)
-        .await
-        .map_err(|e| format!("Failed to execute remote compression command: {}", e))?;
-
-    let mut stream = channel.into_stream();
-    let mut output_bytes = Vec::new();
-    let _ = tokio::time::timeout(
+    let result = crate::ssh::exec::run_command(
+        &session.handle,
+        compress_cmd,
         std::time::Duration::from_secs(300),
-        stream.read_to_end(&mut output_bytes),
     )
-    .await
-    .map_err(|_| "Archive compression timed out after 5 minutes".to_string())?;
+    .await?;
 
-    let text = String::from_utf8_lossy(&output_bytes).to_string();
-    if text.contains("---FLOWSFTP_ARCHIVE_SUCCESS---") {
+    if result.succeeded() {
         Ok(format!("Archive '{}' created successfully", archive_name))
+    } else if result.outcome == crate::ssh::exec::ExecOutcome::TimedOut {
+        Err("Archive compression timed out after 5 minutes".to_string())
     } else {
-        let err_detail = text.replace("---FLOWSFTP_ARCHIVE_FAILED---", "").trim().to_string();
+        let err_detail = result.output.trim();
         Err(if err_detail.is_empty() {
             "Archive compression failed on remote server (check permissions and disk space)".to_string()
         } else {
@@ -2102,6 +2337,7 @@ pub async fn compress_local_archive(
     cmd.current_dir(&native_parent);
     cmd.arg(flag);
     cmd.arg(archive_name);
+    cmd.arg("--");
     for item in items {
         cmd.arg(item);
     }
@@ -2190,6 +2426,31 @@ mod tests {
         // happens to match (e.g. C:/projects/node_modules-backup/..) does not hide everything.
         let p = pats(&["projects"]);
         assert!(!is_path_ignored("readme.md", "C:/projects/readme.md", &p));
+    }
+
+    #[test]
+    fn unix_colon_in_directory_name_preserves_subpath_segments() {
+        let p = pats(&["node_modules"]);
+        assert!(is_path_ignored(
+            "index.js",
+            "release:2026/node_modules/pkg/index.js",
+            &p
+        ));
+    }
+
+    #[test]
+    fn git_status_porcelain_parses_all_states_without_corrupting_leading_spaces() {
+        let raw = " M src/main.rs\nM  src/lib.rs\nA  added.txt\nD  old.txt\nR  before.rs -> after.rs\nUU conflict.rs\n?? untracked.log\n";
+        let map = parse_git_status_porcelain(raw, "/repo");
+        assert_eq!(map.get("src/main.rs").map(String::as_str), Some("modified"));
+        assert_eq!(map.get("/repo/src/main.rs").map(String::as_str), Some("modified"));
+        assert_eq!(map.get("main.rs").map(String::as_str), Some("modified"));
+        assert_eq!(map.get("src/lib.rs").map(String::as_str), Some("modified"));
+        assert_eq!(map.get("added.txt").map(String::as_str), Some("staged"));
+        assert_eq!(map.get("old.txt").map(String::as_str), Some("deleted"));
+        assert_eq!(map.get("after.rs").map(String::as_str), Some("renamed"));
+        assert_eq!(map.get("conflict.rs").map(String::as_str), Some("conflict"));
+        assert_eq!(map.get("untracked.log").map(String::as_str), Some("untracked"));
     }
 
     // ---- local path normalisation ----

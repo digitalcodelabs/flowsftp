@@ -1,6 +1,6 @@
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import type { FileClipboardItem, LocalFileEntry, SftpFileEntry } from './types'
+import type { FileClipboardItem, LocalFileEntry, SftpFileEntry, TransferItem } from './types'
 import { LOCAL_PANE, isRemotePane, paneFrom, remotePane, type PaneRef } from './pane'
 import type { useDirectoryBrowser } from './useDirectoryBrowser'
 import type { useTransferPipeline } from './useTransferPipeline'
@@ -13,6 +13,10 @@ export interface FileOperationsDeps {
     ReturnType<typeof useTransferPipeline>,
     'startBatchDownload' | 'startBatchUpload' | 'startBatchRemoteToRemoteTransfer'
   >
+  queue?: {
+    failedTransfers: Ref<TransferItem[]>
+    isCancellingAll?: Ref<boolean>
+  }
 }
 
 export interface DeleteOptions {
@@ -98,7 +102,6 @@ export function useFileOperations(deps: FileOperationsDeps) {
     const { deletionId, skipRefresh = false, useFastRm = false } = opts
     if (isRemotePane(pane)) {
       const sessionId = pane.sessionId
-      console.log('[Store] deleteRemoteItem invoking backend:', { sessionId, path: item.path, is_dir: item.is_dir, deletionId, useFastRm })
       try {
         if (item.is_dir) {
           await invoke('sftp_remove_remote_dir', {
@@ -111,7 +114,6 @@ export function useFileOperations(deps: FileOperationsDeps) {
         } else {
           await invoke('sftp_remove_remote_file', { sessionId, path: item.path, deletionId: deletionId || null })
         }
-        console.log('[Store] deleteRemoteItem success:', item.path)
       } catch (err) {
         console.error('[Store] deleteRemoteItem failed:', item.path, err)
         throw err
@@ -121,10 +123,8 @@ export function useFileOperations(deps: FileOperationsDeps) {
         await fetchRemoteDir(sessionId, remotePath.value, { force: true })
       }
     } else {
-      console.log('[Store] deleteLocalItem invoking backend:', { path: item.path, is_dir: item.is_dir })
       try {
         await invoke('sftp_remove_local', { path: item.path })
-        console.log('[Store] deleteLocalItem success:', item.path)
       } catch (err) {
         console.error('[Store] deleteLocalItem failed:', item.path, err)
         throw err
@@ -262,11 +262,96 @@ export function useFileOperations(deps: FileOperationsDeps) {
     sessionId?: string
   ) {
     if (!files || files.length === 0) return
+    const resolvedSessionId = pane === 'remote' ? (sessionId || currentSessionId.value) : undefined
+    const firstFile = files[0]
+    const normFirst = firstFile?.path ? firstFile.path.replace(/\\/g, '/') : ''
+    const derivedParent = normFirst.includes('/')
+      ? (normFirst.substring(0, normFirst.lastIndexOf('/')) || '/')
+      : undefined
+    const sourceDir =
+      derivedParent ||
+      (pane === 'remote'
+        ? (resolvedSessionId ? remoteDirOf(resolvedSessionId) : undefined)
+        : localPath.value)
     clipboard.value = {
       files: [...files],
       sourcePane: pane,
       mode,
-      sessionId: pane === 'remote' ? (sessionId || currentSessionId.value) : undefined,
+      sessionId: resolvedSessionId,
+      sourceDir,
+    }
+  }
+
+  function didRootItemFail(
+    item: AnyEntry,
+    batchResult: any,
+    newFailedItems: TransferItem[]
+  ): boolean {
+    if (batchResult === false || batchResult?.cancelled || batchResult?.failed === true) {
+      return true
+    }
+    const normPath = item.path.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (batchResult && typeof batchResult === 'object') {
+      const failedPaths: Iterable<string> | undefined = batchResult.failedPaths
+      if (failedPaths) {
+        for (const fp of failedPaths) {
+          const normFp = String(fp).replace(/\\/g, '/').replace(/\/+$/, '')
+          if (normFp === normPath || normFp.startsWith(`${normPath}/`)) {
+            return true
+          }
+        }
+      }
+    }
+    for (const t of newFailedItems) {
+      const normLocal = t.local_path?.replace(/\\/g, '/').replace(/\/+$/, '')
+      const normRemote = t.remote_path?.replace(/\\/g, '/').replace(/\/+$/, '')
+      if (
+        normLocal === normPath ||
+        normLocal?.startsWith(`${normPath}/`) ||
+        normRemote === normPath ||
+        normRemote?.startsWith(`${normPath}/`)
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  async function finalizeCrossEndpointCut(
+    sourcePaneRef: PaneRef,
+    clip: FileClipboardItem,
+    batchResult: any,
+    priorFailedIds: Set<string>
+  ) {
+    if (deps.queue?.isCancellingAll?.value) {
+      return
+    }
+    const newFailedItems = (deps.queue?.failedTransfers.value ?? []).filter(
+      (t) => !priorFailedIds.has(t.transfer_id)
+    )
+    const remaining: AnyEntry[] = []
+    for (const f of clip.files) {
+      if (didRootItemFail(f, batchResult, newFailedItems)) {
+        remaining.push(f)
+        continue
+      }
+      try {
+        await deleteItem(sourcePaneRef, f)
+      } catch (delErr) {
+        console.warn('Failed to delete source file after cut transfer:', delErr)
+      }
+    }
+    if (clip.sourceDir) {
+      if (isRemotePane(sourcePaneRef)) {
+        invalidateRemoteCache(sourcePaneRef.sessionId, clip.sourceDir)
+      } else {
+        invalidateLocalCache(clip.sourceDir)
+      }
+    }
+    if (remaining.length === 0) {
+      clipboard.value = null
+    } else if (clipboard.value === clip) {
+      clipboard.value = { ...clip, files: remaining }
     }
   }
 
@@ -282,9 +367,14 @@ export function useFileOperations(deps: FileOperationsDeps) {
         const paths = clip.files.map((f) => f.path)
         if (clip.mode === 'cut') {
           await invoke('sftp_move_local_paths', { paths, targetDir: dest })
+          if (clip.sourceDir) {
+            invalidateLocalCache(clip.sourceDir)
+          }
+          invalidateLocalCache(dest)
           clipboard.value = null
         } else {
           await invoke('sftp_copy_local_paths', { paths, targetDir: dest })
+          invalidateLocalCache(dest)
         }
         await fetchLocalDir(localPath.value, { force: true })
       } else if (clip.sourcePane === 'remote' && isRemotePane(target)) {
@@ -293,33 +383,38 @@ export function useFileOperations(deps: FileOperationsDeps) {
         if (srcSessionId === destSessionId && clip.mode === 'cut') {
           const paths = clip.files.map((f) => f.path)
           await invoke('sftp_move_remote_paths', { sessionId: destSessionId, paths, targetDir: dest })
+          if (clip.sourceDir) {
+            invalidateRemoteCache(destSessionId, clip.sourceDir)
+          }
+          invalidateRemoteCache(destSessionId, dest)
           clipboard.value = null
           await fetchRemoteDir(destSessionId, dest, { force: true })
         } else {
           // Cross-session remote transfer or same-server copy with conflict resolution!
-          await startBatchRemoteToRemoteTransfer(srcSessionId, destSessionId, clip.files as SftpFileEntry[], dest)
+          const priorFailedIds = new Set((deps.queue?.failedTransfers.value ?? []).map((t) => t.transfer_id))
+          const batchResult = await startBatchRemoteToRemoteTransfer(
+            srcSessionId,
+            destSessionId,
+            clip.files as SftpFileEntry[],
+            dest
+          )
           if (clip.mode === 'cut') {
-            for (const f of clip.files) {
-              try {
-                await deleteItem(remotePane(srcSessionId), f)
-              } catch (delErr) {
-                console.warn('Failed to delete source file after cut transfer:', delErr)
-              }
-            }
-            clipboard.value = null
+            await finalizeCrossEndpointCut(remotePane(srcSessionId), clip, batchResult, priorFailedIds)
           }
         }
       } else if (clip.sourcePane === 'local' && isRemotePane(target)) {
-        await startBatchUpload(target.sessionId, clip.files as LocalFileEntry[], dest)
+        const priorFailedIds = new Set((deps.queue?.failedTransfers.value ?? []).map((t) => t.transfer_id))
+        const batchResult = await startBatchUpload(target.sessionId, clip.files as LocalFileEntry[], dest)
         if (clip.mode === 'cut') {
-          clipboard.value = null
+          await finalizeCrossEndpointCut(LOCAL_PANE, clip, batchResult, priorFailedIds)
         }
       } else if (clip.sourcePane === 'remote' && !isRemotePane(target)) {
         const srcSessionId = clip.sessionId || currentSessionId.value
         if (srcSessionId) {
-          await startBatchDownload(srcSessionId, clip.files as SftpFileEntry[], dest)
+          const priorFailedIds = new Set((deps.queue?.failedTransfers.value ?? []).map((t) => t.transfer_id))
+          const batchResult = await startBatchDownload(srcSessionId, clip.files as SftpFileEntry[], dest)
           if (clip.mode === 'cut') {
-            clipboard.value = null
+            await finalizeCrossEndpointCut(remotePane(srcSessionId), clip, batchResult, priorFailedIds)
           }
         }
       }

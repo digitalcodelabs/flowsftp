@@ -25,6 +25,7 @@ import { selectAll, undo, redo, undoDepth, redoDepth, indentSelection, insertTab
 import { openSearchPanel } from '@codemirror/search'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore, isLightTheme } from '../stores/theme'
+import { useExternalEditStore } from '../stores/externalEdit'
 import FileIcon from './FileIcon.vue'
 
 // CodeMirror 6 and Extensions
@@ -287,7 +288,7 @@ const handleVimEscape = () => {
   if (!editorView) return
   const cm = getCM(editorView)
   if (!cm) return
-  Vim.handleKey(cm, '<Esc>')
+  Vim.handleKey(cm, '<Esc>', 'user')
   editorView.focus()
   if (cm.state?.vim) {
     if (cm.state.vim.insertMode) {
@@ -310,12 +311,12 @@ const setupVimExCommands = () => {
       handleSave()
     })
     Vim.defineEx('wq', 'wq', async () => {
-      await handleSave()
-      emit('close')
+      const ok = await handleSave()
+      if (ok) emit('close')
     })
     Vim.defineEx('x', 'x', async () => {
-      await handleSave()
-      emit('close')
+      const ok = await handleSave()
+      if (ok) emit('close')
     })
     Vim.defineEx('q', 'q', () => {
       handleClose()
@@ -489,8 +490,8 @@ const loadContent = async () => {
 }
 
 // Save file content
-const handleSave = async () => {
-  if (isSaving.value || !editorView) return
+const handleSave = async (): Promise<boolean> => {
+  if (isSaving.value || !editorView) return false
   isSaving.value = true
   errorMessage.value = null
   successMessage.value = null
@@ -524,9 +525,11 @@ const handleSave = async () => {
         successMessage.value = null
       }
     }, 2500)
+    return true
   } catch (err: any) {
     console.error('Failed to save file content:', err)
     errorMessage.value = `Save failed: ${err?.message || String(err)}`
+    return false
   } finally {
     isSaving.value = false
   }

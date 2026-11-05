@@ -213,18 +213,12 @@ export type VirtualQueueRow =
   | { type: 'group'; id: string; server_url: string; count: number }
   | { type: 'item'; id: string; item: TransferItem }
 
-const queueRowsCache = new WeakMap<TransferItem[], { len: number; rows: VirtualQueueRow[] }>()
-
 function buildVirtualQueueRows(transfers: TransferItem[]): VirtualQueueRow[] {
   if (transfers.length === 0) return []
-  const cached = queueRowsCache.get(transfers)
-  if (cached && cached.len === transfers.length) {
-    return cached.rows
-  }
 
   const map = new Map<string, TransferItem[]>()
   for (let i = 0; i < transfers.length; i++) {
-    const t = transfers[i]
+    const t = transfers[i]!
     const key = t.server_url || (t.session_id ? getServerUrlForSession(t.session_id) : 'sftp://remote')
     let list = map.get(key)
     if (!list) {
@@ -243,7 +237,7 @@ function buildVirtualQueueRows(transfers: TransferItem[]): VirtualQueueRow[] {
       count: groupTransfers.length,
     })
     for (let i = 0; i < groupTransfers.length; i++) {
-      const item = groupTransfers[i]
+      const item = groupTransfers[i]!
       rows.push({
         type: 'item',
         id: item.transfer_id,
@@ -251,7 +245,6 @@ function buildVirtualQueueRows(transfers: TransferItem[]): VirtualQueueRow[] {
       })
     }
   }
-  queueRowsCache.set(transfers, { len: transfers.length, rows })
   return rows
 }
 
@@ -307,7 +300,7 @@ function findRowIndexAtOffset(offsets: number[], targetOffset: number): number {
 
   while (low <= high) {
     const mid = (low + high) >> 1
-    if (offsets[mid] <= targetOffset) {
+    if ((offsets[mid] ?? 0) <= targetOffset) {
       result = mid
       low = mid + 1
     } else {
@@ -328,7 +321,7 @@ const virtualQueueLayout = computed(() => {
   const isTabActive = transferTab.value === 'active'
 
   for (let i = 0; i < len; i++) {
-    const r = rows[i]
+    const r = rows[i]!
     let h = 25
     if (r.type === 'item' && isTabActive && isTransferActive(r.item)) {
       h = 48
@@ -366,8 +359,8 @@ const virtualQueueRange = computed(() => {
   const startIndex = Math.max(0, rawStart - OVERSCAN_BUFFER)
   const endIndex = Math.min(len - 1, rawEnd + OVERSCAN_BUFFER)
 
-  const topPadding = prefixOffsets[startIndex]
-  const bottomPadding = Math.max(0, totalHeight - prefixOffsets[endIndex + 1])
+  const topPadding = prefixOffsets[startIndex] ?? 0
+  const bottomPadding = Math.max(0, totalHeight - (prefixOffsets[endIndex + 1] ?? totalHeight))
   const visibleRows = rows.slice(startIndex, endIndex + 1)
 
   return {
@@ -479,7 +472,8 @@ const handleQueueRowClick = (item: TransferItem, e: MouseEvent) => {
       const end = Math.max(prevIdx, currIdx)
       const newSet = new Set<string>()
       for (let i = start; i <= end; i++) {
-        newSet.add(currentList[i].transfer_id)
+        const entry = currentList[i]
+        if (entry) newSet.add(entry.transfer_id)
       }
       selectedQueueItemIds.value = newSet
     }
@@ -612,22 +606,38 @@ const handleResetAndRequeueSelected = async () => {
   }
 }
 
+let isManualRemoving = false
+
 const handleRemoveSelectedQueue = () => {
   closeQueueContextMenu()
-  sftpStore.removeTransfers(Array.from(selectedQueueItemIds.value))
-  selectedQueueItemIds.value.clear()
+  isManualRemoving = true
+  try {
+    sftpStore.removeTransfers(Array.from(selectedQueueItemIds.value))
+    selectedQueueItemIds.value.clear()
+  } finally {
+    nextTick(() => {
+      isManualRemoving = false
+    })
+  }
 }
 
 const handleRemoveAllInTab = () => {
   closeQueueContextMenu()
-  if (transferTab.value === 'completed') {
-    sftpStore.clearCompletedTransfers()
-  } else if (transferTab.value === 'failed') {
-    sftpStore.clearFailedTransfers()
-  } else {
-    sftpStore.stopAndRemoveAllQueued()
+  isManualRemoving = true
+  try {
+    if (transferTab.value === 'completed') {
+      sftpStore.clearCompletedTransfers()
+    } else if (transferTab.value === 'failed') {
+      sftpStore.clearFailedTransfers()
+    } else {
+      sftpStore.stopAndRemoveAllQueued()
+    }
+    selectedQueueItemIds.value.clear()
+  } finally {
+    nextTick(() => {
+      isManualRemoving = false
+    })
   }
-  selectedQueueItemIds.value.clear()
 }
 
 const exportQueueTransfers = (tab: 'active' | 'completed' | 'failed') => {
@@ -690,6 +700,9 @@ const playNotificationSound = () => {
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45)
     osc2.connect(gain2)
     gain2.connect(ctx.destination)
+    osc2.onended = () => {
+      ctx.close().catch(() => {})
+    }
     osc2.start(now + 0.12)
     osc2.stop(now + 0.45)
   } catch (err) {
@@ -750,7 +763,18 @@ watch(
       showTransferDrawer.value = true
       transferTab.value = 'active'
     } else if (oldCount && oldCount > 0 && newCount === 0) {
-      handleQueueCompleted()
+      const isCrawling =
+        Boolean(sftpStore.activeFolderUpload?.isScanning) ||
+        Boolean(sftpStore.activeFolderDownload?.isScanning) ||
+        Boolean((sftpStore as any).crawlProgress?.isActive)
+      if (
+        !sftpStore.isCancellingAll &&
+        !isCrawling &&
+        sftpStore.isQueueProcessing &&
+        !isManualRemoving
+      ) {
+        handleQueueCompleted()
+      }
     }
   }
 )

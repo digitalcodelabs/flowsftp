@@ -29,6 +29,7 @@ export interface FileClipboardItem {
   sourcePane: 'local' | 'remote'
   mode: 'copy' | 'cut'
   sessionId?: string | null
+  sourceDir?: string
 }
 
 export interface LocalCrawlTask {

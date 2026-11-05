@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
@@ -149,12 +149,14 @@ const setProtocol = (proto: 'sftp' | 'ftp' | 'ftps') => {
   }
 }
 
+let isComponentUnmounted = false
+
 onMounted(async () => {
   keychainStore.loadProfiles()
   vaultStore.init()
 
   try {
-    unlistenConnectLog = await listen<string>('ssh:connect_log', (event) => {
+    const unlisten = await listen<string>('ssh:connect_log', (event) => {
       const msg = event.payload
       let type: 'info' | 'success' | 'error' = 'info'
       const lower = msg.toLowerCase()
@@ -165,12 +167,18 @@ onMounted(async () => {
       }
       addLog(msg, type)
     })
+    if (isComponentUnmounted) {
+      unlisten()
+    } else {
+      unlistenConnectLog = unlisten
+    }
   } catch (err) {
     console.warn('Failed to listen to ssh:connect_log', err)
   }
 })
 
 onUnmounted(() => {
+  isComponentUnmounted = true
   if (unlistenConnectLog) {
     unlistenConnectLog()
     unlistenConnectLog = null
@@ -411,8 +419,13 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
       let secret: string | null = null
       if (profile.has_saved_secret) {
         addLog('Checking encrypted vault for saved credentials...', 'info')
-        secret = await vaultStore.getSecret(profile.id)
-        if (!secret) {
+        if (vaultStore.isConfigured && vaultStore.hasSecretInVault(profile.id)) {
+          secret = await vaultStore.getSecret(profile.id)
+          if (secret === null) {
+            addLog('Master password unlock cancelled.', 'error')
+            return
+          }
+        } else {
           secret = await keychainStore.getSecret(profile.id)
         }
       }
@@ -433,7 +446,16 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
       let passphrase: string | undefined
       if (profile.has_saved_secret) {
         addLog('Checking encrypted vault for key passphrase...', 'info')
-        passphrase = (await vaultStore.getSecret(profile.id)) || (await keychainStore.getSecret(profile.id)) || undefined
+        if (vaultStore.isConfigured && vaultStore.hasSecretInVault(profile.id)) {
+          const vaultSecret = await vaultStore.getSecret(profile.id)
+          if (vaultSecret === null) {
+            addLog('Master password unlock cancelled.', 'error')
+            return
+          }
+          passphrase = vaultSecret || undefined
+        } else {
+          passphrase = (await keychainStore.getSecret(profile.id)) || undefined
+        }
       }
       await doConnect(profile, {
         type: 'KeyFile',
@@ -475,8 +497,15 @@ const handlePromptSubmit = async () => {
   try {
     if (promptSaveKeychain.value) {
       addLog('Saving credentials to encrypted vault...', 'info')
-      await keychainStore.saveProfile(profile, password)
-      await vaultStore.saveSecret(profile.id, password)
+      if (vaultStore.isConfigured) {
+        const saved = await vaultStore.saveSecret(profile.id, password)
+        if (!saved) {
+          throw new Error('Master password vault is locked. Cannot save password.')
+        }
+        await keychainStore.saveProfile({ ...profile, has_saved_secret: true }, null)
+      } else {
+        await keychainStore.saveProfile({ ...profile, has_saved_secret: true }, password)
+      }
     }
 
     await doConnect(profile, { type: 'Password', value: password })
@@ -532,7 +561,9 @@ const saveProfileData = async (shouldConnect: boolean) => {
     }
 
     const hasNewSecret = !!form.value.secret.trim()
-    const willHaveSecret = hasNewSecret ? form.value.saveToKeychain : (existingProfile?.has_saved_secret ?? false)
+    const willHaveSecret = form.value.saveToKeychain
+      ? (hasNewSecret || (existingProfile?.has_saved_secret ?? false))
+      : false
 
     const profileToSave: SavedConnectionProfile = {
       id: profileId,
@@ -549,11 +580,21 @@ const saveProfileData = async (shouldConnect: boolean) => {
       created_at: existingProfile?.created_at || Math.floor(Date.now() / 1000),
     }
 
-    if (hasNewSecret && form.value.saveToKeychain) {
-      await keychainStore.saveProfile(profileToSave, form.value.secret)
-      await vaultStore.saveSecret(profileToSave.id, form.value.secret)
+    if (!form.value.saveToKeychain) {
+      await keychainStore.saveProfile(profileToSave, null)
+      await vaultStore.deleteSecret(profileToSave.id)
+    } else if (hasNewSecret && form.value.saveToKeychain) {
+      if (vaultStore.isConfigured) {
+        const saved = await vaultStore.saveSecret(profileToSave.id, form.value.secret)
+        if (!saved) {
+          throw new Error('Master password vault is locked. Cannot save password.')
+        }
+        await keychainStore.saveProfile(profileToSave, null)
+      } else {
+        await keychainStore.saveProfile(profileToSave, form.value.secret)
+      }
     } else {
-      await keychainStore.saveProfile(profileToSave)
+      await keychainStore.saveProfile(profileToSave, null)
     }
 
     if (!shouldConnect) {
@@ -564,8 +605,16 @@ const saveProfileData = async (shouldConnect: boolean) => {
     }
 
     let secretToUse = form.value.secret
-    if (!secretToUse && existingProfile?.has_saved_secret) {
-      secretToUse = (await vaultStore.getSecret(profileId)) || (await keychainStore.getSecret(profileId)) || ''
+    if (!secretToUse && existingProfile?.has_saved_secret && form.value.saveToKeychain) {
+      if (vaultStore.isConfigured && vaultStore.hasSecretInVault(profileId)) {
+        const vaultSecret = await vaultStore.getSecret(profileId)
+        if (vaultSecret === null) {
+          throw new Error('Master password unlock cancelled.')
+        }
+        secretToUse = vaultSecret
+      } else {
+        secretToUse = (await keychainStore.getSecret(profileId)) || ''
+      }
     }
 
     if (form.value.authType === 'Password' && !secretToUse) {

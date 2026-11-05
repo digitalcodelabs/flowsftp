@@ -172,8 +172,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Quick Look (Single File) -->
         <button
-          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0].is_dir"
-          @click="emit('quickLook', 'local', selectedLocalFiles[0]); emit('close')"
+          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0]!.is_dir"
+          @click="emit('quickLook', 'local', selectedLocalFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg font-medium transition text-left"
           :style="{ color: 'var(--color-accent)' }"
         >
@@ -186,8 +186,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- View / Edit (Single File) -->
         <button
-          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0].is_dir"
-          @click="emit('edit', 'local', selectedLocalFiles[0]); emit('close')"
+          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0]!.is_dir"
+          @click="emit('edit', 'local', selectedLocalFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg font-medium transition text-left"
           :style="{ color: 'var(--color-accent)' }"
         >
@@ -197,8 +197,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Open in Default App (Single File) -->
         <button
-          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0].is_dir"
-          @click="emit('openInDefaultApp', selectedLocalFiles[0].path); emit('close')"
+          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0]!.is_dir"
+          @click="emit('openInDefaultApp', selectedLocalFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <ExternalLink :size="15" class="shrink-0 opacity-80" />
@@ -206,10 +206,10 @@ const menuHeaderBadge = computed(() => {
         </button>
 
         <!-- Archive Operations (Local Selection) -->
-        <template v-if="selectedLocalFiles.length === 1 && isArchiveFile(selectedLocalFiles[0].name)">
+        <template v-if="selectedLocalFiles.length === 1 && isArchiveFile(selectedLocalFiles[0]!.name)">
           <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
           <button
-            @click="emit('extractHere', 'local', selectedLocalFiles[0]); emit('close')"
+            @click="emit('extractHere', 'local', selectedLocalFiles[0]!); emit('close')"
             class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg font-medium transition text-left"
             :style="{ color: 'var(--color-success, #a6e3a1)' }"
           >
@@ -217,7 +217,7 @@ const menuHeaderBadge = computed(() => {
             <span class="truncate">Extract Archive Here</span>
           </button>
           <button
-            @click="emit('extractToFolder', 'local', selectedLocalFiles[0]); emit('close')"
+            @click="emit('extractToFolder', 'local', selectedLocalFiles[0]!); emit('close')"
             class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
           >
             <CatppuccinIcon name="folder" :size="15" />
@@ -237,8 +237,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Pair with Remote (if 1 folder selected) -->
         <button
-          v-if="sessionId && selectedLocalFiles.length === 1 && selectedLocalFiles[0].is_dir"
-          @click="emit('pairFolder', selectedLocalFiles[0].path); emit('close')"
+          v-if="sessionId && selectedLocalFiles.length === 1 && selectedLocalFiles[0]!.is_dir"
+          @click="emit('pairFolder', selectedLocalFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
           :style="{ color: 'var(--color-accent)' }"
         >
@@ -248,12 +248,12 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Bookmark Folder (if 1 folder selected) -->
         <button
-          v-if="selectedLocalFiles.length === 1 && selectedLocalFiles[0].is_dir"
-          @click="emit('toggleBookmark', 'local', selectedLocalFiles[0].path); emit('close')"
+          v-if="selectedLocalFiles.length === 1 && selectedLocalFiles[0]!.is_dir"
+          @click="emit('toggleBookmark', 'local', selectedLocalFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
-          <CatppuccinIcon :name="localBookmarks.includes(selectedLocalFiles[0].path) ? 'bookmark-filled' : 'bookmark'" :size="15" />
-          <span class="truncate">{{ localBookmarks.includes(selectedLocalFiles[0].path) ? 'Remove Bookmark' : 'Bookmark Folder' }}</span>
+          <CatppuccinIcon :name="localBookmarks.includes(selectedLocalFiles[0]!.path) ? 'bookmark-filled' : 'bookmark'" :size="15" />
+          <span class="truncate">{{ localBookmarks.includes(selectedLocalFiles[0]!.path) ? 'Remove Bookmark' : 'Bookmark Folder' }}</span>
         </button>
 
         <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
@@ -261,7 +261,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Duplicate (Single item) -->
         <button
           v-if="selectedLocalFiles.length === 1"
-          @click="emit('duplicate', 'local', selectedLocalFiles[0]); emit('close')"
+          @click="emit('duplicate', 'local', selectedLocalFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <div class="flex items-center space-x-2.5 min-w-0">
@@ -297,8 +297,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Paste into Folder (if 1 folder selected and clipboard has items) -->
         <button
-          v-if="hasClipboard && selectedLocalFiles.length === 1 && selectedLocalFiles[0].is_dir"
-          @click="emit('paste', 'local', selectedLocalFiles[0].path); emit('close')"
+          v-if="hasClipboard && selectedLocalFiles.length === 1 && selectedLocalFiles[0]!.is_dir"
+          @click="emit('paste', 'local', selectedLocalFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
           :style="{ color: 'var(--color-accent)' }"
         >
@@ -311,8 +311,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Calculate Directory Size (Single Folder) -->
         <button
-          v-if="selectedLocalFiles.length === 1 && selectedLocalFiles[0].is_dir"
-          @click="emit('calculateDirSize', 'local', selectedLocalFiles[0].path); emit('close')"
+          v-if="selectedLocalFiles.length === 1 && selectedLocalFiles[0]!.is_dir"
+          @click="emit('calculateDirSize', 'local', selectedLocalFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <Calculator :size="15" class="opacity-80" />
@@ -321,8 +321,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Calculate Checksum / Hash (Single File) -->
         <button
-          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0].is_dir"
-          @click="emit('calculateChecksum', 'local', selectedLocalFiles[0]); emit('close')"
+          v-if="selectedLocalFiles.length === 1 && !selectedLocalFiles[0]!.is_dir"
+          @click="emit('calculateChecksum', 'local', selectedLocalFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <Hash :size="15" class="opacity-80" />
@@ -332,7 +332,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Create Symlink pointing to this item -->
         <button
           v-if="selectedLocalFiles.length === 1"
-          @click="emit('newSymlink', 'local', selectedLocalFiles[0]); emit('close')"
+          @click="emit('newSymlink', 'local', selectedLocalFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <Link2 :size="15" class="opacity-80" />
@@ -342,7 +342,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Rename (Single item) -->
         <button
           v-if="selectedLocalFiles.length === 1"
-          @click="emit('rename', 'local', selectedLocalFiles[0]); emit('close')"
+          @click="emit('rename', 'local', selectedLocalFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <div class="flex items-center space-x-2.5 min-w-0">
@@ -355,7 +355,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Copy Path (Single item) -->
         <button
           v-if="selectedLocalFiles.length === 1"
-          @click="emit('copyPath', selectedLocalFiles[0].path); emit('close')"
+          @click="emit('copyPath', selectedLocalFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <CatppuccinIcon name="copy" :size="15" />
@@ -507,8 +507,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Quick Look (Single File) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0].is_dir"
-          @click="emit('quickLook', pane, activeRemoteFiles[0]); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0]!.is_dir"
+          @click="emit('quickLook', pane, activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg font-medium transition text-left"
           :style="{ color: 'var(--color-accent-secondary)' }"
         >
@@ -521,8 +521,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- View / Edit (Single File) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0].is_dir"
-          @click="emit('edit', pane, activeRemoteFiles[0]); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0]!.is_dir"
+          @click="emit('edit', pane, activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg font-medium transition text-left"
           :style="{ color: 'var(--color-accent-secondary)' }"
         >
@@ -532,8 +532,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Edit in External Editor (Single File) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0].is_dir"
-          @click="emit('openInExternalEditor', activeRemoteFiles[0]); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0]!.is_dir"
+          @click="emit('openInExternalEditor', activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
           title="Open in external editor (VS Code / system default) with live auto-upload on save"
         >
@@ -556,7 +556,7 @@ const menuHeaderBadge = computed(() => {
         <!-- File Permissions (chmod)... (Single Item) -->
         <button
           v-if="activeSessionId && activeRemoteFiles.length === 1"
-          @click="emit('permissions', activeRemoteFiles[0]); emit('close')"
+          @click="emit('permissions', activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <CatppuccinIcon name="shield" :size="15" />
@@ -564,10 +564,10 @@ const menuHeaderBadge = computed(() => {
         </button>
 
         <!-- Archive Operations (Remote Selection) -->
-        <template v-if="activeSessionId && activeRemoteFiles.length === 1 && isArchiveFile(activeRemoteFiles[0].name)">
+        <template v-if="activeSessionId && activeRemoteFiles.length === 1 && isArchiveFile(activeRemoteFiles[0]!.name)">
           <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
           <button
-            @click="emit('extractHere', pane, activeRemoteFiles[0]); emit('close')"
+            @click="emit('extractHere', pane, activeRemoteFiles[0]!); emit('close')"
             class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg font-medium transition text-left"
             :style="{ color: 'var(--color-success, #a6e3a1)' }"
           >
@@ -575,7 +575,7 @@ const menuHeaderBadge = computed(() => {
             <span class="truncate">Extract Archive Here</span>
           </button>
           <button
-            @click="emit('extractToFolder', pane, activeRemoteFiles[0]); emit('close')"
+            @click="emit('extractToFolder', pane, activeRemoteFiles[0]!); emit('close')"
             class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
           >
             <CatppuccinIcon name="folder" :size="15" />
@@ -596,8 +596,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Open in Terminal (if single folder selected) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0].is_dir"
-          @click="emit('openInTerminal', activeRemoteFiles[0].path); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0]!.is_dir"
+          @click="emit('openInTerminal', activeRemoteFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <CatppuccinIcon name="terminal" :size="15" />
@@ -606,8 +606,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Search & SSH Grep (if single folder selected) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0].is_dir"
-          @click="emit('searchRemote', activeRemoteFiles[0].path); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0]!.is_dir"
+          @click="emit('searchRemote', activeRemoteFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <div class="flex items-center space-x-2.5 min-w-0">
@@ -619,12 +619,12 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Bookmark Folder (if single folder selected) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0].is_dir"
-          @click="emit('toggleBookmark', pane, activeRemoteFiles[0].path); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0]!.is_dir"
+          @click="emit('toggleBookmark', pane, activeRemoteFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
-          <CatppuccinIcon :name="(pane === 'local' ? localBookmarks : remoteBookmarks).includes(activeRemoteFiles[0].path) ? 'bookmark-filled' : 'bookmark'" :size="15" />
-          <span class="truncate">{{ (pane === 'local' ? localBookmarks : remoteBookmarks).includes(activeRemoteFiles[0].path) ? 'Remove Bookmark' : 'Bookmark Folder' }}</span>
+          <CatppuccinIcon :name="(pane === 'local' ? localBookmarks : remoteBookmarks).includes(activeRemoteFiles[0]!.path) ? 'bookmark-filled' : 'bookmark'" :size="15" />
+          <span class="truncate">{{ (pane === 'local' ? localBookmarks : remoteBookmarks).includes(activeRemoteFiles[0]!.path) ? 'Remove Bookmark' : 'Bookmark Folder' }}</span>
         </button>
 
         <div class="h-px my-1 mx-1.5" :style="{ backgroundColor: 'var(--color-border)' }" />
@@ -632,7 +632,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Duplicate (Single item) -->
         <button
           v-if="activeSessionId && activeRemoteFiles.length === 1"
-          @click="emit('duplicate', pane, activeRemoteFiles[0]); emit('close')"
+          @click="emit('duplicate', pane, activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <div class="flex items-center space-x-2.5 min-w-0">
@@ -670,8 +670,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Paste into Folder (if 1 folder selected and clipboard has items) -->
         <button
-          v-if="activeSessionId && hasClipboard && activeRemoteFiles.length === 1 && activeRemoteFiles[0].is_dir"
-          @click="emit('paste', pane, activeRemoteFiles[0].path); emit('close')"
+          v-if="activeSessionId && hasClipboard && activeRemoteFiles.length === 1 && activeRemoteFiles[0]!.is_dir"
+          @click="emit('paste', pane, activeRemoteFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
           :style="{ color: 'var(--color-accent-secondary)' }"
         >
@@ -684,8 +684,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Calculate Directory Size (Single Folder) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0].is_dir"
-          @click="emit('calculateDirSize', pane, activeRemoteFiles[0].path); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0]!.is_dir"
+          @click="emit('calculateDirSize', pane, activeRemoteFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <Calculator :size="15" class="opacity-80" />
@@ -694,8 +694,8 @@ const menuHeaderBadge = computed(() => {
 
         <!-- Calculate Checksum / Hash (Single File) -->
         <button
-          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0].is_dir"
-          @click="emit('calculateChecksum', pane, activeRemoteFiles[0]); emit('close')"
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && !activeRemoteFiles[0]!.is_dir"
+          @click="emit('calculateChecksum', pane, activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <Hash :size="15" class="opacity-80" />
@@ -705,7 +705,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Create Symlink pointing to this item -->
         <button
           v-if="activeSessionId && activeRemoteFiles.length === 1"
-          @click="emit('newSymlink', pane, activeRemoteFiles[0]); emit('close')"
+          @click="emit('newSymlink', pane, activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <Link2 :size="15" class="opacity-80" />
@@ -715,7 +715,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Rename (Single item) -->
         <button
           v-if="activeRemoteFiles.length === 1"
-          @click="emit('rename', pane, activeRemoteFiles[0]); emit('close')"
+          @click="emit('rename', pane, activeRemoteFiles[0]!); emit('close')"
           class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <div class="flex items-center space-x-2.5 min-w-0">
@@ -728,7 +728,7 @@ const menuHeaderBadge = computed(() => {
         <!-- Copy Path (Single item) -->
         <button
           v-if="activeRemoteFiles.length === 1"
-          @click="emit('copyPath', activeRemoteFiles[0].path); emit('close')"
+          @click="emit('copyPath', activeRemoteFiles[0]!.path); emit('close')"
           class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
         >
           <CatppuccinIcon name="copy" :size="15" />

@@ -115,10 +115,10 @@ pub async fn sftp_toggle_dir_watcher(
 
     if !enabled {
         // Stop current active handle
-        if let Ok(mut handles) = state.dir_watcher_handles.lock() {
-            if let Some(h) = handles.remove(&watcher_id) {
-                h.is_active.store(false, std::sync::atomic::Ordering::SeqCst);
-            }
+        if let Ok(mut handles) = state.dir_watcher_handles.lock()
+            && let Some(h) = handles.remove(&watcher_id)
+        {
+            h.is_active.store(false, std::sync::atomic::Ordering::SeqCst);
         }
         current.enabled = false;
         current.status = "paused".to_string();

@@ -37,6 +37,8 @@ let webglAddon: WebglAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 let unlistenStdout: UnlistenFn | null = null
 let unlistenExit: UnlistenFn | null = null
+let onDataDisposable: { dispose: () => void } | null = null
+let isUnmounted = false
 
 let lastCols = 0
 let lastRows = 0
@@ -178,7 +180,7 @@ const initTerminal = async () => {
   }
 
   // 4. Stream STDIN from xterm -> Rust via Tauri invoke
-  terminal.onData((data: string) => {
+  onDataDisposable = terminal.onData((data: string) => {
     invoke('ssh_write_stdin', {
       sessionId: props.sessionId,
       data,
@@ -192,32 +194,46 @@ const initTerminal = async () => {
     const history = await invoke<string>('ssh_get_history', {
       sessionId: props.sessionId,
     })
+    if (isUnmounted) return
     if (history && terminal) {
       terminal.write(history)
     }
   } catch (err) {
+    if (isUnmounted) return
     console.warn('Failed to load session history:', err)
   }
 
   // 6. Stream STDOUT from Rust -> xterm via Tauri bi-directional event
-  unlistenStdout = await listen<string>(`ssh:stdout:${props.sessionId}`, (event) => {
+  const stdoutUnlisten = await listen<string>(`ssh:stdout:${props.sessionId}`, (event) => {
     terminal?.write(event.payload)
   })
+  if (isUnmounted) {
+    stdoutUnlisten()
+    return
+  }
+  unlistenStdout = stdoutUnlisten
 
   // 7. Listen for remote exit
-  unlistenExit = await listen(`ssh:exit:${props.sessionId}`, () => {
+  const exitUnlisten = await listen(`ssh:exit:${props.sessionId}`, () => {
     terminal?.writeln('\r\n\x1b[31m[Session disconnected by remote host]\x1b[0m')
     emit('exit')
   })
+  if (isUnmounted) {
+    exitUnlisten()
+    return
+  }
+  unlistenExit = exitUnlisten
 
   // Initial sync
   syncDimensions()
 
   // Auto-resize on pane or window resize
-  resizeObserver = new ResizeObserver(() => {
-    syncDimensions()
-  })
-  resizeObserver.observe(terminalEl.value)
+  if (terminalEl.value) {
+    resizeObserver = new ResizeObserver(() => {
+      syncDimensions()
+    })
+    resizeObserver.observe(terminalEl.value)
+  }
 }
 
 onMounted(() => {
@@ -225,9 +241,14 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  isUnmounted = true
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
+  }
+  if (onDataDisposable) {
+    onDataDisposable.dispose()
+    onDataDisposable = null
   }
   if (unlistenStdout) {
     unlistenStdout()

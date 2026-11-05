@@ -63,13 +63,13 @@ const handleConfirm = () => {
           <h4 class="text-sm font-semibold" :style="{ color: 'var(--color-text-main)' }">
             {{
               target.files.length === 1
-                ? (target.files[0].is_dir ? 'Delete Folder?' : 'Delete File?')
+                ? (target.files[0]?.is_dir ? 'Delete Folder?' : 'Delete File?')
                 : `Delete ${target.files.length} Items?`
             }}
           </h4>
           <p class="text-xs mt-1 leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
             Are you sure you want to permanently delete
-            <template v-if="target.files.length === 1">
+            <template v-if="target.files.length === 1 && target.files[0]">
               <span class="font-semibold" :style="{ color: 'var(--color-danger, #f38ba8)' }">"{{ target.files[0].name }}"</span>
             </template>
             <template v-else>
@@ -83,7 +83,7 @@ const handleConfirm = () => {
       <!-- Selected Items Preview Box -->
       <div class="p-3 rounded-xl border space-y-2 text-xs" :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }">
         <!-- Single Item Details -->
-        <div v-if="target.files.length === 1" class="space-y-1.5">
+        <div v-if="target.files.length === 1 && target.files[0]" class="space-y-1.5">
           <div class="flex items-center font-medium truncate" :style="{ color: 'var(--color-text-main)' }">
             <FileIcon :name="target.files[0].name" :is-dir="target.files[0].is_dir" :size="18" class="mr-2" />
             <span class="truncate font-mono text-[11px]">{{ target.files[0].name }}</span>

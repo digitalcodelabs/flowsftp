@@ -32,7 +32,7 @@ export const useKeychainStore = defineStore('keychain', () => {
     }
   }
 
-  async function saveProfile(profile: SavedConnectionProfile, secret?: string): Promise<SavedConnectionProfile> {
+  async function saveProfile(profile: SavedConnectionProfile, secret?: string | null): Promise<SavedConnectionProfile> {
     const saved = await invoke<SavedConnectionProfile>('keychain_save_profile', {
       profile,
       secret: secret || null,

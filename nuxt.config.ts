@@ -1,4 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+const env = ((globalThis as any).process?.env || {}) as Record<string, string | undefined>
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
 
@@ -17,7 +19,7 @@ export default defineNuxtConfig({
   // 4. Development Server Configuration
   devServer: {
     // Tauri sets TAURI_DEV_HOST when developing on mobile or LAN, fallback to localhost
-    host: process.env.TAURI_DEV_HOST || 'localhost',
+    host: env.TAURI_DEV_HOST || 'localhost',
     port: 1420,
   },
 
@@ -41,13 +43,13 @@ export default defineNuxtConfig({
     build: {
       // Modern target for Tauri (WebView2 on Windows, WebKit on macOS/Linux)
       target:
-        process.env.TAURI_ENV_PLATFORM === 'windows'
+        env.TAURI_ENV_PLATFORM === 'windows'
           ? 'chrome105'
           : ['es2022', 'safari15'],
       // Don't minify in debug builds for faster iteration and easier debugging
-      minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
+      minify: !env.TAURI_ENV_DEBUG ? 'esbuild' : false,
       // Produce sourcemaps in debug mode
-      sourcemap: !!process.env.TAURI_ENV_DEBUG,
+      sourcemap: !!env.TAURI_ENV_DEBUG,
     },
   },
 

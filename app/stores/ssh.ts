@@ -75,11 +75,42 @@ export const useSshStore = defineStore('ssh', () => {
 
   const lastConnectConfigs = ref<Record<string, SshConnectConfig | FtpConnectConfig>>(loadSavedConfigs())
 
+  function sanitizeConfigForStorage(config: SshConnectConfig | FtpConnectConfig): SshConnectConfig | FtpConnectConfig {
+    if ('auth' in config) {
+      if (config.auth.type === 'Password') {
+        return {
+          ...config,
+          auth: { type: 'Password', value: '' },
+        }
+      }
+      if (config.auth.type === 'KeyFile') {
+        return {
+          ...config,
+          auth: {
+            type: 'KeyFile',
+            value: { path: config.auth.value.path },
+          },
+        }
+      }
+      return { ...config }
+    }
+    const { password: _removed, ...rest } = config
+    return rest
+  }
+
+  function persistConnectConfigs() {
+    try {
+      const sanitized: Record<string, SshConnectConfig | FtpConnectConfig> = {}
+      for (const [id, cfg] of Object.entries(lastConnectConfigs.value)) {
+        sanitized[id] = sanitizeConfigForStorage(cfg)
+      }
+      sessionStorage.setItem(LAST_CONNECT_CONFIGS_KEY, JSON.stringify(sanitized))
+    } catch {}
+  }
+
   function saveConfig(sessionId: string, config: SshConnectConfig | FtpConnectConfig) {
     lastConnectConfigs.value[sessionId] = config
-    try {
-      sessionStorage.setItem(LAST_CONNECT_CONFIGS_KEY, JSON.stringify(lastConnectConfigs.value))
-    } catch {}
+    persistConnectConfigs()
   }
 
   const activeSession = computed(() =>
@@ -104,8 +135,9 @@ export const useSshStore = defineStore('ssh', () => {
         if (savedActive && sessions.value.some((s) => s.sessionId === savedActive)) {
           activeSessionId.value = savedActive
         } else {
-          activeSessionId.value = sessions.value[0].sessionId
-          localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessions.value[0].sessionId)
+          const firstId = sessions.value[0]!.sessionId
+          activeSessionId.value = firstId
+          localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, firstId)
         }
       } else {
         sessions.value = []
@@ -148,6 +180,7 @@ export const useSshStore = defineStore('ssh', () => {
       item.status = 'connected'
       item.defaultRemotePath = defaultRemotePath
       activeSessionId.value = sessionId
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId)
       saveConfig(sessionId, config)
       return sessionId
     } catch (err: any) {
@@ -198,14 +231,14 @@ export const useSshStore = defineStore('ssh', () => {
     if (!config) {
       throw new Error('No connection config available to reconnect')
     }
+    const existingSession = sessions.value.find((s) => s.sessionId === oldSessionId)
+    const defaultRemotePath = existingSession?.defaultRemotePath
+    const newId = 'auth' in config
+      ? await connect(config, defaultRemotePath)
+      : await connectFtp(config, defaultRemotePath)
     await disconnect(oldSessionId)
-    if ('auth' in config) {
-      const newId = await connect(config)
-      return newId
-    } else {
-      const newId = await connectFtp(config)
-      return newId
-    }
+    setActiveSession(newId)
+    return newId
   }
 
   async function disconnect(sessionId: string): Promise<void> {
@@ -214,9 +247,11 @@ export const useSshStore = defineStore('ssh', () => {
     } catch (err) {
       console.warn('Error during disconnect:', err)
     } finally {
+      delete lastConnectConfigs.value[sessionId]
+      persistConnectConfigs()
       sessions.value = sessions.value.filter((s) => s.sessionId !== sessionId)
       if (activeSessionId.value === sessionId) {
-        const nextId = sessions.value.length > 0 ? sessions.value[0].sessionId : null
+        const nextId = sessions.value.length > 0 ? sessions.value[0]!.sessionId : null
         activeSessionId.value = nextId
         if (nextId) {
           localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, nextId)

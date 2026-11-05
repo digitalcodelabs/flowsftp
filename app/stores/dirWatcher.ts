@@ -44,17 +44,19 @@ export const useDirWatcherStore = defineStore('dirWatcher', () => {
         const idx = pairings.value.findIndex((p) => p.id === payload.watcher_id)
         if (idx !== -1) {
           const item = pairings.value[idx]
-          if (payload.status === 'uploaded') {
-            item.files_uploaded += 1
-            item.last_synced_file = payload.filename
-            item.last_sync_time = payload.timestamp
-            item.status = 'watching'
-            item.error = null
-          } else if (payload.status === 'error') {
-            item.status = 'error'
-            item.error = payload.error || 'Upload failed'
-          } else if (payload.status === 'syncing') {
-            item.status = 'syncing'
+          if (item) {
+            if (payload.status === 'uploaded') {
+              item.files_uploaded += 1
+              item.last_synced_file = payload.filename
+              item.last_sync_time = payload.timestamp
+              item.status = 'watching'
+              item.error = null
+            } else if (payload.status === 'error') {
+              item.status = 'error'
+              item.error = payload.error || 'Upload failed'
+            } else if (payload.status === 'syncing') {
+              item.status = 'syncing'
+            }
           }
         }
       })

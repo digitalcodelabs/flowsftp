@@ -155,6 +155,7 @@ const handleThemeFileSelect = (e: Event) => {
   const input = e.target as HTMLInputElement
   if (!input.files || input.files.length === 0) return
   const file = input.files[0]
+  if (!file) return
   const reader = new FileReader()
   reader.onload = (ev) => {
     const content = ev.target?.result as string
@@ -351,7 +352,7 @@ watch(
 
 const extractBaseFontName = (stack: string) => {
   if (!stack) return ''
-  const first = stack.split(',')[0].trim()
+  const first = (stack.split(',')[0] ?? '').trim()
   return first.replace(/^["']|["']$/g, '').trim()
 }
 

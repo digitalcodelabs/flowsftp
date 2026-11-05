@@ -64,7 +64,7 @@ const applyNumeric = (raw: string) => {
   }
   if (!/^[0-7]{3}$/.test(clean)) return
 
-  const [o, g, p] = clean.split('').map(Number)
+  const [o = 0, g = 0, p = 0] = clean.split('').map(Number)
 
   ownerRead.value = (o & 4) !== 0
   ownerWrite.value = (o & 2) !== 0

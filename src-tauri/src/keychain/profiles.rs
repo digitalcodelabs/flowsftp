@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use crate::keychain::KeychainManager;
+
+static PROFILE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedConnectionProfile {
@@ -60,19 +63,61 @@ fn get_storage_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     get_app_data_file(app, "saved_connections.json")
 }
 
-pub fn load_profiles(app: &tauri::AppHandle) -> Result<Vec<SavedConnectionProfile>, String> {
-    let path = get_storage_path(app)?;
+fn atomic_write_file(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+    }
+
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "data.json".to_string());
+    let temp_path = path.with_file_name(format!(".{}.tmp", file_name));
+
+    fs::write(&temp_path, content)
+        .map_err(|e| format!("Failed to write temporary file '{}': {}", temp_path.display(), e))?;
+
+    fs::rename(&temp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to atomically replace '{}': {}", path.display(), e)
+    })
+}
+
+fn load_profiles_from_path(path: &Path) -> Result<Vec<SavedConnectionProfile>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let data = fs::read_to_string(&path)
+    let data = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read profiles file: {}", e))?;
 
-    let profiles: Vec<SavedConnectionProfile> = serde_json::from_str(&data)
-        .unwrap_or_else(|_| Vec::new());
+    if data.trim().is_empty() {
+        return Ok(Vec::new());
+    }
 
-    Ok(profiles)
+    match serde_json::from_str::<Vec<SavedConnectionProfile>>(&data) {
+        Ok(profiles) => Ok(profiles),
+        Err(e) => {
+            let backup_path = path.with_extension("json.bak");
+            log::error!(
+                "Failed to parse profiles file '{}': {}. Backing up corrupt file to '{}'",
+                path.display(),
+                e,
+                backup_path.display()
+            );
+            let _ = fs::copy(path, &backup_path);
+            Err(format!("Corrupt profiles file '{}': {}", path.display(), e))
+        }
+    }
+}
+
+pub fn load_profiles(app: &tauri::AppHandle) -> Result<Vec<SavedConnectionProfile>, String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = get_storage_path(app)?;
+    load_profiles_from_path(&path)
 }
 
 pub fn save_profile(
@@ -80,12 +125,13 @@ pub fn save_profile(
     mut profile: SavedConnectionProfile,
     secret: Option<String>,
 ) -> Result<SavedConnectionProfile, String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = get_storage_path(app)?;
-    let mut profiles = load_profiles(app)?;
+    let mut profiles = load_profiles_from_path(&path)?;
 
     if let Some(secret_value) = secret {
         if !secret_value.trim().is_empty() {
-            let _ = KeychainManager::set_secret(&profile.id, &secret_value);
+            KeychainManager::set_secret(&profile.id, &secret_value)?;
             profile.has_saved_secret = true;
         } else {
             profile.has_saved_secret = false;
@@ -109,25 +155,24 @@ pub fn save_profile(
     let json = serde_json::to_string_pretty(&profiles)
         .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
 
-    fs::write(&path, json)
-        .map_err(|e| format!("Failed to write profiles file: {}", e))?;
+    atomic_write_file(&path, &json)?;
 
     Ok(profile)
 }
 
 pub fn delete_profile(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _ = KeychainManager::delete_secret(id);
 
     let path = get_storage_path(app)?;
-    let mut profiles = load_profiles(app)?;
+    let mut profiles = load_profiles_from_path(&path)?;
 
     profiles.retain(|p| p.id != id);
 
     let json = serde_json::to_string_pretty(&profiles)
         .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
 
-    fs::write(&path, json)
-        .map_err(|e| format!("Failed to write profiles file: {}", e))?;
+    atomic_write_file(&path, &json)?;
 
     Ok(())
 }
@@ -137,8 +182,9 @@ pub fn rename_group(
     old_name: &str,
     new_name: &str,
 ) -> Result<usize, String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = get_storage_path(app)?;
-    let mut profiles = load_profiles(app)?;
+    let mut profiles = load_profiles_from_path(&path)?;
     let mut updated_count = 0;
 
     let target_group = if new_name.trim().is_empty() {
@@ -157,8 +203,7 @@ pub fn rename_group(
     let json = serde_json::to_string_pretty(&profiles)
         .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
 
-    fs::write(&path, json)
-        .map_err(|e| format!("Failed to write profiles file: {}", e))?;
+    atomic_write_file(&path, &json)?;
 
     Ok(updated_count)
 }
@@ -168,8 +213,9 @@ pub fn rename_profile(
     id: &str,
     new_name: &str,
 ) -> Result<SavedConnectionProfile, String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = get_storage_path(app)?;
-    let mut profiles = load_profiles(app)?;
+    let mut profiles = load_profiles_from_path(&path)?;
 
     let profile = profiles
         .iter_mut()
@@ -182,8 +228,7 @@ pub fn rename_profile(
     let json = serde_json::to_string_pretty(&profiles)
         .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
 
-    fs::write(&path, json)
-        .map_err(|e| format!("Failed to write profiles file: {}", e))?;
+    atomic_write_file(&path, &json)?;
 
     Ok(updated)
 }
@@ -193,6 +238,7 @@ fn get_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn load_vault_file(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = get_vault_path(app)?;
     if !path.exists() {
         return Ok(None);
@@ -203,15 +249,52 @@ pub fn load_vault_file(app: &tauri::AppHandle) -> Result<Option<String>, String>
 }
 
 pub fn save_vault_file(app: &tauri::AppHandle, content: &str) -> Result<(), String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = get_vault_path(app)?;
-    fs::write(&path, content)
-        .map_err(|e| format!("Failed to write vault file: {}", e))
+    atomic_write_file(&path, content)
 }
 
 pub fn delete_vault_file(app: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = get_vault_path(app)?;
     if path.exists() {
         let _ = fs::remove_file(&path);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_profiles_file_backs_up_and_returns_err() {
+        let dir = std::env::temp_dir().join(format!("flowsftp_profile_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("saved_connections.json");
+        fs::write(&file_path, "{ invalid json").unwrap();
+
+        let res = load_profiles_from_path(&file_path);
+        assert!(res.is_err());
+        assert!(dir.join("saved_connections.json.bak").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_cleanly() {
+        let dir = std::env::temp_dir().join(format!("flowsftp_atomic_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("saved_connections.json");
+
+        atomic_write_file(&file_path, "[]").unwrap();
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "[]");
+
+        atomic_write_file(&file_path, "[{\"id\":\"1\",\"host\":\"example.com\",\"username\":\"root\"}]").unwrap();
+        let loaded = load_profiles_from_path(&file_path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].host, "example.com");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

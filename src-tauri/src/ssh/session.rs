@@ -43,6 +43,7 @@ impl ActiveSession {
 
     pub async fn close(&self) -> Result<(), String> {
         self.is_closed.store(true, Ordering::SeqCst);
+        *self.sftp.lock().await = None;
         let _ = self.cmd_tx.send(SessionCommand::Close).await;
         Ok(())
     }
@@ -92,11 +93,12 @@ pub async fn spawn_ssh_session(
     session_id: String,
     config: SshConnectConfig,
 ) -> Result<ActiveSession, String> {
-    let mut client_config = russh::client::Config::default();
-    // Disable Nagle's algorithm for instant, zero-latency interactive terminal typing
-    client_config.nodelay = true;
-    client_config.keepalive_interval = Some(std::time::Duration::from_secs(15));
-    let client_config = Arc::new(client_config);
+    let client_config = Arc::new(russh::client::Config {
+        // Disable Nagle's algorithm for instant, zero-latency interactive terminal typing
+        nodelay: true,
+        keepalive_interval: Some(std::time::Duration::from_secs(15)),
+        ..Default::default()
+    });
 
     // Clean up host string (strip ssh://, username@, and trailing slashes)
     let mut host_str = config.host.trim().to_string();
@@ -324,7 +326,11 @@ pub async fn spawn_ssh_session(
                             let mut hist = stdout_history_clone.lock().await;
                             hist.extend_from_slice(data);
                             if hist.len() > MAX_HISTORY + PURGE_CHUNK {
-                                hist.drain(0..PURGE_CHUNK);
+                                let mut drain_end = PURGE_CHUNK;
+                                while drain_end < hist.len() && (hist[drain_end] & 0b1100_0000) == 0b1000_0000 {
+                                    drain_end += 1;
+                                }
+                                hist.drain(0..drain_end);
                             }
                         }
                         Some(russh::ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
@@ -333,7 +339,11 @@ pub async fn spawn_ssh_session(
                             let mut hist = stdout_history_clone.lock().await;
                             hist.extend_from_slice(data);
                             if hist.len() > MAX_HISTORY + PURGE_CHUNK {
-                                hist.drain(0..PURGE_CHUNK);
+                                let mut drain_end = PURGE_CHUNK;
+                                while drain_end < hist.len() && (hist[drain_end] & 0b1100_0000) == 0b1000_0000 {
+                                    drain_end += 1;
+                                }
+                                hist.drain(0..drain_end);
                             }
                         }
                         Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {

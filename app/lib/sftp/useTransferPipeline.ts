@@ -616,8 +616,14 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
               skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.local_path, brandNew)),
             })
           }
-        } catch (crawlErr) {
+        } catch (crawlErr: any) {
           console.error('Native Rust remote crawl error:', crawlErr)
+          for (const d of dirItems) {
+            const spec = downloadSpec(newTransferId('dl-err'), sessionId, d, localTargetFor(d.name))
+            const item = { ...buildSkippedItem(spec), is_dir: true, error: crawlErr?.message || String(crawlErr) }
+            transferMap.set(item.transfer_id, item)
+            failedTransfers.value = [item, ...failedTransfers.value]
+          }
           endFolderScan(activeFolderDownload, 0)
         }
       },
@@ -808,8 +814,14 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
               console.warn('Background remote directory creation warning:', dirErr)
             })
           }
-        } catch (crawlErr) {
+        } catch (crawlErr: any) {
           console.error('Native Rust local crawl error:', crawlErr)
+          for (const d of dirItems) {
+            const spec = uploadSpec(newTransferId('ul-err'), sessionId, d, remoteTargetFor(d.name))
+            const item = { ...buildSkippedItem(spec), is_dir: true, error: crawlErr?.message || String(crawlErr) }
+            transferMap.set(item.transfer_id, item)
+            failedTransfers.value = [item, ...failedTransfers.value]
+          }
           endFolderScan(activeFolderUpload, 0)
         }
       },
@@ -879,7 +891,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
         batch: options.batch,
       },
       label: 'remote-to-remote',
-      perform: () =>
+      perform: (conflictAction) =>
         invoke('sftp_transfer_remote_to_remote', {
           srcSessionId,
           destSessionId,
@@ -887,6 +899,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           srcPath: srcFile.path,
           destPath: targetDest,
           fileSize: srcFile.size || null,
+          conflictAction: (conflictAction as string) === 'resume' ? 'resume' : 'overwrite',
         }),
       afterSuccess: async () => {
         if (!options.skipRefresh) {
@@ -916,15 +929,18 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
       remoteToRemoteSpec(t.transferId, srcSessionId, destSessionId, t.file, t.destination)
     )
 
-    // 1. Root level files are enqueued immediately.
-    for (const f of files) {
+    // 1. Root level: drop ignored items, enqueue regular files immediately.
+    const roots = filterIgnoredRoots(files, (f) =>
+      remoteToRemoteSpec(newTransferId('ign-r2r'), srcSessionId, destSessionId, f, destFor(f.name))
+    )
+    for (const f of roots) {
       if (!f.is_dir) {
         pump.push({ transferId: newTransferId('r2r'), file: f, destination: destFor(f.name) })
       }
     }
 
     // 2. Folders are crawled on the source server in the background.
-    const dirItems = files.filter((f) => f.is_dir)
+    const dirItems = roots.filter((f) => f.is_dir)
     beginFolderProgress(activeFolderUpload, 'folder-r2r', dirItems.map((d) => d.name))
 
     await runBatch({
@@ -959,8 +975,14 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
               skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.local_path, brandNew)),
             })
           }
-        } catch (crawlErr) {
+        } catch (crawlErr: any) {
           console.error('Remote-to-remote crawl error:', crawlErr)
+          for (const d of dirItems) {
+            const spec = remoteToRemoteSpec(newTransferId('r2r-err'), srcSessionId, destSessionId, d, destFor(d.name))
+            const item = { ...buildSkippedItem(spec), is_dir: true, error: crawlErr?.message || String(crawlErr) }
+            transferMap.set(item.transfer_id, item)
+            failedTransfers.value = [item, ...failedTransfers.value]
+          }
           endFolderScan(activeFolderUpload, 0)
         }
       },

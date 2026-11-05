@@ -194,6 +194,7 @@ export const useSftpStore = defineStore('sftp', () => {
   } = useFileOperations({
     browser,
     pipeline: { startBatchDownload, startBatchUpload, startBatchRemoteToRemoteTransfer },
+    queue: { failedTransfers, isCancellingAll },
   })
 
   // Synchronized Browsing

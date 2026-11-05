@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
 interface VaultEntry {
@@ -22,7 +22,7 @@ function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
   let binary = ''
   for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
+    binary += String.fromCharCode(bytes[i]!)
   }
   return btoa(binary)
 }
@@ -38,6 +38,7 @@ function base64ToBuffer(base64: string): Uint8Array {
 
 export const useVaultStore = defineStore('vault', () => {
   const isInitialized = ref(false)
+  const isConfigured = computed(() => isInitialized.value)
   const isUnlocked = ref(false)
   const vaultData = ref<VaultFileStructure | null>(null)
   const cachedKey = ref<CryptoKey | null>(null)
@@ -45,7 +46,7 @@ export const useVaultStore = defineStore('vault', () => {
   // Dialog state for unlocking or setting up
   const showModal = ref(false)
   const modalMode = ref<'unlock' | 'setup' | 'change'>('unlock')
-  const pendingResolve = ref<((success: boolean) => void) | null>(null)
+  const pendingResolvers: Array<(success: boolean) => void> = []
 
   async function deriveKey(password: string, salt: Uint8Array, iterations = ITERATIONS): Promise<CryptoKey> {
     const enc = new TextEncoder()
@@ -60,7 +61,7 @@ export const useVaultStore = defineStore('vault', () => {
     return await window.crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
-        salt,
+        salt: salt as BufferSource,
         iterations,
         hash: 'SHA-256',
       },
@@ -75,7 +76,7 @@ export const useVaultStore = defineStore('vault', () => {
     const iv = window.crypto.getRandomValues(new Uint8Array(12))
     const enc = new TextEncoder()
     const ciphertext = await window.crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: iv as BufferSource },
       key,
       enc.encode(text)
     )
@@ -89,9 +90,9 @@ export const useVaultStore = defineStore('vault', () => {
     const iv = base64ToBuffer(entry.iv)
     const ciphertext = base64ToBuffer(entry.ciphertext)
     const decrypted = await window.crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: iv as BufferSource },
       key,
-      ciphertext
+      ciphertext as BufferSource
     )
     const dec = new TextDecoder()
     return dec.decode(decrypted)
@@ -185,6 +186,7 @@ export const useVaultStore = defineStore('vault', () => {
         decryptedEntries[id] = await decryptText(entry, cachedKey.value)
       } catch (err) {
         console.warn(`Failed to decrypt entry ${id} during password change:`, err)
+        return false
       }
     }
 
@@ -213,16 +215,20 @@ export const useVaultStore = defineStore('vault', () => {
     return true
   }
 
-  async function saveSecret(profileId: string, secret: string) {
+  function hasSecretInVault(profileId: string): boolean {
+    return Boolean(vaultData.value?.entries && Object.prototype.hasOwnProperty.call(vaultData.value.entries, profileId))
+  }
+
+  async function saveSecret(profileId: string, secret: string): Promise<boolean> {
     if (!isUnlocked.value || !cachedKey.value) {
       const unlocked = await promptUnlock()
       if (!unlocked || !cachedKey.value) {
-        throw new Error('Master password vault is locked. Cannot save password.')
+        return false
       }
     }
 
     if (!vaultData.value) {
-      throw new Error('Vault is not initialized')
+      return false
     }
 
     const entry = await encryptText(secret, cachedKey.value)
@@ -231,6 +237,7 @@ export const useVaultStore = defineStore('vault', () => {
     }
     vaultData.value.entries[profileId] = entry
     await persistVault()
+    return true
   }
 
   async function getSecret(profileId: string): Promise<string | null> {
@@ -274,15 +281,15 @@ export const useVaultStore = defineStore('vault', () => {
     showModal.value = true
 
     return new Promise((resolve) => {
-      pendingResolve.value = resolve
+      pendingResolvers.push(resolve)
     })
   }
 
   function resolvePrompt(success: boolean) {
     showModal.value = false
-    if (pendingResolve.value) {
-      pendingResolve.value(success)
-      pendingResolve.value = null
+    const resolvers = pendingResolvers.splice(0, pendingResolvers.length)
+    for (const resolve of resolvers) {
+      resolve(success)
     }
   }
 
@@ -302,6 +309,7 @@ export const useVaultStore = defineStore('vault', () => {
 
   return {
     isInitialized,
+    isConfigured,
     isUnlocked,
     showModal,
     modalMode,
@@ -311,6 +319,7 @@ export const useVaultStore = defineStore('vault', () => {
     lock,
     changeMasterPassword,
     resetVault,
+    hasSecretInVault,
     saveSecret,
     getSecret,
     deleteSecret,

@@ -332,6 +332,8 @@ export function useTransferQueue(deps: TransferQueueDeps) {
     }
   }
 
+  let cancelResetTimer: ReturnType<typeof setTimeout> | null = null
+
   async function cancelAllTransfers() {
     isCancellingAll.value = true
     for (const notify of activeWorkersNotifiers) {
@@ -361,7 +363,11 @@ export function useTransferQueue(deps: TransferQueueDeps) {
     scheduleProgressFlush()
 
     // Automatically reset the cancel-all transfer state after active workers had time to abort
-    setTimeout(async () => {
+    if (cancelResetTimer) {
+      clearTimeout(cancelResetTimer)
+    }
+    cancelResetTimer = setTimeout(async () => {
+      cancelResetTimer = null
       isCancellingAll.value = false
       try {
         await invoke('sftp_reset_cancel_transfers')
@@ -408,12 +414,6 @@ export function useTransferQueue(deps: TransferQueueDeps) {
     for (const t of failedTransfers.value) {
       transferMap.set(t.transfer_id, t)
     }
-    setTimeout(async () => {
-      isCancellingAll.value = false
-      try {
-        await invoke('sftp_reset_cancel_transfers')
-      } catch {}
-    }, 350)
   }
 
   return {

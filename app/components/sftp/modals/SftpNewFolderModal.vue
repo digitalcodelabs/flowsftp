@@ -85,7 +85,6 @@ const handleSubmit = () => {
           ref="inputRef"
           v-model="folderName"
           @keydown.enter.prevent="handleSubmit"
-          @keyup.enter="handleSubmit"
           @keydown.esc.prevent.stop="emit('close')"
           placeholder="Directory name"
           class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none transition-colors"

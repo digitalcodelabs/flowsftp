@@ -28,7 +28,7 @@ watch(
   (isOpen) => {
     if (isOpen) {
       format.value = '.tar.gz'
-      if (props.selectedItems.length === 1) {
+      if (props.selectedItems.length === 1 && props.selectedItems[0]) {
         archiveName.value = `${props.selectedItems[0].name}.tar.gz`
       } else {
         archiveName.value = `archive-${new Date().toISOString().slice(0, 10)}.tar.gz`
@@ -123,7 +123,6 @@ const handleSubmit = () => {
           ref="inputRef"
           v-model="archiveName"
           @keydown.enter.prevent="handleSubmit"
-          @keyup.enter="handleSubmit"
           @keydown.esc.prevent.stop="emit('close')"
           placeholder="archive.tar.gz"
           class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none font-mono"

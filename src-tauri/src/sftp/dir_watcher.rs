@@ -112,17 +112,21 @@ pub fn start_directory_watcher(
 ) -> Result<ActiveDirWatcherHandle, String> {
     let is_active = Arc::new(AtomicBool::new(true));
     let is_active_clone = is_active.clone();
+    let is_active_watcher = is_active.clone();
 
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(256);
 
     let watched_root = local_dir.clone();
     let mut watcher = RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
+            if !is_active_watcher.load(Ordering::SeqCst) {
+                return;
+            }
             if let Ok(event) = res {
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) => {
                         for path in event.paths {
-                            let _ = event_tx.blocking_send(path);
+                            let _ = event_tx.try_send(path);
                         }
                     }
                     _ => {}
@@ -241,7 +245,7 @@ pub fn start_directory_watcher(
                 let state = app_handle.state::<AppState>();
                 let upload_result: Result<(), String> = if let Some(ftp) = state.get_ftp_session(&s_id).await {
                     if !remote_parent.is_empty() {
-                        let _ = ftp.create_dir(remote_parent).await;
+                        let _ = ftp.ensure_dir_recursive(remote_parent).await;
                     }
                     ftp.write_file_binary(&remote_target_path, &file_data).await
                 } else if let Some(session) = state.get_session(&s_id).await {

@@ -85,7 +85,7 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
     const withoutPrefix = normalized.slice(2)
     const segments = withoutPrefix.split('/').filter(Boolean)
     if (segments.length >= 1) {
-      const server = segments[0] // e.g. wsl.localhost, wsl$, or a server name
+      const server = segments[0]! // e.g. wsl.localhost, wsl$, or a server name
       const isWsl = server.toLowerCase().includes('wsl')
 
       if (isWsl && segments.length === 1) {
@@ -100,7 +100,7 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
       }
 
       if (isWsl && segments.length >= 2) {
-        const distro = segments[1] // e.g. Ubuntu-24.04
+        const distro = segments[1]! // e.g. Ubuntu-24.04
         const distroRoot = `//${server}/${distro}`
         const distroIcon = getWslDistroIcon(distro)
         const items: BreadcrumbItem[] = [
@@ -114,7 +114,7 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
 
         let currentAcc = distroRoot
         for (let i = 2; i < segments.length; i++) {
-          const seg = segments[i]
+          const seg = segments[i]!
           currentAcc += `/${seg}`
           items.push({
             label: seg,
@@ -138,7 +138,7 @@ const breadcrumbs = computed<BreadcrumbItem[]>(() => {
 
       let currentAcc = shareRoot
       for (let i = 2; i < segments.length; i++) {
-        const seg = segments[i]
+        const seg = segments[i]!
         currentAcc += `/${seg}`
         items.push({
           label: seg,
@@ -228,7 +228,7 @@ const wslDistroName = computed<string | null>(() => {
   if (!isWslPath.value) return null
   const normalized = props.path.replace(/\\/g, '/')
   const segments = normalized.replace(/^\/\//, '').split('/').filter(Boolean)
-  return segments.length >= 2 ? segments[1] : null
+  return segments.length >= 2 ? (segments[1] ?? null) : null
 })
 
 const paneIcon = computed(() => {

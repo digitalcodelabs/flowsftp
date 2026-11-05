@@ -201,7 +201,7 @@ impl AppState {
     pub fn list_external_edits(&self, session_id: Option<&str>) -> Vec<ExternalEditInfo> {
         if let Ok(map) = self.external_edits.read() {
             map.values()
-                .filter(|e| session_id.map_or(true, |sid| e.session_id == sid))
+                .filter(|e| session_id.is_none_or(|sid| e.session_id == sid))
                 .cloned()
                 .collect()
         } else {
@@ -216,25 +216,25 @@ impl AppState {
         error: Option<String>,
         synced_at: Option<u64>,
     ) {
-        if let Ok(mut map) = self.external_edits.write() {
-            if let Some(item) = map.get_mut(edit_id) {
-                item.status = status.to_string();
-                item.error = error;
-                if let Some(ts) = synced_at {
-                    item.last_synced_at = ts;
-                }
+        if let Ok(mut map) = self.external_edits.write()
+            && let Some(item) = map.get_mut(edit_id)
+        {
+            item.status = status.to_string();
+            item.error = error;
+            if let Some(ts) = synced_at {
+                item.last_synced_at = ts;
             }
         }
     }
 
     pub fn stop_external_edit(&self, edit_id: &str) -> Option<ExternalEditInfo> {
-        if let Ok(mut watchers) = self.external_watchers.lock() {
-            if let Some(handle) = watchers.remove(edit_id) {
-                handle.is_active.store(false, Ordering::SeqCst);
-                let _ = std::fs::remove_file(&handle.local_path);
-                if let Some(parent) = handle.local_path.parent() {
-                    let _ = std::fs::remove_dir(parent);
-                }
+        if let Ok(mut watchers) = self.external_watchers.lock()
+            && let Some(handle) = watchers.remove(edit_id)
+        {
+            handle.is_active.store(false, Ordering::SeqCst);
+            let _ = std::fs::remove_file(&handle.local_path);
+            if let Some(parent) = handle.local_path.parent() {
+                let _ = std::fs::remove_dir(parent);
             }
         }
         if let Ok(mut map) = self.external_edits.write() {
@@ -248,7 +248,7 @@ impl AppState {
         let mut ids_to_remove = Vec::new();
         if let Ok(map) = self.external_edits.read() {
             for (id, edit) in map.iter() {
-                if session_id.map_or(true, |sid| edit.session_id == sid) {
+                if session_id.is_none_or(|sid| edit.session_id == sid) {
                     ids_to_remove.push(id.clone());
                 }
             }
@@ -278,7 +278,7 @@ impl AppState {
     pub fn list_dir_watchers(&self, session_id: Option<&str>) -> Vec<DirWatcherPairing> {
         if let Ok(map) = self.dir_watchers.read() {
             map.values()
-                .filter(|w| session_id.map_or(true, |sid| w.session_id == sid))
+                .filter(|w| session_id.is_none_or(|sid| w.session_id == sid))
                 .cloned()
                 .collect()
         } else {
@@ -287,31 +287,31 @@ impl AppState {
     }
 
     pub fn record_dir_watcher_upload(&self, watcher_id: &str, filename: &str) {
-        if let Ok(mut map) = self.dir_watchers.write() {
-            if let Some(w) = map.get_mut(watcher_id) {
-                w.files_uploaded += 1;
-                w.last_synced_file = Some(filename.to_string());
-                w.last_sync_time = Some(crate::sftp::dir_watcher::now_epoch_secs());
-                w.status = "watching".to_string();
-                w.error = None;
-            }
+        if let Ok(mut map) = self.dir_watchers.write()
+            && let Some(w) = map.get_mut(watcher_id)
+        {
+            w.files_uploaded += 1;
+            w.last_synced_file = Some(filename.to_string());
+            w.last_sync_time = Some(crate::sftp::dir_watcher::now_epoch_secs());
+            w.status = "watching".to_string();
+            w.error = None;
         }
     }
 
     pub fn record_dir_watcher_error(&self, watcher_id: &str, error: &str) {
-        if let Ok(mut map) = self.dir_watchers.write() {
-            if let Some(w) = map.get_mut(watcher_id) {
-                w.error = Some(error.to_string());
-                w.status = "error".to_string();
-            }
+        if let Ok(mut map) = self.dir_watchers.write()
+            && let Some(w) = map.get_mut(watcher_id)
+        {
+            w.error = Some(error.to_string());
+            w.status = "error".to_string();
         }
     }
 
     pub fn stop_dir_watcher(&self, watcher_id: &str) -> Option<DirWatcherPairing> {
-        if let Ok(mut handles) = self.dir_watcher_handles.lock() {
-            if let Some(handle) = handles.remove(watcher_id) {
-                handle.is_active.store(false, Ordering::SeqCst);
-            }
+        if let Ok(mut handles) = self.dir_watcher_handles.lock()
+            && let Some(handle) = handles.remove(watcher_id)
+        {
+            handle.is_active.store(false, Ordering::SeqCst);
         }
         if let Ok(mut map) = self.dir_watchers.write() {
             map.remove(watcher_id)
@@ -324,7 +324,7 @@ impl AppState {
         let mut ids_to_remove = Vec::new();
         if let Ok(map) = self.dir_watchers.read() {
             for (id, watcher) in map.iter() {
-                if session_id.map_or(true, |sid| watcher.session_id == sid) {
+                if session_id.is_none_or(|sid| watcher.session_id == sid) {
                     ids_to_remove.push(id.clone());
                 }
             }

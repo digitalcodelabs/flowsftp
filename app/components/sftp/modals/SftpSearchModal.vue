@@ -170,10 +170,26 @@ const handleJumpToFolder = (item: RemoteSearchResultItem) => {
   emit('close')
 }
 
+const escapeHtml = (str: string) =>
+  str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
 const highlightSnippet = (content: string, term: string) => {
-  if (!term || !content) return content
+  if (!content) return ''
+  if (!term) return escapeHtml(content)
   const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, caseSensitive.value ? 'g' : 'gi')
-  return content.replace(regex, '<mark class="bg-amber-500/25 text-amber-800 dark:text-amber-200 px-0.5 rounded font-bold border border-amber-500/35">$1</mark>')
+  return content
+    .split(regex)
+    .map((part, idx) =>
+      idx % 2 === 1
+        ? `<mark class="bg-amber-500/25 text-amber-800 dark:text-amber-200 px-0.5 rounded font-bold border border-amber-500/35">${escapeHtml(part)}</mark>`
+        : escapeHtml(part)
+    )
+    .join('')
 }
 </script>
 

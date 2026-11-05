@@ -277,8 +277,11 @@ const codeLines = computed(() => {
 })
 
 // Load file content
+let loadSeq = 0
+
 const loadContent = async () => {
   if (!props.show || !props.file) return
+  const seq = ++loadSeq
   cleanupBlob()
   isLoading.value = true
   error.value = null
@@ -289,6 +292,7 @@ const loadContent = async () => {
 
   const path = props.file.path
   const type = previewType.value
+  const ext = fileExtension.value
 
   try {
     if (type === 'image' || type === 'audio' || type === 'video' || type === 'pdf') {
@@ -299,6 +303,7 @@ const loadContent = async () => {
         if (!props.sessionId) throw new Error('No active SFTP session')
         bytes = await invoke<number[]>('sftp_read_file_binary', { sessionId: props.sessionId, path })
       }
+      if (seq !== loadSeq || !props.show) return
 
       const mimeMap: Record<string, string> = {
         png: 'image/png',
@@ -319,7 +324,7 @@ const loadContent = async () => {
         webm: 'video/webm',
         pdf: 'application/pdf',
       }
-      const mime = mimeMap[fileExtension.value] || 'application/octet-stream'
+      const mime = mimeMap[ext] || 'application/octet-stream'
       const blob = new Blob([new Uint8Array(bytes)], { type: mime })
       blobUrl.value = URL.createObjectURL(blob)
     } else {
@@ -331,6 +336,7 @@ const loadContent = async () => {
         if (!props.sessionId) throw new Error('No active SFTP session')
         content = await invoke<string>('sftp_read_file_text', { sessionId: props.sessionId, path })
       }
+      if (seq !== loadSeq || !props.show) return
       textContent.value = content
 
       // If SVG, also create Blob for visual rendering
@@ -340,10 +346,13 @@ const loadContent = async () => {
       }
     }
   } catch (err: any) {
+    if (seq !== loadSeq) return
     console.error('Quick Look load error:', err)
     error.value = typeof err === 'string' ? err : err?.message || 'Failed to preview file'
   } finally {
-    isLoading.value = false
+    if (seq === loadSeq) {
+      isLoading.value = false
+    }
   }
 }
 
@@ -354,6 +363,7 @@ watch(
     if (show && path) {
       loadContent()
     } else if (!show) {
+      loadSeq++
       cleanupBlob()
     }
   },
@@ -692,6 +702,11 @@ onUnmounted(() => {
         <!-- 6. VIDEO PREVIEW -->
         <div v-else-if="previewType === 'video' && blobUrl" class="flex-1 w-full flex items-center justify-center p-4">
           <video controls autoplay :src="blobUrl" class="max-w-full max-h-[60vh] rounded-xl shadow-2xl" />
+        </div>
+
+        <!-- 6b. PDF PREVIEW -->
+        <div v-else-if="previewType === 'pdf' && blobUrl" class="flex-1 w-full flex items-center justify-center p-4">
+          <iframe :src="blobUrl" class="w-full h-[65vh] rounded-lg border border-zinc-800 bg-white" />
         </div>
 
         <!-- 7. BINARY / OTHER PREVIEW -->

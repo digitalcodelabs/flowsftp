@@ -149,31 +149,21 @@ const cellPaddingClass = computed(() => {
   }
 })
 
-// Input paths for direct editing
-const localInputPath = ref('')
-const remoteInputPath = ref('')
-
 // Action dialogs
 const showNewFolderModal = ref(false)
 const newFolderTarget = ref<'local' | 'remote'>('remote')
 const newFolderSessionId = ref<string | null>(null)
 const newFolderParentDir = ref<string | undefined>(undefined)
-const newFolderName = ref('')
-const newFolderInputRef = ref<HTMLInputElement | null>(null)
 
 const showNewFileModal = ref(false)
 const newFileTarget = ref<'local' | 'remote'>('remote')
 const newFileSessionId = ref<string | null>(null)
 const newFileParentDir = ref<string | undefined>(undefined)
-const newFileName = ref('')
-const newFileInputRef = ref<HTMLInputElement | null>(null)
 
 const showRenameModal = ref(false)
 const renameTarget = ref<'local' | 'remote'>('remote')
 const renameSessionId = ref<string | null>(null)
 const renameItem = ref<LocalFileEntry | SftpFileEntry | null>(null)
-const renameNewName = ref('')
-const renameInputRef = ref<HTMLInputElement | null>(null)
 
 // Delete Confirmation Modal State
 interface FileDeleteTarget {
@@ -204,19 +194,14 @@ const compressTarget = ref<'local' | 'remote'>('remote')
 const compressSessionId = ref<string | null>(null)
 const compressParentPath = ref<string | undefined>(undefined)
 const compressSelectedItems = ref<(LocalFileEntry | SftpFileEntry)[]>([])
-const compressArchiveName = ref('')
-const compressFormat = ref<'.tar.gz' | '.zip'>('.tar.gz')
 const isCompressingArchive = ref(false)
-const compressInputRef = ref<HTMLInputElement | null>(null)
 
 const showExtractModal = ref(false)
 const extractTarget = ref<'local' | 'remote'>('remote')
 const extractSessionId = ref<string | null>(null)
 const extractParentPath = ref<string | undefined>(undefined)
 const extractArchiveFile = ref<LocalFileEntry | SftpFileEntry | null>(null)
-const extractSubfolderName = ref('')
 const isExtractingArchive = ref(false)
-const extractInputRef = ref<HTMLInputElement | null>(null)
 
 // Symlink Modal State
 const showNewSymlinkModal = ref(false)
@@ -460,7 +445,7 @@ const getGitStatus = (isLocal: boolean, file: LocalFileEntry | SftpFileEntry): s
   }
 
   if (statusObj.files[file.name]) {
-    return statusObj.files[file.name]
+    return statusObj.files[file.name] ?? null
   }
 
   if (file.is_dir) {
@@ -809,6 +794,10 @@ const fetchLeftRemoteDir = async (
     })
     leftRemotePath.value = canonical
     leftRemoteRawFiles.value = entries
+    sftpStore.sessionRemotePaths[sessionId] = canonical
+    if (leftPaneSource.value && leftPaneSource.value !== 'local') {
+      sftpStore.sessionRemotePaths[leftPaneSource.value] = canonical
+    }
   } catch (err: any) {
     console.error('Failed to fetch left remote dir:', err)
     leftRemoteError.value = err?.message || String(err)
@@ -961,8 +950,9 @@ const handleLeftRemoteRowClick = (event: MouseEvent, file: SftpFileEntry, index:
     const end = Math.max(lastLeftRemoteClickedIndex.value, index)
     const newSelection = event.ctrlKey || event.metaKey ? new Set(selectedLeftRemotePaths.value) : new Set<string>()
     for (let i = start; i <= end; i++) {
-      if (filteredLeftRemoteFiles.value[i]) {
-        newSelection.add(filteredLeftRemoteFiles.value[i].path)
+      const entry = filteredLeftRemoteFiles.value[i]
+      if (entry) {
+        newSelection.add(entry.path)
       }
     }
     selectedLeftRemotePaths.value = newSelection
@@ -1081,10 +1071,10 @@ const openQuickLook = (target?: 'local' | 'remote', file?: LocalFileEntry | Sftp
     const selected = onLeftRemote ? selectedLeftRemoteFiles.value : (isLocal ? selectedLocalFiles.value : selectedRemoteFiles.value)
     const lastIdx = onLeftRemote ? lastLeftRemoteClickedIndex.value : (isLocal ? lastLocalClickedIndex.value : lastRemoteClickedIndex.value)
 
-    if (selected.length > 0 && !selected[0].is_dir) {
+    if (selected.length > 0 && selected[0] && !selected[0].is_dir) {
       quickLookFile.value = selected[0]
-    } else if (lastIdx !== null && lastIdx >= 0 && files[lastIdx] && !files[lastIdx].is_dir) {
-      quickLookFile.value = files[lastIdx]
+    } else if (lastIdx !== null && lastIdx >= 0 && files[lastIdx] && !files[lastIdx]!.is_dir) {
+      quickLookFile.value = files[lastIdx]!
     } else {
       const firstNonDir = files.find((f) => !f.is_dir)
       if (firstNonDir) {
@@ -1107,27 +1097,31 @@ const navigateQuickLook = (direction: 'prev' | 'next') => {
 
   if (direction === 'prev') {
     for (let i = idx - 1; i >= 0; i--) {
-      if (!list[i].is_dir) {
-        quickLookFile.value = list[i]
+      const item = list[i]
+      if (item && !item.is_dir) {
+        quickLookFile.value = item
         return
       }
     }
     for (let i = list.length - 1; i > idx; i--) {
-      if (!list[i].is_dir) {
-        quickLookFile.value = list[i]
+      const item = list[i]
+      if (item && !item.is_dir) {
+        quickLookFile.value = item
         return
       }
     }
   } else {
     for (let i = idx + 1; i < list.length; i++) {
-      if (!list[i].is_dir) {
-        quickLookFile.value = list[i]
+      const item = list[i]
+      if (item && !item.is_dir) {
+        quickLookFile.value = item
         return
       }
     }
     for (let i = 0; i < idx; i++) {
-      if (!list[i].is_dir) {
-        quickLookFile.value = list[i]
+      const item = list[i]
+      if (item && !item.is_dir) {
+        quickLookFile.value = item
         return
       }
     }
@@ -1218,8 +1212,6 @@ const handleFilterEsc = (pane: 'local' | 'remote') => {
 // Bookmarks State
 const localBookmarks = ref<string[]>([])
 const remoteBookmarks = ref<string[]>([])
-const showLocalBookmarksMenu = ref(false)
-const showRemoteBookmarksMenu = ref(false)
 
 const loadBookmarks = () => {
   try {
@@ -1247,9 +1239,6 @@ const saveLocalBookmarks = () => {
 const saveRemoteBookmarks = () => {
   localStorage.setItem('flowsftp_remote_bookmarks', JSON.stringify(remoteBookmarks.value))
 }
-
-const isLocalBookmarked = computed(() => localBookmarks.value.includes(sftpStore.localPath))
-const isRemoteBookmarked = computed(() => remoteBookmarks.value.includes(sftpStore.remotePath))
 
 const toggleLocalBookmark = (path?: string) => {
   const p = path || sftpStore.localPath
@@ -1395,7 +1384,6 @@ const contextMenu = ref<ContextMenuState>({
 watch(
   () => sftpStore.localPath,
   (newPath) => {
-    localInputPath.value = newPath
     localPaneComp.value?.syncInputPath(newPath)
     localSearchQuery.value = ''
     showLocalFilter.value = false
@@ -1409,7 +1397,6 @@ watch(
 watch(
   () => sftpStore.remotePath,
   (newPath) => {
-    remoteInputPath.value = newPath
     remotePaneComp.value?.syncInputPath(newPath)
     remoteSearchQuery.value = ''
     showRemoteFilter.value = false
@@ -1858,8 +1845,9 @@ const handleLocalRowClick = (event: MouseEvent, file: LocalFileEntry, index: num
     const end = Math.max(lastLocalClickedIndex.value, index)
     const newSelection = event.ctrlKey || event.metaKey ? new Set(selectedLocalPaths.value) : new Set<string>()
     for (let i = start; i <= end; i++) {
-      if (filteredLocalFiles.value[i]) {
-        newSelection.add(filteredLocalFiles.value[i].path)
+      const entry = filteredLocalFiles.value[i]
+      if (entry) {
+        newSelection.add(entry.path)
       }
     }
     selectedLocalPaths.value = newSelection
@@ -1889,8 +1877,9 @@ const handleRemoteRowClick = (event: MouseEvent, file: SftpFileEntry, index: num
     const end = Math.max(lastRemoteClickedIndex.value, index)
     const newSelection = event.ctrlKey || event.metaKey ? new Set(selectedRemotePaths.value) : new Set<string>()
     for (let i = start; i <= end; i++) {
-      if (filteredRemoteFiles.value[i]) {
-        newSelection.add(filteredRemoteFiles.value[i].path)
+      const entry = filteredRemoteFiles.value[i]
+      if (entry) {
+        newSelection.add(entry.path)
       }
     }
     selectedRemotePaths.value = newSelection
@@ -2286,12 +2275,15 @@ const handleTransferCopy = async () => {
 // F6: Move selected files to opposite pane (Transfer + Delete source prompt)
 const handleTransferMove = async () => {
   if (!props.sessionId) return
+  const prevFailedCount = sftpStore.failedTransfers.length
   if (activePane.value === 'local') {
     if (leftPaneSource.value === 'local') {
       if (selectedLocalFiles.value.length === 0) return
       const filesToMove = [...selectedLocalFiles.value]
       await handleBatchUpload(filesToMove)
-      openDeleteConfirm('local', filesToMove)
+      if (!sftpStore.isCancellingAll && sftpStore.failedTransfers.length === prevFailedCount) {
+        openDeleteConfirm('local', filesToMove)
+      }
     } else {
       if (selectedLeftRemoteFiles.value.length === 0) return
       const filesToMove = [...selectedLeftRemoteFiles.value]
@@ -2301,13 +2293,17 @@ const handleTransferMove = async () => {
         filesToMove,
         sftpStore.remotePath
       )
-      openDeleteConfirm('remote', filesToMove, leftPaneSource.value)
+      if (!sftpStore.isCancellingAll && sftpStore.failedTransfers.length === prevFailedCount) {
+        openDeleteConfirm('remote', filesToMove, leftPaneSource.value)
+      }
     }
   } else {
     if (selectedRemoteFiles.value.length === 0) return
     const filesToMove = [...selectedRemoteFiles.value]
     await handleBatchDownload(filesToMove)
-    openDeleteConfirm('remote', filesToMove, props.sessionId)
+    if (!sftpStore.isCancellingAll && sftpStore.failedTransfers.length === prevFailedCount) {
+      openDeleteConfirm('remote', filesToMove, props.sessionId)
+    }
   }
 }
 
@@ -2379,13 +2375,6 @@ const executeDeleteFiles = async () => {
   useFastRm.value = false
 
   const targetSessionId = targetSessionIdProp || (pane === 'remote' ? (props.sessionId || sftpStore.currentSessionId) : null)
-  console.log('[executeDeleteFiles] Starting deletion:', {
-    pane,
-    count: files.length,
-    fastRm,
-    sessionId: targetSessionId,
-    paths: files.map((f) => f.path),
-  })
 
   // Ensure any lingering queue cancel states are cleared safely
   try {
@@ -2398,9 +2387,10 @@ const executeDeleteFiles = async () => {
 
   isDeletingFiles.value = true
   const deletionId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7)
+  const firstFileName = files[0]?.name ?? 'item'
   const itemNames = files.length === 1
-    ? files[0].name
-    : `${files.length} items (${files[0].name}, ...)`
+    ? firstFileName
+    : `${files.length} items (${firstFileName}, ...)`
 
   activeDeletion.value = {
     id: deletionId,
@@ -2420,8 +2410,9 @@ const executeDeleteFiles = async () => {
           wasCancelled = true
           break
         }
-        console.log(`[executeDeleteFiles] Deleting local item [${i + 1}/${files.length}]:`, files[i].path)
-        await sftpStore.deleteLocalItem(files[i] as LocalFileEntry, true)
+        const entry = files[i]
+        if (!entry) continue
+        await sftpStore.deleteLocalItem(entry as LocalFileEntry, true)
         if (activeDeletion.value) {
           activeDeletion.value.completedCount = i + 1
         }
@@ -2435,8 +2426,9 @@ const executeDeleteFiles = async () => {
           wasCancelled = true
           break
         }
-        console.log(`[executeDeleteFiles] Deleting remote item [${i + 1}/${files.length}]:`, files[i].path, 'fastRm:', fastRm)
-        await sftpStore.deleteRemoteItem(targetSessionId, files[i] as SftpFileEntry, deletionId, true, fastRm)
+        const entry = files[i]
+        if (!entry) continue
+        await sftpStore.deleteRemoteItem(targetSessionId, entry as SftpFileEntry, deletionId, true, fastRm)
         if (activeDeletion.value) {
           activeDeletion.value.completedCount = i + 1
         }
@@ -2514,69 +2506,17 @@ const handleDeleteRemote = (entry: SftpFileEntry) => {
 // -------------------------------------------------------------
 // Folder Creation & Renaming & File Creation
 // -------------------------------------------------------------
-const focusInput = (inputEl: HTMLInputElement | null) => {
-  if (!inputEl) return
-  inputEl.focus()
-  inputEl.select()
-}
-
-watch(showNewFolderModal, (val) => {
-  if (val) {
-    nextTick(() => {
-      focusInput(newFolderInputRef.value)
-      setTimeout(() => focusInput(newFolderInputRef.value), 50)
-    })
-  }
-})
-
-watch(showNewFileModal, (val) => {
-  if (val) {
-    nextTick(() => {
-      focusInput(newFileInputRef.value)
-      setTimeout(() => focusInput(newFileInputRef.value), 50)
-    })
-  }
-})
-
-const focusRenameInput = (inputEl: HTMLInputElement | null, isDir = false) => {
-  if (!inputEl) return
-  inputEl.focus()
-  const name = inputEl.value
-  if (isDir || !name.includes('.') || (name.startsWith('.') && name.indexOf('.', 1) === -1)) {
-    inputEl.select()
-  } else {
-    const lastDot = name.lastIndexOf('.')
-    if (lastDot > 0) {
-      inputEl.setSelectionRange(0, lastDot)
-    } else {
-      inputEl.select()
-    }
-  }
-}
-
-watch(showRenameModal, (val) => {
-  if (val) {
-    nextTick(() => {
-      focusRenameInput(renameInputRef.value, renameItem.value?.is_dir)
-      setTimeout(() => focusRenameInput(renameInputRef.value, renameItem.value?.is_dir), 50)
-    })
-  }
-})
-
 const openNewFolder = (target: 'local' | 'remote', sessionId?: string | null, parentDir?: string) => {
   const isTargetLeftRemote = (target === 'local' || (contextMenu.value.pane === 'local')) && leftPaneSource.value !== 'local'
   newFolderTarget.value = isTargetLeftRemote ? 'remote' : target
   newFolderSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   newFolderParentDir.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
-  newFolderName.value = ''
   showNewFolderModal.value = true
   closeContextMenu()
-  nextTick(() => focusInput(newFolderInputRef.value))
-  setTimeout(() => focusInput(newFolderInputRef.value), 50)
 }
 
-const submitNewFolder = async (folderName?: string) => {
-  const nameToUse = (typeof folderName === 'string' ? folderName : newFolderName.value).trim()
+const submitNewFolder = async (folderName: string) => {
+  const nameToUse = folderName.trim()
   if (!nameToUse) return
   if (newFolderTarget.value === 'local') {
     await sftpStore.createLocalFolder(nameToUse)
@@ -2597,14 +2537,12 @@ const openNewFile = (target: 'local' | 'remote', sessionId?: string | null, pare
   newFileTarget.value = isTargetLeftRemote ? 'remote' : target
   newFileSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   newFileParentDir.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
-  newFileName.value = ''
   showNewFileModal.value = true
   closeContextMenu()
-  nextTick(() => focusInput(newFileInputRef.value))
 }
 
-const submitNewFile = async (fileName?: string, overwrite: boolean = false) => {
-  const nameToUse = (typeof fileName === 'string' ? fileName : newFileName.value).trim()
+const submitNewFile = async (fileName: string, overwrite: boolean = false) => {
+  const nameToUse = fileName.trim()
   if (!nameToUse) return
   try {
     if (newFileTarget.value === 'local') {
@@ -2630,13 +2568,8 @@ const openRename = (target: 'local' | 'remote', item: LocalFileEntry | SftpFileE
   renameTarget.value = isTargetLeftRemote ? 'remote' : target
   renameSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   renameItem.value = item
-  renameNewName.value = item.name
   showRenameModal.value = true
   closeContextMenu()
-  nextTick(() => {
-    focusRenameInput(renameInputRef.value, item.is_dir)
-    setTimeout(() => focusRenameInput(renameInputRef.value, item.is_dir), 50)
-  })
 }
 
 const triggerRenameSelected = () => {
@@ -2655,10 +2588,11 @@ const triggerRenameSelected = () => {
         lastIndex !== null &&
         lastIndex >= 0 &&
         lastIndex < files.length &&
-        selectedPaths.has(files[lastIndex].path) &&
-        files[lastIndex].name !== '..'
+        files[lastIndex] &&
+        selectedPaths.has(files[lastIndex]!.path) &&
+        files[lastIndex]!.name !== '..'
       ) {
-        return files[lastIndex]
+        return files[lastIndex]!
       }
       return selected.find((f) => f.name !== '..') || null
     }
@@ -2675,10 +2609,11 @@ const triggerRenameSelected = () => {
       lastIndex !== null &&
       lastIndex >= 0 &&
       lastIndex < files.length &&
-      selectedPaths.has(files[lastIndex].path) &&
-      files[lastIndex].name !== '..'
+      files[lastIndex] &&
+      selectedPaths.has(files[lastIndex]!.path) &&
+      files[lastIndex]!.name !== '..'
     ) {
-      return files[lastIndex]
+      return files[lastIndex]!
     }
 
     return selected.find((f) => f.name !== '..') || null
@@ -2698,7 +2633,7 @@ const triggerRenameSelected = () => {
   }
 }
 
-const getRenamedPath = (oldPath: string, newName: string, isLocal: boolean): string => {
+const getRenamedPath = (oldPath: string, newName: string, _isLocal: boolean): string => {
   const lastSlash = Math.max(oldPath.lastIndexOf('/'), oldPath.lastIndexOf('\\'))
   if (lastSlash < 0) {
     return newName
@@ -2717,8 +2652,8 @@ const getRenamedPath = (oldPath: string, newName: string, isLocal: boolean): str
   return `${parent}${sep}${newName}`
 }
 
-const submitRename = async (newName?: string) => {
-  const nameToUse = (typeof newName === 'string' ? newName : renameNewName.value).trim()
+const submitRename = async (newName: string) => {
+  const nameToUse = newName.trim()
   if (!renameItem.value || !nameToUse || nameToUse === renameItem.value.name) {
     showRenameModal.value = false
     return
@@ -2757,24 +2692,6 @@ const handleCopyPath = (path: string) => {
 }
 
 // Archive Operations Handlers
-watch(showCompressModal, (val) => {
-  if (val) {
-    nextTick(() => {
-      focusInput(compressInputRef.value)
-      setTimeout(() => focusInput(compressInputRef.value), 50)
-    })
-  }
-})
-
-watch(showExtractModal, (val) => {
-  if (val) {
-    nextTick(() => {
-      focusInput(extractInputRef.value)
-      setTimeout(() => focusInput(extractInputRef.value), 50)
-    })
-  }
-})
-
 const handleExtractArchiveHere = async (target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry, sessionId?: string | null) => {
   closeContextMenu()
   showArchiveToast(`Extracting ${file.name}...`, false, true)
@@ -2805,18 +2722,12 @@ const openExtractToFolderModal = (target: 'local' | 'remote', file: LocalFileEnt
   extractSessionId.value = isTargetLeftRemote ? (sessionId || leftPaneSource.value) : (target === 'remote' ? (sessionId || props.sessionId) : null)
   extractParentPath.value = isTargetLeftRemote ? (parentDir || leftRemotePath.value) : (target === 'remote' ? sftpStore.remotePath : sftpStore.localPath)
   extractArchiveFile.value = file
-  const baseName = file.name.replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar|7z)$/i, '')
-  extractSubfolderName.value = baseName
   showExtractModal.value = true
-  nextTick(() => {
-    extractInputRef.value?.focus()
-    extractInputRef.value?.select()
-  })
 }
 
-const submitExtractToFolder = async (subfolderNameParam?: string) => {
+const submitExtractToFolder = async (subfolderNameParam: string) => {
   if (!extractArchiveFile.value) return
-  const subfolder = (subfolderNameParam || extractSubfolderName.value).trim()
+  const subfolder = subfolderNameParam.trim()
   if (!subfolder) return
 
   const file = extractArchiveFile.value
@@ -2861,28 +2772,11 @@ const openCompressModal = (target: 'local' | 'remote', sessionId?: string | null
   if (items.length === 0) return
 
   compressSelectedItems.value = [...items]
-  compressFormat.value = '.tar.gz'
-  const defaultName = items.length === 1
-    ? `${items[0].name}.tar.gz`
-    : `archive-${new Date().toISOString().slice(0, 10)}.tar.gz`
-  compressArchiveName.value = defaultName
   showCompressModal.value = true
-  nextTick(() => {
-    compressInputRef.value?.focus()
-    compressInputRef.value?.select()
-  })
 }
 
-const selectCompressFormat = (format: '.tar.gz' | '.zip') => {
-  compressFormat.value = format
-  let name = compressArchiveName.value.trim()
-  name = name.replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tbz2|tar\.xz|txz|tar|7z)$/i, '')
-  compressArchiveName.value = `${name}${format}`
-}
-
-const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz' | '.zip') => {
-  if (formatParam) compressFormat.value = formatParam
-  const archiveName = (archiveNameParam || compressArchiveName.value).trim()
+const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz' | '.zip') => {
+  const archiveName = archiveNameParam.trim()
   if (!archiveName || compressSelectedItems.value.length === 0) return
 
   const target = compressTarget.value
@@ -3745,7 +3639,7 @@ const submitCompress = async (archiveNameParam?: string, formatParam?: '.tar.gz'
       :show="showChecksumModal"
       :target="checksumTarget"
       :file="checksumFile"
-      :session-id="checksumSessionId || props.sessionId"
+      :session-id="(checksumSessionId || props.sessionId) ?? undefined"
       @close="showChecksumModal = false"
     />
 

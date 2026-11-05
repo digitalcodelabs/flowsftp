@@ -395,6 +395,43 @@ describe('transfer pipelines', () => {
       expect(store.failedTransfers.map((t) => t.file_name)).toEqual(['bad.txt'])
       expect(store.completedTransfers.map((t) => t.file_name)).toEqual(['ok.txt'])
     })
+
+    it('passes conflictAction to sftp_transfer_remote_to_remote', async () => {
+      existingPaths.add('/dest/a.txt')
+
+      const single = store.transferRemoteToRemote('src', 'dst', remoteFile('a.txt'), '/dest')
+      await answerNextDialog('overwrite')
+      await single
+
+      expect(callsTo('sftp_transfer_remote_to_remote')).toEqual([
+        expect.objectContaining({
+          srcSessionId: 'src',
+          destSessionId: 'dst',
+          srcPath: '/src/a.txt',
+          destPath: '/dest/a.txt',
+          conflictAction: 'overwrite',
+        }),
+      ])
+    })
+
+    it('records ignored root files and folders in startBatchRemoteToRemoteTransfer without transferring them', async () => {
+      const settings = useSettingsStore()
+      settings.enableTransferIgnoreFilter = true
+      settings.transferIgnorePatterns = ['*.tmp', '.git']
+
+      await store.startBatchRemoteToRemoteTransfer(
+        'src',
+        'dst',
+        [remoteFile('a.txt'), remoteFile('cache.tmp'), remoteDir('.git')],
+        '/dest'
+      )
+
+      expect(callsTo('sftp_transfer_remote_to_remote').map((c) => c.destPath)).toEqual(['/dest/a.txt'])
+      expect(callsTo('sftp_crawl_remote_paths')).toHaveLength(0)
+      const ignored = store.failedTransfers.filter((t) => t.error?.startsWith('Ignored'))
+      expect(ignored.map((t) => t.file_name).sort()).toEqual(['.git', 'cache.tmp'])
+      expect(ignored.find((t) => t.file_name === '.git')?.is_dir).toBe(true)
+    })
   })
 
   describe('concurrent batches', () => {

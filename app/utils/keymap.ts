@@ -284,7 +284,7 @@ export function matchesShortcut(event: KeyboardEvent, shortcut: string): boolean
   })
 
   if (keyParts.length !== 1) return false
-  const targetKey = normalizeKey(keyParts[0])
+  const targetKey = normalizeKey(keyParts[0]!)
 
   const eventKey = normalizeKey(event.key || '')
   const eventCode = normalizeKey(event.code || '')

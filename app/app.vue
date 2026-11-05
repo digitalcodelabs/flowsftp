@@ -49,6 +49,8 @@ const tabsContainerRef = ref<HTMLDivElement | null>(null)
 const terminalDimensions = ref({ cols: 80, rows: 24 })
 
 let unlistenKeymapBus: (() => void) | null = null
+let unlistenWindowResize: (() => void) | null = null
+let isAppUnmounted = false
 
 const handleTabWheel = (e: WheelEvent) => {
   if (tabsContainerRef.value) {
@@ -74,9 +76,10 @@ const handleOpenTerminal = async (dirPath: string, targetSessionId?: string) => 
       selectSession(sid)
     }
     currentTab.value = 'terminal'
+    const escaped = dirPath.replace(/'/g, "'\\''")
     await invoke('ssh_write_stdin', {
       sessionId: sid,
-      data: `cd "${dirPath}"\n`,
+      data: `cd '${escaped}'\n`,
     })
   }
 }
@@ -152,8 +155,8 @@ const nextSession = () => {
     (s) => s.sessionId === sshStore.activeSessionId
   )
   const nextIndex = (currentIndex + 1) % sshStore.sessions.length
-  const nextSessionId = sshStore.sessions[nextIndex].sessionId
-  selectSession(nextSessionId)
+  const nextSessionId = sshStore.sessions[nextIndex]?.sessionId
+  if (nextSessionId) selectSession(nextSessionId)
 }
 
 const prevSession = () => {
@@ -163,8 +166,8 @@ const prevSession = () => {
   )
   const prevIndex =
     (currentIndex - 1 + sshStore.sessions.length) % sshStore.sessions.length
-  const prevSessionId = sshStore.sessions[prevIndex].sessionId
-  selectSession(prevSessionId)
+  const prevSessionId = sshStore.sessions[prevIndex]?.sessionId
+  if (prevSessionId) selectSession(prevSessionId)
 }
 
 let lastActionTime = 0
@@ -301,9 +304,14 @@ onMounted(async () => {
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
       const win = getCurrentWindow()
       isWindowMaximized.value = await win.isMaximized()
-      win.listen('tauri://resize', async () => {
+      const unlisten = await win.listen('tauri://resize', async () => {
         isWindowMaximized.value = await win.isMaximized()
       })
+      if (isAppUnmounted) {
+        unlisten()
+      } else {
+        unlistenWindowResize = unlisten
+      }
     } catch (err) {
       console.warn('Failed to listen to window resize:', err)
     }
@@ -311,11 +319,16 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  isAppUnmounted = true
   window.removeEventListener('keydown', handleGlobalKeyDown, true)
   window.removeEventListener('contextmenu', handleGlobalContextMenu)
   if (unlistenKeymapBus) {
     unlistenKeymapBus()
     unlistenKeymapBus = null
+  }
+  if (unlistenWindowResize) {
+    unlistenWindowResize()
+    unlistenWindowResize = null
   }
 })
 

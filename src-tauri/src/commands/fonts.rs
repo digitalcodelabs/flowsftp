@@ -51,28 +51,28 @@ pub fn fetch_system_fonts() -> Vec<SystemFont> {
         cmd.args(["query", reg_path]);
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        if let Ok(output) = cmd.output() {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                for line in text.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with("HKEY_") {
-                        continue;
-                    }
+        if let Ok(output) = cmd.output()
+            && let Ok(text) = String::from_utf8(output.stdout)
+        {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with("HKEY_") {
+                    continue;
+                }
 
-                    // Format: "Font Name (TrueType)    REG_SZ    filename.ttf"
-                    let font_part = if let Some(idx) = trimmed.find("    REG_") {
-                        &trimmed[..idx]
-                    } else if let Some(idx) = trimmed.find("\tREG_") {
-                        &trimmed[..idx]
-                    } else {
-                        trimmed
-                    };
+                // Format: "Font Name (TrueType)    REG_SZ    filename.ttf"
+                let font_part = if let Some(idx) = trimmed.find("    REG_") {
+                    &trimmed[..idx]
+                } else if let Some(idx) = trimmed.find("\tREG_") {
+                    &trimmed[..idx]
+                } else {
+                    trimmed
+                };
 
-                    let cleaned_entries = clean_windows_font_name(font_part);
-                    for item in cleaned_entries {
-                        if !item.is_empty() {
-                            names.insert(item);
-                        }
+                let cleaned_entries = clean_windows_font_name(font_part);
+                for item in cleaned_entries {
+                    if !item.is_empty() {
+                        names.insert(item);
                     }
                 }
             }

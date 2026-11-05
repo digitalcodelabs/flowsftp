@@ -92,30 +92,11 @@ async fn search_via_ssh_exec(
         .await
         .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
 
-    // Escape query for bash shell safety
+    // Escape query for POSIX shell safety
     let safe_query = crate::shell::escape_single_quotes(&req.query);
-    let safe_base = crate::shell::escape_single_quotes(&base_path);
+    let safe_base = crate::shell::escape_single_quotes(base_path);
 
-    let cmd = if req.search_type == "content" {
-        // Grep text content inside files
-        let icase = if req.case_sensitive { "" } else { "-i" };
-        format!(
-            "grep -rnI {} --exclude-dir={{.git,node_modules,dist,build,vendor,.vscode,.idea}} -m {} '{}' '{}' 2>/dev/null | head -n {}",
-            icase, max_results, safe_query, safe_base, max_results
-        )
-    } else {
-        // Find filename
-        let iname = if req.case_sensitive { "-name" } else { "-iname" };
-        let glob = if safe_query.contains('*') || safe_query.contains('?') {
-            safe_query
-        } else {
-            format!("*{}*", safe_query)
-        };
-        format!(
-            "find '{}' -maxdepth {} \\( -path '*/.git' -o -path '*/node_modules' -o -path '*/dist' -o -path '*/build' -o -path '*/vendor' \\) -prune -o {} '{}' -print 2>/dev/null | head -n {}",
-            safe_base, max_depth, iname, glob, max_results
-        )
-    };
+    let cmd = build_remote_search_command(req, &safe_query, &safe_base, max_depth, max_results);
 
     channel
         .exec(true, cmd.into_bytes())
@@ -126,11 +107,11 @@ async fn search_via_ssh_exec(
     let timeout_deadline = tokio::time::Instant::now() + Duration::from_secs(25);
 
     loop {
-        if let Some(id) = &req.search_id {
-            if state.is_search_cancelled(id) {
-                let _ = channel.close().await;
-                break;
-            }
+        if let Some(id) = &req.search_id
+            && state.is_search_cancelled(id)
+        {
+            let _ = channel.close().await;
+            break;
         }
 
         if tokio::time::Instant::now() > timeout_deadline {
@@ -170,19 +151,19 @@ async fn search_via_ssh_exec(
         if req.search_type == "content" {
             // Parse grep output: filepath:line:content
             // Note: filepath on Linux starts with '/' or './'
-            if let Some((filepath, rest)) = line.split_once(':') {
-                if let Some((line_num_str, line_content)) = rest.split_once(':') {
-                    let line_num = line_num_str.parse::<usize>().ok();
-                    let filename = filepath.rsplit('/').next().unwrap_or(filepath).to_string();
-                    results.push(RemoteSearchResultItem {
-                        path: filepath.to_string(),
-                        filename,
-                        line_number: line_num,
-                        line_content: Some(line_content.trim().to_string()),
-                        is_dir: false,
-                        size: None,
-                    });
-                }
+            if let Some((filepath, rest)) = line.split_once(':')
+                && let Some((line_num_str, line_content)) = rest.split_once(':')
+            {
+                let line_num = line_num_str.parse::<usize>().ok();
+                let filename = filepath.rsplit('/').next().unwrap_or(filepath).to_string();
+                results.push(RemoteSearchResultItem {
+                    path: filepath.to_string(),
+                    filename,
+                    line_number: line_num,
+                    line_content: Some(line_content.trim().to_string()),
+                    is_dir: false,
+                    size: None,
+                });
             }
         } else {
             // Parse find output: filepath
@@ -205,6 +186,35 @@ async fn search_via_ssh_exec(
     Ok(results)
 }
 
+fn build_remote_search_command(
+    req: &RemoteSearchQuery,
+    safe_query: &str,
+    safe_base: &str,
+    max_depth: usize,
+    max_results: usize,
+) -> String {
+    if req.search_type == "content" {
+        // Grep text content inside files (using portable individual --exclude-dir flags, -e pattern, and -- path)
+        let icase = if req.case_sensitive { "" } else { "-i" };
+        format!(
+            "grep -rnI {} --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor --exclude-dir=.vscode --exclude-dir=.idea -m {} -e '{}' -- '{}' 2>/dev/null | head -n {}",
+            icase, max_results, safe_query, safe_base, max_results
+        )
+    } else {
+        // Find filename
+        let iname = if req.case_sensitive { "-name" } else { "-iname" };
+        let glob = if safe_query.contains('*') || safe_query.contains('?') {
+            safe_query.to_string()
+        } else {
+            format!("*{}*", safe_query)
+        };
+        format!(
+            "find '{}' -maxdepth {} \\( -path '*/.git' -o -path '*/node_modules' -o -path '*/dist' -o -path '*/build' -o -path '*/vendor' \\) -prune -o {} '{}' -print 2>/dev/null | head -n {}",
+            safe_base, max_depth, iname, glob, max_results
+        )
+    }
+}
+
 async fn search_via_sftp_crawl(
     state: &AppState,
     sftp: &russh_sftp::client::SftpSession,
@@ -220,10 +230,10 @@ async fn search_via_sftp_crawl(
     let mut results = Vec::new();
 
     while let Some((dir_path, depth)) = queue.pop_front() {
-        if let Some(id) = &req.search_id {
-            if state.is_search_cancelled(id) {
-                break;
-            }
+        if let Some(id) = &req.search_id
+            && state.is_search_cancelled(id)
+        {
+            break;
         }
 
         if depth > max_depth || results.len() >= max_results {
@@ -236,10 +246,10 @@ async fn search_via_sftp_crawl(
         };
 
         for entry in entries {
-            if let Some(id) = &req.search_id {
-                if state.is_search_cancelled(id) {
-                    break;
-                }
+            if let Some(id) = &req.search_id
+                && state.is_search_cancelled(id)
+            {
+                break;
             }
 
             let name = entry.file_name();
@@ -277,7 +287,7 @@ async fn search_via_sftp_crawl(
                 });
             }
 
-            if is_dir && depth + 1 <= max_depth {
+            if is_dir && depth < max_depth {
                 queue.push_back((full_path, depth + 1));
             }
 
@@ -305,10 +315,10 @@ async fn search_via_ftp_crawl(
     let mut results = Vec::new();
 
     while let Some((dir_path, depth)) = queue.pop_front() {
-        if let Some(id) = &req.search_id {
-            if state.is_search_cancelled(id) {
-                break;
-            }
+        if let Some(id) = &req.search_id
+            && state.is_search_cancelled(id)
+        {
+            break;
         }
 
         if depth > max_depth || results.len() >= max_results {
@@ -321,10 +331,10 @@ async fn search_via_ftp_crawl(
         };
 
         for entry in entries {
-            if let Some(id) = &req.search_id {
-                if state.is_search_cancelled(id) {
-                    break;
-                }
+            if let Some(id) = &req.search_id
+                && state.is_search_cancelled(id)
+            {
+                break;
             }
 
             if entry.name == "." || entry.name == ".." {
@@ -352,7 +362,7 @@ async fn search_via_ftp_crawl(
                 });
             }
 
-            if entry.is_dir && depth + 1 <= max_depth {
+            if entry.is_dir && depth < max_depth {
                 queue.push_back((entry.path, depth + 1));
             }
 
@@ -363,4 +373,27 @@ async fn search_via_ftp_crawl(
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_remote_search_command_uses_portable_flags_and_prevents_option_injection() {
+        let req = RemoteSearchQuery {
+            search_id: None,
+            session_id: "s1".to_string(),
+            base_path: "/var/www".to_string(),
+            query: "-v".to_string(),
+            search_type: "content".to_string(),
+            case_sensitive: false,
+            max_depth: Some(5),
+            max_results: Some(100),
+        };
+        let cmd = build_remote_search_command(&req, "-v", "/var/www", 5, 100);
+        assert!(!cmd.contains("--exclude-dir={"));
+        assert!(cmd.contains("--exclude-dir=.git --exclude-dir=node_modules"));
+        assert!(cmd.contains("-e '-v' -- '/var/www'"));
+    }
 }

@@ -6,10 +6,10 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::sftp::external_edit::{
-    get_staging_dir, launch_external_editor, now_epoch_secs, ActiveWatcherHandle,
-    ExternalEditEvent, ExternalEditInfo,
+    get_staging_dir, launch_external_editor, now_epoch_secs, sanitize_path_component,
+    ActiveWatcherHandle, ExternalEditEvent, ExternalEditInfo,
 };
-use crate::sftp::{read_remote_file_binary, write_remote_file_binary};
+use crate::sftp::{download_remote_to_local_file, upload_local_to_remote_file};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -33,12 +33,14 @@ pub async fn sftp_start_external_edit(
     }
 
     let edit_id = format!("ext-{}", &Uuid::new_v4().to_string()[..8]);
-    let filename = remote_path
+    let raw_name = remote_path
+        .replace('\\', "/")
         .split('/')
-        .last()
+        .next_back()
         .filter(|s| !s.is_empty())
         .unwrap_or("unnamed_file")
         .to_string();
+    let filename = sanitize_path_component(&raw_name, "unnamed_file");
 
     let staging_dir = get_staging_dir(&session_id)?.join(&edit_id);
     tokio::fs::create_dir_all(&staging_dir)
@@ -47,22 +49,17 @@ pub async fn sftp_start_external_edit(
 
     let local_file_path = staging_dir.join(&filename);
 
-    // 1. Download the remote file content (SFTP or FTP)
-    let file_data = if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        ftp.read_file_binary(&remote_path).await?
+    // 1. Stream the remote file directly to the local staging file (SFTP or FTP, no 25 MB cap)
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        ftp.download_to_local_file(&remote_path, &local_file_path).await?;
     } else if let Some(session) = state.get_session(&session_id).await {
         let sftp = session.get_sftp().await?;
-        read_remote_file_binary(&sftp, &remote_path).await?
+        download_remote_to_local_file(&sftp, &remote_path, &local_file_path).await?;
     } else {
         return Err(format!("Session '{}' not found", session_id));
-    };
+    }
 
-    // 2. Write binary content to staging file
-    tokio::fs::write(&local_file_path, &file_data)
-        .await
-        .map_err(|e| format!("Failed to write local staging file: {}", e))?;
-
-    // 3. Launch external editor
+    // 2. Launch external editor
     launch_external_editor(&local_file_path, preferred_editor.as_deref())?;
 
     // 4. Setup notify file watcher on the staging directory
@@ -132,80 +129,77 @@ pub async fn sftp_start_external_edit(
                 },
             );
 
-            // Read the modified local staging file
-            match tokio::fs::read(&bg_local_path).await {
-                Ok(bytes) => {
-                    let state = app_handle.state::<AppState>();
-                    let upload_result: Result<(), String> = async {
-                        if let Some(ftp) = state.get_ftp_session(&bg_session_id).await {
-                            ftp.write_file_binary(&bg_remote_path, &bytes).await?;
-                            Ok(())
-                        } else if let Some(session) = state.get_session(&bg_session_id).await {
-                            let sftp = session.get_sftp().await?;
-                            write_remote_file_binary(&sftp, &bg_remote_path, &bytes).await?;
-                            Ok(())
-                        } else {
-                            Err("Connection dropped or session closed".to_string())
-                        }
-                    }
-                    .await;
+            // Stream the modified local staging file directly to the remote server
+            if !bg_local_path.exists() {
+                log::warn!(
+                    "[external-edit] Staging file '{}' does not exist",
+                    bg_local_path.display()
+                );
+                continue;
+            }
 
-                    match upload_result {
-                        Ok(()) => {
-                            let ts = now_epoch_secs();
-                            state.update_external_edit_status(
-                                &bg_edit_id,
-                                "synced",
-                                None,
-                                Some(ts),
-                            );
-                            let _ = app_handle.emit(
-                                "external-edit:status",
-                                ExternalEditEvent {
-                                    id: bg_edit_id.clone(),
-                                    session_id: bg_session_id.clone(),
-                                    remote_path: bg_remote_path.clone(),
-                                    local_path: bg_local_path.to_string_lossy().to_string(),
-                                    filename: bg_filename.clone(),
-                                    last_synced_at: ts,
-                                    status: "synced".to_string(),
-                                    error: None,
-                                },
-                            );
-                        }
-                        Err(err) => {
-                            log::error!(
-                                "[external-edit] Failed to auto-upload '{}': {}",
-                                bg_remote_path,
-                                err
-                            );
-                            state.update_external_edit_status(
-                                &bg_edit_id,
-                                "error",
-                                Some(err.clone()),
-                                None,
-                            );
-                            let _ = app_handle.emit(
-                                "external-edit:status",
-                                ExternalEditEvent {
-                                    id: bg_edit_id.clone(),
-                                    session_id: bg_session_id.clone(),
-                                    remote_path: bg_remote_path.clone(),
-                                    local_path: bg_local_path.to_string_lossy().to_string(),
-                                    filename: bg_filename.clone(),
-                                    last_synced_at: now_epoch_secs(),
-                                    status: "error".to_string(),
-                                    error: Some(err),
-                                },
-                            );
-                        }
-                    }
+            let state = app_handle.state::<AppState>();
+            let upload_result: Result<(), String> = async {
+                if let Some(ftp) = state.get_ftp_session(&bg_session_id).await {
+                    ftp.upload_from_local_file(&bg_local_path, &bg_remote_path).await?;
+                    Ok(())
+                } else if let Some(session) = state.get_session(&bg_session_id).await {
+                    let sftp = session.get_sftp().await?;
+                    upload_local_to_remote_file(&sftp, &bg_local_path, &bg_remote_path).await?;
+                    Ok(())
+                } else {
+                    Err("Connection dropped or session closed".to_string())
                 }
-                Err(e) => {
-                    log::warn!(
-                        "[external-edit] Could not read staging file '{}': {}",
-                        bg_local_path.display(),
-                        e
+            }
+            .await;
+
+            match upload_result {
+                Ok(()) => {
+                    let ts = now_epoch_secs();
+                    state.update_external_edit_status(
+                        &bg_edit_id,
+                        "synced",
+                        None,
+                        Some(ts),
+                    );
+                    let _ = app_handle.emit(
+                        "external-edit:status",
+                        ExternalEditEvent {
+                            id: bg_edit_id.clone(),
+                            session_id: bg_session_id.clone(),
+                            remote_path: bg_remote_path.clone(),
+                            local_path: bg_local_path.to_string_lossy().to_string(),
+                            filename: bg_filename.clone(),
+                            last_synced_at: ts,
+                            status: "synced".to_string(),
+                            error: None,
+                        },
+                    );
+                }
+                Err(err) => {
+                    log::error!(
+                        "[external-edit] Failed to auto-upload '{}': {}",
+                        bg_remote_path,
+                        err
+                    );
+                    state.update_external_edit_status(
+                        &bg_edit_id,
+                        "error",
+                        Some(err.clone()),
+                        None,
+                    );
+                    let _ = app_handle.emit(
+                        "external-edit:status",
+                        ExternalEditEvent {
+                            id: bg_edit_id.clone(),
+                            session_id: bg_session_id.clone(),
+                            remote_path: bg_remote_path.clone(),
+                            local_path: bg_local_path.to_string_lossy().to_string(),
+                            filename: bg_filename.clone(),
+                            last_synced_at: now_epoch_secs(),
+                            status: "error".to_string(),
+                            error: Some(err),
+                        },
                     );
                 }
             }
@@ -265,15 +259,16 @@ pub async fn sftp_retry_external_edit_upload(
         .get_external_edit(&edit_id)
         .ok_or_else(|| format!("External edit '{}' not found", edit_id))?;
 
-    let bytes = tokio::fs::read(&edit.local_path)
-        .await
-        .map_err(|e| format!("Failed to read local staging file: {}", e))?;
+    let local_path = std::path::PathBuf::from(&edit.local_path);
+    if !local_path.exists() {
+        return Err(format!("Local staging file '{}' not found", edit.local_path));
+    }
 
     if let Some(ftp) = state.get_ftp_session(&edit.session_id).await {
-        ftp.write_file_binary(&edit.remote_path, &bytes).await?;
+        ftp.upload_from_local_file(&local_path, &edit.remote_path).await?;
     } else if let Some(session) = state.get_session(&edit.session_id).await {
         let sftp = session.get_sftp().await?;
-        write_remote_file_binary(&sftp, &edit.remote_path, &bytes).await?;
+        upload_local_to_remote_file(&sftp, &local_path, &edit.remote_path).await?;
     } else {
         return Err("Connection dropped or session closed".to_string());
     }

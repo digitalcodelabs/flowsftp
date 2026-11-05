@@ -161,7 +161,7 @@ export const useThemeStore = defineStore('theme', () => {
   const currentTheme = computed<AppTheme>(() => {
     return (
       allThemes.value.find((t) => t.id === currentThemeId.value) ||
-      BUILT_IN_THEMES[0]
+      BUILT_IN_THEMES[0]!
     )
   })
 
