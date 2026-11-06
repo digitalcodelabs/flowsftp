@@ -44,7 +44,7 @@ export interface KeymapMeta {
 }
 
 export const DEFAULT_KEYMAPS: KeymapSettings = {
-  openKeymap: 'Ctrl+,',
+  openKeymap: 'Ctrl+Shift+P',
   toggleView: 'Ctrl+`',
   switchToTerminal: 'Alt+1',
   switchToFiles: 'Alt+2',
@@ -66,7 +66,7 @@ export const KEYMAP_ACTIONS_META: KeymapMeta[] = [
   {
     id: 'openKeymap',
     title: 'Open Settings / Keymaps',
-    description: 'Open Settings dialog directly to Keymap & Shortcuts tab (Ctrl+,)',
+    description: 'Open Settings dialog from anywhere (Ctrl+Shift+P or Ctrl+,)',
     category: 'view',
     defaultShortcut: DEFAULT_KEYMAPS.openKeymap,
   },

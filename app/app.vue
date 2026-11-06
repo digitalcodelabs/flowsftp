@@ -208,10 +208,21 @@ const executeKeyAction = (action: KeymapAction) => {
 }
 
 const handleGlobalKeyDown = (e: KeyboardEvent) => {
-  // Ctrl+, / Cmd+,: Open Keymap & Settings immediately from anywhere
+  const isCtrlOrCmd = e.ctrlKey || e.metaKey
+  const isComma = !e.shiftKey && !e.altKey && (e.key === ',' || e.code === 'Comma')
+  const isShiftP = e.shiftKey && !e.altKey && (e.key.toLowerCase() === 'p' || e.code === 'KeyP')
+  const isPlainCtrlP = isCtrlOrCmd && !e.shiftKey && !e.altKey && (e.key.toLowerCase() === 'p' || e.code === 'KeyP')
+
+  // Suppress browser print dialog on Ctrl+P outside the SSH terminal
+  if (isPlainCtrlP && currentTab.value !== 'terminal') {
+    e.preventDefault()
+  }
+
+  // Ctrl+Shift+P / Cmd+Shift+P or Ctrl+, / Cmd+,: Open Settings immediately from anywhere
   if (
     (settingsStore.keymaps.openKeymap && matchesShortcut(e, settingsStore.keymaps.openKeymap)) ||
-    ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma'))
+    (isCtrlOrCmd && isShiftP) ||
+    (isCtrlOrCmd && isComma)
   ) {
     e.preventDefault()
     e.stopPropagation()

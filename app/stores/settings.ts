@@ -175,6 +175,13 @@ export const useSettingsStore = defineStore('settings', () => {
         if (!parsed.refresh) {
           parsed.refresh = DEFAULT_KEYMAPS.refresh
         }
+        // Migrate legacy Ctrl+, default to Ctrl+Shift+P
+        if (!localStorage.getItem('flowsftp_keymap_ctrl_shift_p_v1')) {
+          localStorage.setItem('flowsftp_keymap_ctrl_shift_p_v1', 'true')
+          if (!parsed.openKeymap || parsed.openKeymap === 'Ctrl+,') {
+            parsed.openKeymap = 'Ctrl+Shift+P'
+          }
+        }
         return { ...DEFAULT_KEYMAPS, ...parsed }
       }
     } catch (e) {

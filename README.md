@@ -273,6 +273,7 @@ With native OS performance, SSH host-key verification (TOFU), an encrypted maste
 | <kbd>Ctrl</kbd> + <kbd>W</kbd> / <kbd>⌘</kbd> + <kbd>W</kbd> (or `:q` in Vim) | Code Editor | Close editor modal |
 | <kbd>Esc</kbd> / <kbd>Ctrl</kbd> + <kbd>[</kbd> | Code Editor (Vim) | Exit Insert / Visual mode back to Normal mode |
 | <kbd>Esc</kbd> | Global | Close modals, clear filter, dismiss preview, or deselect all items |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>P</kbd> / <kbd>Ctrl</kbd> + <kbd>,</kbd> | Global | Open Settings & Keymap |
 | <kbd>Ctrl</kbd> + <kbd>T</kbd> / <kbd>⌘</kbd> + <kbd>T</kbd> | Global | Open Connection Manager |
 
 ---
