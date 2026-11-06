@@ -18,18 +18,20 @@ Built with **Tauri v2**, **Rust**, **Nuxt 4**, **Vue 3**, **Tailwind CSS**, and 
 
 ## 🌟 Overview
 
-**FlowSFTP** reimagines classic file transfer tools like FileZilla and WinSCP for modern developers. It combines a high-performance **dual-pane local & remote file manager** with a full-featured **tabbed SSH terminal** powered by WebGL. 
+**FlowSFTP** reimagines classic file transfer tools like FileZilla and WinSCP for modern developers. It combines a high-performance **dual-pane local & remote file manager** (supporting Local ↔ Remote and Server-to-Server Remote ↔ Remote workflows) with a full-featured **tabbed SSH terminal** powered by WebGL. 
 
-With native OS performance, encrypted credential vaulting, live file search filtering, external editor live sync, live folder pairing with auto-upload, recursive remote SSH grep, built-in code editing, macOS-style Quick Look preview, FileZilla-exact 3-tab transfer queueing, non-blocking background deletions, and rich Catppuccin theming, FlowSFTP delivers a unified workflow for server administration, remote development, and file management.
+With native OS performance, SSH host-key verification (TOFU), an encrypted master-password credential vault, a built-in **CodeMirror 6 code editor with full Vim mode**, macOS-style **Quick Look** preview (Markdown, JSON, PDF, Audio, Video, Images, Code), external editor live sync, live folder pairing with auto-upload, recursive remote SSH grep, smart conflict resolution with transfer resume, FileZilla-exact 3-tab transfer queueing, non-blocking background deletions, and rich Catppuccin theming, FlowSFTP delivers a unified workflow for server administration, remote development, and file management.
 
 ---
 
 ## ✨ Key Features
 
-### 📁 Dual-Pane File Manager (Local & Remote)
-- **Side-by-Side Browsing**: Concurrent views for local file system and remote server listings.
+### 📁 Dual-Pane File Manager (Local ↔ Remote & Remote ↔ Remote)
+- **Flexible Dual-Pane Sources (Local or Remote-to-Remote)**:
+  - Browse your local filesystem alongside a remote SFTP/FTP/FTPS server, or switch the left pane to any active remote session for **direct Server-to-Server (Remote ↔ Remote) browsing and transfers**.
+  - Same-server remote copies automatically use fast server-side copy (`cp`) over SSH, while cross-server transfers stream directly between sessions.
 - **Ergonomic Full-Window Resizable Panes (Left, Right & Bottom)**:
-  - **Horizontal Splitter**: Smoothly drag the divider between Local and Remote browser panes to adjust screen estate. Double-click the splitter to instantly snap back to a 50/50 balance.
+  - **Horizontal Splitter**: Smoothly drag the divider between Left and Right browser panes to adjust screen estate. Double-click the splitter to instantly snap back to a 50/50 balance.
   - **Vertical Splitter**: Resizable bottom transfer queue drawer with custom height memory, 20px extended hit zone, and centered grip indicator. Double-click the handle to reset to default height.
   - **Expand/Collapse Support**: Collapse the transfer queue to maximize workspace; dragging the splitter bar upward automatically re-expands the drawer.
   - **Global Drag Overlays**: Transparent full-screen shields prevent iframes, text selections, or table events from interrupting dragging gestures.
@@ -41,33 +43,44 @@ With native OS performance, encrypted credential vaulting, live file search filt
   - Smooth keyboard ergonomics: <kbd>↓ Down</kbd> / <kbd>Enter</kbd> to jump straight into matched items, <kbd>Esc</kbd> to clear query or dismiss filter.
   - Auto-resets cleanly upon directory navigation or session switching.
 - **Directory Comparison Mode (`Ctrl+Shift+C` / `Cmd+Shift+C`)**:
-  - Visual side-by-side diff comparing the current local directory against the remote directory.
+  - Visual side-by-side diff comparing the left pane directory against the right pane directory.
   - Color-coded rows and badges: `+ Local Only` (green), `+ Remote Only` (blue), `▲ Newer` / `▼ Older` (amber), and `≠ Size Diff` (rose).
   - Flexible comparison criteria: *File Size & Modification Time* or *File Size Only*.
   - "Hide identical files" filter option to isolate only files that need synchronization.
   - Smart one-click Quick-Sync actions: **"Sync to Remote"** (batch uploads local-only/newer files) and **"Sync to Local"** (batch downloads remote-only/newer files).
 - **Synchronized Navigation (Lockstep Browsing)**:
   - Toggle lockstep navigation with one click in the toolbar.
-  - Entering a folder locally automatically navigates to the matching folder remotely (and vice versa).
+  - Entering a folder in one pane automatically navigates to the matching folder in the other pane (and vice versa).
   - Parent directory (`..`) navigation is synchronized between both panes.
+- **Rich File Operations, Clipboard & Symlinks**:
+  - **Cross-Pane Cut, Copy & Paste (`Ctrl+X`, `Ctrl+C`, `Ctrl+V`)**: Seamlessly copy or move files within the same pane, between Local and Remote, or across two different Remote servers.
+  - **One-Click Duplicate (`Ctrl+D`)**: Instantly duplicate files or directories locally or remotely (`- Copy`).
+  - **Symbolic Link Creation**: Create symbolic links (`ln -s`) on local and remote filesystems via the New Symlink modal (`SftpNewSymlinkModal`), with inline `-> target` indicators.
+  - **SHA-256 & MD5 Checksum Calculator (`SftpChecksumModal`)**: Compute and verify `SHA-256` and `MD5` file hashes on both local and remote servers with one-click copy and hash comparison.
+  - **On-Demand Directory Size Calculation**: Calculate recursive folder sizes directly from the context menu.
 - **Server-Side & Local Archive Operations (One-Click Extract & Compress)**:
   - **Instant Remote Extraction**: Right-click `.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, or `.7z` archives on the server to extract in place or into a subfolder over the SSH channel — eliminating the need to download large archives or open an external shell.
   - **Server-Side Compression**: Select any files or directories on the remote server and compress directly into `.tar.gz` or `.zip` archives with real-time feedback.
   - **Cross-Platform Local Support**: Native archive extraction and compression on Windows, macOS, and Linux without external dependencies.
+- **Smart Conflict Resolution & Transfer Resume (`SftpConflictModal`)**:
+  - Interactive conflict prompt when target files already exist, showing side-by-side file sizes and timestamps (`Newer`, `Older`, `Larger`, `Smaller` badges).
+  - Choose **Overwrite**, **Resume** (resumes partial SFTP/FTP downloads, uploads, and remote-to-remote transfers), **Auto-Rename**, or **Skip**, with *"Apply to current queue"* and session-wide default policies.
+- **Configurable Transfer Ignore Rules**:
+  - Define global glob/wildcard ignore patterns (e.g. `.git`, `node_modules`, `*.tmp`, `.DS_Store`) in Settings to automatically skip unwanted files during folder crawls and batch transfers.
 - **Background Async Deletion with Live Cancel**:
   - Deleting massive folders (such as `node_modules` or `vendor`) runs asynchronously in the background without freezing the UI or blocking file navigation.
-  - Real-time floating status card shows item title, completed/total count, and live spinner.
+  - Real-time floating status card shows item title, completed/total count, and live spinner (with optional fast `rm -rf` over SSH for remote directories).
   - **One-Click Cancel**: Instantly halts recursive deletion loops safely on both local and remote filesystems.
 - **Parent Directory Entry (`📁 ..`)**: Classic FileZilla-style parent directory row for swift mouse and keyboard navigation.
-- **Path Address Bars**: Direct keyboard path input with auto-completion and breadcrumbs.
+- **Path Address Bars**: Direct keyboard path input with auto-completion, copy-path actions, and clickable breadcrumbs.
 - **Quick Bookmarks**: Pin frequently visited remote directories (`/var/www`, `/etc`, `~`) and local folders.
 - **Selection & Deselection Ergonomics**:
-  - Multi-file selection with <kbd>Shift+Click</kbd>, <kbd>Ctrl/Cmd+Click</kbd>, and <kbd>Ctrl+A</kbd>.
+  - Multi-file selection with rubber-band marquee drag selection, <kbd>Shift+Click</kbd>, <kbd>Ctrl/Cmd+Click</kbd>, and <kbd>Ctrl+A</kbd>.
   - **Empty-Space Click to Deselect**: Clicking anywhere on the empty space of the local or remote pane immediately clears all selected files.
   - Pressing <kbd>Esc</kbd> clears selections instantly when no modals are open.
-  - Context menu on empty space enables one-click file/folder creation, pasting, and refreshing.
+  - Context menu on empty space enables one-click file/folder/symlink creation, pasting, and refreshing.
 - **Drag & Drop**:
-  - Drag files directly between Local and Remote panes.
+  - Drag files directly between panes (Local ↔ Remote or Remote ↔ Remote).
   - Drag into subfolders or onto parent `..` directory to drop into parent folders.
   - Native OS drag-and-drop from Windows Explorer / macOS Finder / Linux file managers.
 - **WSL (Windows Subsystem for Linux) & Linux Distro Recognition**:
@@ -142,8 +155,10 @@ With native OS performance, encrypted credential vaulting, live file search filt
 
 ### ⚡ Integrated SSH Terminal
 - **Hardware-Accelerated WebGL Engine**: Ultra-smooth rendering using `@xterm/xterm` and `@xterm/addon-webgl`.
-- **Multi-Session Tabs**: Keep multiple SSH connections open simultaneously with active status indicators.
-- **"Open in Terminal" Integration**: One-click jump from any remote SFTP folder straight into the SSH terminal (`cd /path/to/folder`).
+- **Multi-Session Tabs**: Keep multiple SSH connections open simultaneously with active status indicators and session persistence.
+- **"Open in Terminal" Integration**: One-click jump from any remote SFTP folder straight into the SSH terminal (`cd '/path/to/folder'`).
+- **In-Terminal Search & Zoom**: Built-in terminal search bar, dynamic font zoom (<kbd>Ctrl</kbd>+<kbd>=</kbd>, <kbd>Ctrl</kbd>+<kbd>-</kbd>, <kbd>Ctrl</kbd>+<kbd>0</kbd>), and right-click copy/paste.
+- **Customizable Cursor & Scrollback**: Configurable cursor style (`block`, `underline`, `bar`), cursor blink toggle, scrollback buffer size, and native system monospace font detection.
 - **Fit Addon**: Automatically synchronizes terminal rows and columns with window resize events.
 
 ---
@@ -153,10 +168,16 @@ With native OS performance, encrypted credential vaulting, live file search filt
   - **SFTP** (over SSH) powered by Rust's asynchronous `russh` and `russh-sftp`.
   - **FTP / FTPS** (TLS/SSL encryption) powered by `suppaftp` with automatic dropped connection recovery and seamless file browsing.
   - **SSH Shell** for interactive terminal sessions.
+- **SSH Host-Key Verification (TOFU — Trust On First Use)**:
+  - Interactive host-key verification prompt (`HostKeyPromptModal`) when connecting to an unknown SSH host or when a server's public key changes.
+  - Displays key algorithm (`ssh-ed25519`, `rsa-sha2-256`, etc.) and `SHA256` fingerprint, with prominent security warnings if a previously trusted key has changed (MITM protection).
+  - Atomic persistent host-key store (`known_hosts.json`) managed by the Rust backend.
 - **Connection Profiles & Group Folders**:
   - Organize server bookmarks into custom named folders / groups.
   - One-click folder creation, inline folder renaming, and quick profile management.
-- **Master Password & Encrypted Vault**: Protect saved host profiles and credentials with AES encryption, including master password reset workflows.
+- **Master Password & Encrypted Vault**:
+  - Protect saved credentials with WebCrypto **PBKDF2** (100,000 iterations, SHA-256) key derivation and **AES-GCM** (256-bit) authenticated encryption.
+  - Configurable auto-lock timeout, manual vault lock/unlock (`MasterPasswordModal`), and master password change & reset workflows.
 - **OS Native Keyring Support**: Integration with Windows Credential Manager, macOS Keychain, and Linux Secret Service via the `keyring` crate.
 - **Authentication Methods**:
   - Password authentication.
@@ -167,21 +188,38 @@ With native OS performance, encrypted credential vaulting, live file search filt
 ---
 
 ### 📝 Integrated Tools
-- **Built-in Code Editor**:
+- **Built-in Code Editor (`FileEditorModal` — CodeMirror 6 + Full Vim Mode)**:
   - Edit remote and local files directly in-app across SFTP, FTP, FTPS, and local filesystems.
-  - Syntax highlighting via CodeMirror / Monaco for 100+ programming languages.
-  - Vim keybinding mode toggle.
-  - Auto-upload and cache invalidation on save (<kbd>Ctrl+S</kbd>).
+  - **100+ Language Grammars**: Automatic syntax highlighting and language detection by filename/extension powered by `@codemirror/language-data`.
+  - **Dynamic Theme-Synchronized Highlighting**: Automatically constructs a custom CodeMirror 6 theme and Lezer syntax highlighter from the active FlowSFTP UI & terminal palette, updating on the fly when switching themes or changing font settings.
+  - **First-Class Vim Mode (`@replit/codemirror-vim`)**:
+    - One-click **VIM** mode toggle in the editor header (persisted across sessions in Settings).
+    - Live Vim mode badge (`NORMAL`, `INSERT`, `VISUAL`) displayed in both the editor header and footer status bar.
+    - Built-in Ex command support (`:w`, `:write`, `:wq`, `:x`, `:q`, `:quit`, `:q!`) and `/` incremental search.
+    - Smart <kbd>Esc</kbd> and <kbd>Ctrl</kbd>+<kbd>[</kbd> handling (transitions from Insert/Visual mode back to Normal mode without closing the editor modal) and mode-aware <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> indentation.
+  - **Rich Editor Ergonomics**:
+    - Custom themed right-click context menu (`Cut`, `Copy`, `Paste`, `Undo`, `Redo`, `Select All`, `Format / Indent Selection`, `Find / Replace`).
+    - Full-window **Maximize / Restore** toggle and **Revert** button with unsaved-changes (`Modified`) protection.
+    - One-click **"Open in External Editor"** handoff to transition from the built-in editor directly into VS Code / Cursor / Sublime with live sync.
+    - Live footer status bar displaying cursor coordinates (`Ln X, Col Y`), line count, character count, UTF-8 encoding, and detected language.
+  - Auto-upload and directory cache invalidation on save (<kbd>Ctrl+S</kbd> / `:w`).
 - **Quick Look Instant Preview (<kbd>Spacebar</kbd>)**:
-  - macOS-inspired file preview for quick file inspection across SFTP, FTP, FTPS, and local directories.
-  - Full preview support for Markdown, JSON, source code, and images.
-  - Navigate between files seamlessly using <kbd>←</kbd> and <kbd>→</kbd> arrow keys.
+  - macOS-inspired file preview for instant file inspection across SFTP, FTP, FTPS, and local directories (including remote left-pane sessions).
+  - Full preview support for:
+    - **Markdown** (with Rendered vs. Raw source toggle)
+    - **JSON** (auto-formatted with syntax highlighting)
+    - **Source Code & Plain Text** (with sticky line numbers)
+    - **Images & SVGs** (with interactive `25%`–`400%` zoom controls and transparency checkerboard)
+    - **PDF Documents** (embedded viewer)
+    - **Audio** (`mp3`, `wav`, `ogg`, `flac`, `aac`, `m4a` with native playback controls)
+    - **Video** (`mp4`, `webm`, `mov`, `mkv` with native video player)
+  - Navigate between files seamlessly using <kbd>←</kbd> / <kbd>→</kbd> or <kbd>↑</kbd> / <kbd>↓</kbd> arrow keys.
 - **Permissions Modal (chmod)**:
-  - Interactive Unix permission calculator with checkboxes (Read, Write, Execute).
-  - Octal representation editor (e.g. `0755`, `0644`).
+  - Interactive Unix permission calculator with checkboxes (Read, Write, Execute for Owner, Group, Public).
+  - Octal representation editor (e.g. `0755`, `0644`) and recursive directory application (`chmod -R` with symlink loop protection).
 - **High-Throughput Queue Worker**:
-  - **Multi-Worker Concurrency**: Configurable 1 to 10 parallel transfer workers (`Workers: 1, 2, 3, 5, 8, 10`).
-  - **Directory Flattening**: Pre-scans nested folders into flat task queues so parallel threads stay 100% utilized instead of choking on a single folder thread.
+  - **Multi-Worker Concurrency**: Configurable parallel transfer workers via a dedicated task pump (`taskPump.ts`).
+  - **Directory Flattening**: Pre-scans nested folders into flat task queues with live crawl progress (`sftp:crawl:progress`) so parallel workers stay 100% utilized.
   - **Batch Processing**: Transfers entire file batches without thrashing per-file directory listings, preventing UI freezes and connection timeouts. Refreshes once upon batch completion.
 - **Connection Health & Auto-Reconnect**:
   - Heartbeat background polling every 25 seconds.
@@ -191,9 +229,12 @@ With native OS performance, encrypted credential vaulting, live file search filt
 
 ### 🎨 Customization & Theming
 - **Catppuccin Flow Ribbon Branding**: Custom-crafted Flow Ribbon emblem and squircle application icons aligned with the Catppuccin color scheme with transparent margins.
-- **Curated Theme Palettes**:
-  - **Catppuccin**: Mocha, Macchiato, Frappé, Latte.
-  - **Developer Classics**: Tokyo Night, Dracula, Nord, One Dark, GitHub Dark & Light.
+- **10 Built-in Curated Theme Palettes + Custom JSON Themes**:
+  - **Catppuccin**: Mocha, Latte (plus Default dark palette).
+  - **Developer Classics**: Tokyo Night, Dracula, Nord, One Dark, Monokai Pro, GitHub Dark, and GitHub Light.
+  - **Custom Theme Import / Export**: Import, validate, and export custom JSON theme definitions covering both UI chrome and ANSI terminal colors.
+- **Interactive Keymap Editor**:
+  - Customize and rebind application keyboard shortcuts in **Settings -> Keymap** with real-time shortcut conflict detection and one-click reset to defaults.
 - **100% Theme Consistency**:
   - Dynamically styled toast notifications (top-center and bottom-right floating messages).
   - Themed background deletion and auto-sync status pills.
@@ -203,25 +244,34 @@ With native OS performance, encrypted credential vaulting, live file search filt
   - Themed minimize, maximize/restore, and close buttons integrated into the titlebar.
 - **File & Folder Icons**: Rich file type icons powered by Catppuccin file icons and Lucide icons.
 - **Row Density Options**: Compact, Normal, and Relaxed row heights.
-- **Custom Fonts**: Configurable monospace fonts and font sizes for file listings and terminal.
+- **Custom System Fonts**: Automatic OS monospace font enumeration (`fonts.rs`) with configurable font families and sizes for file listings, code editor, and terminal.
 
 ---
 
 ## ⌨️ Keyboard Shortcuts
 
+> All shortcuts below can be customized in **Settings → Keymap**.
+
 | Shortcut | Context | Action |
 | :--- | :--- | :--- |
 | <kbd>F5</kbd> / <kbd>Ctrl</kbd> + <kbd>R</kbd> | File Browser | Refresh active directory listing (<kbd>Ctrl</kbd> + <kbd>F5</kbd> for both) |
+| <kbd>F2</kbd> | File Browser | Rename selected file or folder |
+| <kbd>F6</kbd> | File Browser | Move selected file(s) to the opposite pane |
+| <kbd>F7</kbd> / <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | File Browser | Create new folder in active pane |
+| <kbd>Ctrl</kbd> + <kbd>X</kbd> / <kbd>Ctrl</kbd> + <kbd>C</kbd> / <kbd>Ctrl</kbd> + <kbd>V</kbd> | File Browser | Cut, Copy, and Paste files across Local and Remote panes |
+| <kbd>Ctrl</kbd> + <kbd>D</kbd> / <kbd>⌘</kbd> + <kbd>D</kbd> | File Browser | Duplicate selected file or directory |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> | Remote / Global | Open Recursive Remote Search & SSH Grep |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> | File Browser | Toggle Directory Comparison Mode |
 | <kbd>Ctrl</kbd> + <kbd>F</kbd> / <kbd>⌘</kbd> + <kbd>F</kbd> | File Browser | Toggle In-Pane Live Filter |
 | <kbd>Space</kbd> | File Browser | Quick Look / Instant Preview |
 | <kbd>Enter</kbd> | File Browser | Open folder / edit file (or select first filter match) |
-| <kbd>↓</kbd> / <kbd>↑</kbd> | File Browser | Navigate file rows |
+| <kbd>↓</kbd> / <kbd>↑</kbd> / <kbd>Home</kbd> / <kbd>End</kbd> | File Browser | Navigate file rows |
 | <kbd>Backspace</kbd> / <kbd>Alt</kbd> + <kbd>↑</kbd> | File Browser | Navigate to parent directory (`..`) |
 | <kbd>Ctrl</kbd> + <kbd>A</kbd> / <kbd>⌘</kbd> + <kbd>A</kbd> | File Browser | Select all files in active pane |
 | <kbd>Delete</kbd> | File Browser | Delete selected file(s) (with async background cancel) |
-| <kbd>Ctrl</kbd> + <kbd>S</kbd> / <kbd>⌘</kbd> + <kbd>S</kbd> | Code Editor | Save and upload file |
+| <kbd>Ctrl</kbd> + <kbd>S</kbd> / <kbd>⌘</kbd> + <kbd>S</kbd> (or `:w` in Vim) | Code Editor | Save and upload file |
+| <kbd>Ctrl</kbd> + <kbd>W</kbd> / <kbd>⌘</kbd> + <kbd>W</kbd> (or `:q` in Vim) | Code Editor | Close editor modal |
+| <kbd>Esc</kbd> / <kbd>Ctrl</kbd> + <kbd>[</kbd> | Code Editor (Vim) | Exit Insert / Visual mode back to Normal mode |
 | <kbd>Esc</kbd> | Global | Close modals, clear filter, dismiss preview, or deselect all items |
 | <kbd>Ctrl</kbd> + <kbd>T</kbd> / <kbd>⌘</kbd> + <kbd>T</kbd> | Global | Open Connection Manager |
 
@@ -412,9 +462,19 @@ npm run tauri:dev
 
 ---
 
-### Frontend-Only Build (Web Validation)
-To validate and type-check the Vue/Nuxt application:
+### Validation, Type Checking & Automated Tests
+To run the automated unit test suites and TypeScript verification:
 ```bash
+# Run frontend Vitest unit tests
+npm test
+
+# Run Rust backend unit tests
+npm run test:rust
+
+# Run Nuxt / Vue TypeScript type checker
+npm run typecheck
+
+# Validate frontend production bundle
 npm run build
 ```
 
@@ -429,33 +489,54 @@ flowsftp/
 │   ├── components/              # Vue components
 │   │   ├── SftpBrowser.vue      # Dual-pane SFTP & local file manager
 │   │   ├── SshTerminal.vue      # xterm.js WebGL SSH terminal
-│   │   ├── FileEditorModal.vue  # CodeMirror code editor with Vim mode
-│   │   ├── QuickLookModal.vue   # macOS-style instant file preview
-│   │   ├── ConnectionManagerModal.vue # Connection profiles & vault
-│   │   ├── PermissionsModal.vue # Unix chmod visual calculator
-│   │   ├── SettingsModal.vue    # App settings & preferences
+│   │   ├── FileEditorModal.vue  # CodeMirror 6 code editor with full Vim mode
+│   │   ├── QuickLookModal.vue   # macOS-style instant file preview (MD, JSON, PDF, Media, Code)
+│   │   ├── ConnectionManagerModal.vue # Connection profiles, folders & vault
+│   │   ├── HostKeyPromptModal.vue     # SSH host-key verification (TOFU) prompt
+│   │   ├── MasterPasswordModal.vue    # Encrypted vault unlock dialog
+│   │   ├── PermissionsModal.vue       # Unix chmod visual calculator
+│   │   ├── SettingsModal.vue          # App settings, keymap editor & themes
 │   │   └── sftp/                # SFTP panes, modals, composables, and queue
 │   │       ├── SftpExternalEditBar.vue   # Floating status bar for external editor live sync
+│   │       ├── compare/                  # Directory comparison diff badges & bar
 │   │       ├── composables/
 │   │       │   ├── useModalEscape.ts     # Reusable Esc key modal dismiss composable
 │   │       │   ├── useSftpDragDrop.ts    # Pane & OS drag-and-drop coordinator
 │   │       │   └── useSftpKeyboardNav.ts # Arrow key, Enter, Backspace navigation
+│   │       ├── contextmenu/
+│   │       │   └── SftpContextMenu.vue   # Context menu for local and remote panes
 │   │       ├── modals/
+│   │       │   ├── SftpChecksumModal.vue   # SHA-256 & MD5 checksum verifier
+│   │       │   ├── SftpConflictModal.vue   # File conflict resolution dialog
 │   │       │   ├── SftpDirWatcherModal.vue # Directory watcher & folder pairing modal
+│   │       │   ├── SftpNewSymlinkModal.vue # Symbolic link creation dialog
 │   │       │   ├── SftpSearchModal.vue     # Recursive remote search & SSH grep modal
 │   │       │   ├── SftpCompressModal.vue   # Archive compression dialog
 │   │       │   └── SftpExtractModal.vue    # Archive extraction dialog
 │   │       ├── panes/           # Local and remote browser panes & breadcrumbs
 │   │       └── queue/           # FileZilla-exact 3-tab transfer queue drawer
+│   ├── lib/
+│   │   └── sftp/                # Modular SFTP domain composables & types
+│   │       ├── pane.ts                  # PaneRef abstraction (local vs. remote session)
+│   │       ├── useDirectoryBrowser.ts   # Directory fetching, TTL cache & home resolution
+│   │       ├── useFileOperations.ts     # File/folder CRUD, cut/copy/paste, archives & chmod
+│   │       ├── useTransferPipeline.ts   # Single & batch upload/download/remote-to-remote pipeline
+│   │       ├── useTransferQueue.ts      # Queue scheduling, concurrency & priority management
+│   │       └── useConflictResolution.ts # Serialized conflict prompt state machine
 │   ├── stores/                  # Pinia state stores
-│   │   ├── sftp.ts              # SFTP/Local files, queue, bookmarks
-│   │   ├── ssh.ts               # SSH session management
-│   │   ├── vault.ts             # Encrypted server profiles & group folders
+│   │   ├── sftp.ts              # Unified SFTP store facade
+│   │   ├── ssh.ts               # SSH/FTP session management & host-key prompts
+│   │   ├── keychain.ts          # Connection profile metadata & OS keyring bridge
+│   │   ├── vault.ts             # PBKDF2 + AES-GCM encrypted credential vault
 │   │   ├── externalEdit.ts      # External editor watcher & live sync state
 │   │   ├── dirWatcher.ts        # Folder pairing & background sync state
-│   │   ├── settings.ts          # Density, fonts, keymaps, external editor config
-│   │   └── theme.ts             # Theme palettes
-│   └── utils/                   # Keymap, formatters, and file icon helpers
+│   │   ├── settings.ts          # Density, fonts, keymaps, ignore patterns, editor config
+│   │   └── theme.ts             # Built-in & custom JSON theme palettes
+│   └── utils/                   # Keymap, task pump, formatters, and file icon helpers
+│       ├── conflict.ts          # Conflict comparison & auto-rename utilities
+│       ├── taskPump.ts          # Concurrent worker pool pump
+│       ├── transferItems.ts     # Transfer queue item builders
+│       ├── keymap.ts            # Keyboard shortcut matcher & formatter
 │       ├── formatters.ts        # formatBytes, formatDate, isArchiveFile, highlightMatch
 │       └── fileIcons.ts         # Catppuccin file and folder icon resolvers
 │
@@ -463,25 +544,21 @@ flowsftp/
 │   ├── Cargo.toml               # Rust dependencies
 │   ├── tauri.conf.json          # Tauri application configuration
 │   └── src/
-│       ├── main.rs              # Tauri initialization
+│       ├── main.rs              # Tauri binary entry
 │       ├── lib.rs               # Library entry & command registration
+│       ├── shell.rs             # POSIX single-quote shell escaping helpers
 │       ├── state.rs             # Shared application state
-│       ├── sftp/                # SFTP, FTP, watcher, and search engines
-│       │   ├── mod.rs           # Core types, now_epoch_secs, transfer helpers
-│       │   ├── client.rs        # SFTP client implementation
+│       ├── ssh/                 # SSH client, PTY session, exec & TOFU known_hosts store
+│       ├── ftp/                 # FTP / FTPS client with TLS & streaming transfers
+│       ├── keychain/            # Atomic profile storage & OS native keyring manager
+│       ├── sftp/                # SFTP, watcher, external edit, and search engines
+│       │   ├── mod.rs           # Core SFTP/local operations, streaming transfers & archives
 │       │   ├── dir_watcher.rs   # Recursive directory watcher & auto-sync engine
 │       │   ├── external_edit.rs # External editor launcher & file change monitor
 │       │   └── search.rs        # Native SSH grep & BFS directory search
 │       └── commands/            # Tauri IPC command modules
-│           ├── sftp.rs          # SFTP engine & local filesystem commands
-│           ├── ssh.rs           # SSH terminal PTY & streaming
-│           ├── ftp.rs           # FTP / FTPS protocol implementation
-│           ├── dir_watcher.rs   # Folder pairing IPC commands
-│           ├── external_edit.rs # External editor IPC commands
-│           ├── search.rs        # Remote search & SSH grep IPC commands
-│           ├── keychain.rs      # OS native credential storage
-│           └── dialog.rs        # Native file & folder dialogs
 │
+├── tests/                       # Vitest unit & characterization test suites
 ├── package.json                 # Node dependencies and scripts
 ├── nuxt.config.ts               # Nuxt 4 configuration
 └── tailwind.config.js           # Tailwind CSS configuration
