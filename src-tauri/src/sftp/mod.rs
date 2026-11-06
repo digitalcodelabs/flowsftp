@@ -803,6 +803,16 @@ pub fn parse_git_status_porcelain(
     files
 }
 
+fn new_hidden_tokio_command(program: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
     let (native, _) = normalize_to_native_path(path);
     if !native.exists() {
@@ -815,7 +825,7 @@ pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
         native.parent().unwrap_or(&native).to_path_buf()
     };
 
-    let root_out = match tokio::process::Command::new("git")
+    let root_out = match new_hidden_tokio_command("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(&dir)
         .output()
@@ -828,7 +838,7 @@ pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
     let root_raw = String::from_utf8_lossy(&root_out.stdout).trim().replace('\\', "/");
     let root_clean = root_raw.trim_end_matches('/').to_string();
 
-    let branch_out = tokio::process::Command::new("git")
+    let branch_out = new_hidden_tokio_command("git")
         .args(["branch", "--show-current"])
         .current_dir(&dir)
         .output()
@@ -838,7 +848,7 @@ pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
         Ok(bo) if bo.status.success() => {
             let b = String::from_utf8_lossy(&bo.stdout).trim().to_string();
             if b.is_empty() {
-                let head_out = tokio::process::Command::new("git")
+                let head_out = new_hidden_tokio_command("git")
                     .args(["rev-parse", "--short", "HEAD"])
                     .current_dir(&dir)
                     .output()
@@ -857,7 +867,7 @@ pub async fn get_git_status(path: &str) -> Result<GitRepoStatus, String> {
         _ => None,
     };
 
-    let status_out = tokio::process::Command::new("git")
+    let status_out = new_hidden_tokio_command("git")
         .args(["status", "--porcelain=v1", "-uall"])
         .current_dir(&dir)
         .output()
@@ -885,8 +895,11 @@ pub async fn open_in_default_app(path: &str) -> Result<(), String> {
     let (native, _) = normalize_to_native_path(path);
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         std::process::Command::new("rundll32.exe")
             .args(["url.dll,FileProtocolHandler", &native.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
@@ -2063,7 +2076,7 @@ pub async fn get_wsl_distributions() -> Result<Vec<String>, String> {
     let mut distros = Vec::new();
 
     // 1. Query Windows Registry for registered Lxss distributions
-    if let Ok(output) = tokio::process::Command::new("reg")
+    if let Ok(output) = new_hidden_tokio_command("reg")
         .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss", "/s", "/v", "DistributionName"])
         .output()
         .await
@@ -2084,7 +2097,7 @@ pub async fn get_wsl_distributions() -> Result<Vec<String>, String> {
 
     // 2. Fallback to wsl.exe -l -q if registry had no matches
     if distros.is_empty()
-        && let Ok(output) = tokio::process::Command::new("wsl.exe")
+        && let Ok(output) = new_hidden_tokio_command("wsl.exe")
             .args(["-l", "-q"])
             .output()
             .await
@@ -2289,7 +2302,7 @@ pub async fn extract_local_archive(
         .await
         .map_err(|e| format!("Failed to create target directory: {}", e))?;
 
-    let output = tokio::process::Command::new("tar")
+    let output = new_hidden_tokio_command("tar")
         .arg("-xf")
         .arg(&native_archive)
         .arg("-C")
@@ -2333,7 +2346,7 @@ pub async fn compress_local_archive(
         "-cf"
     };
 
-    let mut cmd = tokio::process::Command::new("tar");
+    let mut cmd = new_hidden_tokio_command("tar");
     cmd.current_dir(&native_parent);
     cmd.arg(flag);
     cmd.arg(archive_name);

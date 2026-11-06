@@ -122,8 +122,11 @@ pub fn launch_external_editor(path: &Path, preferred_editor: Option<&str>) -> Re
     // Default system application launcher
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         std::process::Command::new("rundll32.exe")
             .args(["url.dll,FileProtocolHandler", &path.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to open file in default app: {}", e))?;
     }
