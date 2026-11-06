@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.9.0-beta.1"
 description = "FlowSFTP - Modern dual-pane SFTP and FTP client with integrated SSH terminal"
 authors = ["digital code labs s.r.l. <contact@digitalcodelabs.dev>"]
 license = "MIT"
