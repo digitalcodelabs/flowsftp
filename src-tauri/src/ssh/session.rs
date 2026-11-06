@@ -88,6 +88,62 @@ impl ActiveSession {
     }
 }
 
+/// Normalizes a user-supplied SSH key path (expanding leading `~` and stripping surrounding quotes).
+/// If the path points to a `.pub` public key file (e.g. `C:\Users\user\.ssh\id_ed25519.pub`),
+/// checks whether the sibling private key file (`C:\Users\user\.ssh\id_ed25519`) exists and
+/// automatically resolves to it.
+fn resolve_private_key_path_pure(raw_path: &str) -> Result<(std::path::PathBuf, bool), String> {
+    let trimmed = raw_path.trim().trim_matches('"').trim_matches('\'');
+    if trimmed.is_empty() {
+        return Err("No private key path provided".to_string());
+    }
+
+    let expanded = if trimmed == "~" {
+        dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(trimmed))
+    } else if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+        if let Some(home) = dirs::home_dir() {
+            home.join(rest)
+        } else {
+            std::path::PathBuf::from(trimmed)
+        }
+    } else {
+        std::path::PathBuf::from(trimmed)
+    };
+
+    let is_pub_ext = expanded
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("pub"));
+
+    if is_pub_ext {
+        let private_candidate = expanded.with_extension("");
+        if private_candidate.is_file() {
+            return Ok((private_candidate, true));
+        }
+        return Err(format!(
+            "Selected file '{}' is a public key (.pub), and no matching private key was found at '{}'. Please select your private key file (without .pub).",
+            expanded.display(),
+            private_candidate.display()
+        ));
+    }
+
+    Ok((expanded, false))
+}
+
+fn resolve_private_key_path(raw_path: &str, app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let (resolved, stripped_pub) = resolve_private_key_path_pure(raw_path)?;
+    if stripped_pub {
+        let _ = app.emit(
+            "ssh:connect_log",
+            format!(
+                "Selected key had .pub extension; using matching private key '{}'",
+                resolved.display()
+            ),
+        );
+    }
+    Ok(resolved)
+}
+
 pub async fn spawn_ssh_session(
     app: AppHandle,
     session_id: String,
@@ -187,8 +243,25 @@ pub async fn spawn_ssh_session(
         }
         SshAuthMethod::KeyFile { path, passphrase } => {
             let pass = passphrase.as_deref().filter(|s| !s.is_empty());
-            let key = russh::keys::load_secret_key(path, pass)
-                .map_err(|e| format!("Failed to load private key: {}", e))?;
+            let resolved_key_path = resolve_private_key_path(path, &app)?;
+            let key = russh::keys::load_secret_key(&resolved_key_path, pass).map_err(|e| {
+                if resolved_key_path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pub"))
+                {
+                    format!(
+                        "Failed to load private key: '{}' is a public key (.pub). Please select the matching private key file (without the .pub extension).",
+                        resolved_key_path.display()
+                    )
+                } else {
+                    format!(
+                        "Failed to load private key '{}': {}",
+                        resolved_key_path.display(),
+                        e
+                    )
+                }
+            })?;
 
             let key_alg = key.algorithm();
             let key_alg_name = key_alg.as_str().to_string();
@@ -369,4 +442,38 @@ pub async fn spawn_ssh_session(
         is_closed,
         stdout_history,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pub_key_path_automatically_resolves_to_sibling_private_key() {
+        let temp_dir = std::env::temp_dir().join(format!("flowsftp_key_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let priv_path = temp_dir.join("id_ed25519");
+        let pub_path = temp_dir.join("id_ed25519.pub");
+        std::fs::write(&priv_path, "-----BEGIN OPENSSH PRIVATE KEY-----\n").unwrap();
+        std::fs::write(&pub_path, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA\n").unwrap();
+
+        let (resolved, stripped) = resolve_private_key_path_pure(&pub_path.to_string_lossy()).unwrap();
+        assert!(stripped);
+        assert_eq!(resolved, priv_path);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn pub_key_without_sibling_private_key_returns_clear_error() {
+        let temp_dir = std::env::temp_dir().join(format!("flowsftp_key_test_missing_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let pub_path = temp_dir.join("id_ed25519.pub");
+        std::fs::write(&pub_path, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA\n").unwrap();
+
+        let err = resolve_private_key_path_pure(&pub_path.to_string_lossy()).unwrap_err();
+        assert!(err.contains("public key (.pub)"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

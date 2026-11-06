@@ -72,7 +72,7 @@ pub async fn vault_delete_file(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn pick_key_file() -> Result<Option<String>, String> {
     let mut dialog = rfd::AsyncFileDialog::new()
-        .set_title("Select Private Key File (PuTTY / OpenSSH)");
+        .set_title("Select Private Key File (OpenSSH / PuTTY)");
 
     if let Some(home) = dirs::home_dir() {
         let ssh_dir = home.join(".ssh");
@@ -83,13 +83,27 @@ pub async fn pick_key_file() -> Result<Option<String>, String> {
         }
     }
 
+    // OpenSSH private keys (id_ed25519, id_rsa, id_ecdsa) have no file extension,
+    // so the default filter must include "*" on Windows/macOS/Linux to keep them visible.
     dialog = dialog
-        .add_filter("Private Keys (*.ppk, *.pem, *.key, id_*)", &["ppk", "pem", "key", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"])
-        .add_filter("PuTTY Private Keys (*.ppk)", &["ppk"])
-        .add_filter("OpenSSH & PEM Keys (*.pem, *.key)", &["pem", "key"])
-        .add_filter("All Files (*.*)", &["*"]);
+        .add_filter("All SSH Key Files (*.*, id_ed25519, id_rsa, *.pem, *.ppk)", &["*"])
+        .add_filter("PEM & Key Files (*.pem, *.key, *.ppk)", &["pem", "key", "ppk"])
+        .add_filter("PuTTY Private Keys (*.ppk)", &["ppk"]);
 
     let file = dialog.pick_file().await;
-    Ok(file.map(|f| f.path().to_string_lossy().to_string()))
+    Ok(file.map(|f| {
+        let selected_path = f.path().to_path_buf();
+        if selected_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pub"))
+        {
+            let candidate = selected_path.with_extension("");
+            if candidate.is_file() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+        selected_path.to_string_lossy().to_string()
+    }))
 }
 
