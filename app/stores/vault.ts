@@ -220,6 +220,10 @@ export const useVaultStore = defineStore('vault', () => {
   }
 
   async function saveSecret(profileId: string, secret: string): Promise<boolean> {
+    if (!isInitialized.value) {
+      await init()
+    }
+
     if (!isUnlocked.value || !cachedKey.value) {
       const unlocked = await promptUnlock()
       if (!unlocked || !cachedKey.value) {
@@ -272,7 +276,10 @@ export const useVaultStore = defineStore('vault', () => {
     await persistVault()
   }
 
-  function promptUnlock(): Promise<boolean> {
+  async function promptUnlock(): Promise<boolean> {
+    if (!isInitialized.value) {
+      await init()
+    }
     if (!isInitialized.value) {
       modalMode.value = 'setup'
     } else {

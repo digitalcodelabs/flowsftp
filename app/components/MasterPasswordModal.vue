@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { ShieldCheck, KeyRound, AlertTriangle } from 'lucide-vue-next'
 import { useVaultStore } from '../stores/vault'
 
@@ -69,10 +69,28 @@ watch(
   }
 )
 
+const handleGlobalEscKey = (e: KeyboardEvent) => {
+  if (!vaultStore.showModal) return
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (showResetConfirm.value) {
+      showResetConfirm.value = false
+    } else {
+      handleCancel()
+    }
+  }
+}
+
 onMounted(() => {
+  window.addEventListener('keydown', handleGlobalEscKey, true)
   if (vaultStore.showModal) {
     focusPasswordInput()
   }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalEscKey, true)
 })
 
 const handleCancel = () => {

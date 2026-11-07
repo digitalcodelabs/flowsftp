@@ -297,6 +297,7 @@ onMounted(async () => {
     executeKeyAction(action)
   })
 
+  await vaultStore.init()
   await sshStore.restoreSessions()
   if (sshStore.activeSessionId) {
     sftpStore.switchSession(sshStore.activeSessionId)

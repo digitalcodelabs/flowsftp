@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Server,
   Lock,
+  Unlock,
   ShieldCheck,
   Check,
   CheckCircle2,
@@ -302,6 +303,22 @@ const filteredGroupSections = computed<GroupSection[]>(() => {
 
 const totalProfilesCount = computed(() => keychainStore.profiles.length)
 
+const isProfileInVault = (profile: SavedConnectionProfile): boolean => {
+  return Boolean(profile.has_saved_secret && vaultStore.isConfigured && vaultStore.hasSecretInVault(profile.id))
+}
+
+const editingProfileHasVaultSecret = computed(() => {
+  return Boolean(editingProfileId.value && vaultStore.isConfigured && vaultStore.hasSecretInVault(editingProfileId.value))
+})
+
+const handleSetupOrUnlockVault = async () => {
+  const wasConfigured = vaultStore.isConfigured
+  const ok = await vaultStore.promptUnlock()
+  if (ok) {
+    showSuccess(wasConfigured ? 'Master Password Vault unlocked' : 'Master Password Vault created and unlocked')
+  }
+}
+
 const formatErrorMessage = (rawMsg: string, host: string, port: number, username: string): string => {
   if (rawMsg.includes('10061') || rawMsg.includes('ConnectionRefused') || rawMsg.includes('actively refused')) {
     return `Connection actively refused on ${host}:${port}. Verify the host address, port, and that the service is running.`
@@ -415,6 +432,10 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
   addLog(`Initiating connection to "${profile.name}" (${profile.username}@${profile.host}:${profile.port})...`, 'info')
 
   try {
+    if (!vaultStore.isInitialized) {
+      await vaultStore.init()
+    }
+
     if (profile.auth_type === 'Password') {
       let secret: string | null = null
       if (profile.has_saved_secret) {
@@ -430,7 +451,12 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
         }
       }
       if (!secret) {
-        addLog('No saved password found. Waiting for password input...', 'info')
+        addLog(
+          profile.has_saved_secret && !vaultStore.isConfigured
+            ? 'Master password vault is not set up yet. Waiting for password input...'
+            : 'No saved password found. Waiting for password input...',
+          'info'
+        )
         promptProfile.value = profile
         promptPassword.value = ''
         promptSaveKeychain.value = true
@@ -496,16 +522,25 @@ const handlePromptSubmit = async () => {
 
   try {
     if (promptSaveKeychain.value) {
-      addLog('Saving credentials to encrypted vault...', 'info')
-      if (vaultStore.isConfigured) {
-        const saved = await vaultStore.saveSecret(profile.id, password)
-        if (!saved) {
-          throw new Error('Master password vault is locked. Cannot save password.')
-        }
-        await keychainStore.saveProfile({ ...profile, has_saved_secret: true }, null)
-      } else {
-        await keychainStore.saveProfile({ ...profile, has_saved_secret: true }, password)
+      if (!vaultStore.isInitialized) {
+        await vaultStore.init()
       }
+      const wasConfigured = vaultStore.isConfigured
+      addLog(
+        wasConfigured
+          ? 'Saving credentials to encrypted vault...'
+          : 'Master password vault not set up yet. Prompting to create master password...',
+        'info'
+      )
+      const saved = await vaultStore.saveSecret(profile.id, password)
+      if (!saved) {
+        throw new Error(
+          wasConfigured
+            ? 'Master password vault unlock was cancelled. Uncheck "Remember password in Encrypted Vault" to connect without saving.'
+            : 'Master password setup was cancelled. Create a master password to save credentials, or uncheck "Remember password in Encrypted Vault".'
+        )
+      }
+      await keychainStore.saveProfile({ ...profile, has_saved_secret: true }, null)
     }
 
     await doConnect(profile, { type: 'Password', value: password })
@@ -531,6 +566,10 @@ const saveProfileData = async (shouldConnect: boolean) => {
   }
 
   try {
+    if (!vaultStore.isInitialized) {
+      await vaultStore.init()
+    }
+
     const host = form.value.host.trim()
     if (!host) throw new Error('Please enter a host or IP address')
     const username = form.value.username.trim()
@@ -561,8 +600,11 @@ const saveProfileData = async (shouldConnect: boolean) => {
     }
 
     const hasNewSecret = !!form.value.secret.trim()
+    const hasExistingVaultSecret = Boolean(
+      existingProfile?.has_saved_secret && vaultStore.isConfigured && vaultStore.hasSecretInVault(profileId)
+    )
     const willHaveSecret = form.value.saveToKeychain
-      ? (hasNewSecret || (existingProfile?.has_saved_secret ?? false))
+      ? (hasNewSecret || hasExistingVaultSecret)
       : false
 
     const profileToSave: SavedConnectionProfile = {
@@ -584,15 +626,25 @@ const saveProfileData = async (shouldConnect: boolean) => {
       await keychainStore.saveProfile(profileToSave, null)
       await vaultStore.deleteSecret(profileToSave.id)
     } else if (hasNewSecret && form.value.saveToKeychain) {
-      if (vaultStore.isConfigured) {
-        const saved = await vaultStore.saveSecret(profileToSave.id, form.value.secret)
-        if (!saved) {
-          throw new Error('Master password vault is locked. Cannot save password.')
-        }
-        await keychainStore.saveProfile(profileToSave, null)
-      } else {
-        await keychainStore.saveProfile(profileToSave, form.value.secret)
+      const wasConfigured = vaultStore.isConfigured
+      if (shouldConnect) {
+        addLog(
+          wasConfigured
+            ? 'Saving credentials to encrypted vault...'
+            : 'Master password vault not set up yet. Prompting to create master password...',
+          'info'
+        )
       }
+      const saved = await vaultStore.saveSecret(profileToSave.id, form.value.secret)
+      if (!saved) {
+        throw new Error(
+          wasConfigured
+            ? 'Master password vault unlock was cancelled. Unlock the vault to save the password, or uncheck "Save password in Encrypted Vault".'
+            : 'Master password setup was cancelled. Create a master password to save the password, or uncheck "Save password in Encrypted Vault".'
+        )
+      }
+      profileToSave.has_saved_secret = true
+      await keychainStore.saveProfile(profileToSave, null)
     } else {
       await keychainStore.saveProfile(profileToSave, null)
     }
@@ -925,8 +977,44 @@ const handleFormSubmit = () => {
           </button>
         </div>
 
-        <div v-if="currentMode === 'list'" class="pb-2">
+        <div class="pb-2 flex items-center space-x-2">
+          <!-- Vault Status Button -->
           <button
+            v-if="!vaultStore.isInitialized"
+            type="button"
+            @click="handleSetupOrUnlockVault"
+            :disabled="isConnecting"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium border transition flex items-center space-x-1.5 bg-amber-950/50 text-amber-300 border-amber-700/60 hover:bg-amber-900/60 cursor-pointer"
+            title="Master Password Vault is not set up. Click to create your Master Password."
+          >
+            <AlertTriangle class="w-3 h-3 text-amber-400 shrink-0" />
+            <span>Set Up Vault</span>
+          </button>
+          <button
+            v-else-if="!vaultStore.isUnlocked"
+            type="button"
+            @click="handleSetupOrUnlockVault"
+            :disabled="isConnecting"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium border transition flex items-center space-x-1.5 bg-amber-950/40 text-amber-300 border-amber-800/50 hover:bg-amber-900/50 cursor-pointer"
+            title="Master Password Vault is locked. Click to unlock saved passwords."
+          >
+            <Lock class="w-3 h-3 text-amber-400 shrink-0" />
+            <span>Vault Locked</span>
+          </button>
+          <button
+            v-else
+            type="button"
+            @click="vaultStore.lock()"
+            :disabled="isConnecting"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium border transition flex items-center space-x-1.5 bg-emerald-950/40 text-emerald-300 border-emerald-800/50 hover:bg-emerald-900/50 cursor-pointer"
+            title="Vault is unlocked for this session. Click to lock."
+          >
+            <Unlock class="w-3 h-3 text-emerald-400 shrink-0" />
+            <span>Vault Unlocked</span>
+          </button>
+
+          <button
+            v-if="currentMode === 'list'"
             @click="handleStartAdd"
             :disabled="isConnecting"
             :class="[
@@ -975,6 +1063,30 @@ const handleFormSubmit = () => {
 
       <!-- ================= LIST MODE: Saved Profiles ================= -->
       <div v-if="currentMode === 'list'" class="p-5 flex-1 flex flex-col min-h-0 overflow-hidden">
+        <!-- Master Password Vault Not Configured Notice -->
+        <div
+          v-if="!vaultStore.isInitialized && totalProfilesCount > 0"
+          class="mb-3 p-3 rounded-xl border border-amber-700/50 bg-amber-950/30 flex items-center justify-between gap-3 shrink-0"
+        >
+          <div class="flex items-start space-x-2.5 min-w-0">
+            <AlertTriangle class="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div class="text-[11px] leading-relaxed">
+              <div class="font-semibold text-amber-300">Master Password Vault Not Configured</div>
+              <div class="text-amber-200/80">
+                Set up a Master Password to encrypt and remember your connection passwords across restarts.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            @click="handleSetupOrUnlockVault"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white shrink-0 transition flex items-center space-x-1.5 btn-accent cursor-pointer"
+          >
+            <KeyRound class="w-3.5 h-3.5" />
+            <span>Set Up Master Password</span>
+          </button>
+        </div>
+
         <!-- Search & Filter Controls -->
         <div v-if="totalProfilesCount > 0" class="mb-3 space-y-2 shrink-0">
           <div class="relative">
@@ -1236,13 +1348,21 @@ const handleFormSubmit = () => {
                       <span>Key</span>
                     </span>
                     <span
-                      v-if="prof.has_saved_secret"
+                      v-if="isProfileInVault(prof)"
                       class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border"
                       :style="{ backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', borderColor: 'var(--color-border)' }"
                       title="Password secured in Encrypted Vault"
                     >
                       <ShieldCheck class="w-3 h-3" />
                       <span>Vault</span>
+                    </span>
+                    <span
+                      v-else-if="prof.has_saved_secret"
+                      class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border bg-amber-950/60 text-amber-300 border-amber-700/60"
+                      title="Password is not stored in the Master Password Vault yet. Click Connect or Edit to save it to your vault."
+                    >
+                      <AlertTriangle class="w-3 h-3 text-amber-400" />
+                      <span>Needs Vault</span>
                     </span>
                   </div>
                   <span class="text-[11px] font-mono mt-0.5 truncate flex items-center" :style="{ color: 'var(--color-text-muted)' }">
@@ -1561,14 +1681,17 @@ const handleFormSubmit = () => {
             <label class="block text-[11px] font-medium uppercase tracking-wider" :style="{ color: 'var(--color-text-muted)' }">
               Password
             </label>
-            <span v-if="currentMode === 'edit'" class="text-[10px] italic" :style="{ color: 'var(--color-text-muted)' }">
+            <span v-if="currentMode === 'edit' && editingProfileHasVaultSecret" class="text-[10px] italic" :style="{ color: 'var(--color-text-muted)' }">
               (Leave blank to keep current saved password)
+            </span>
+            <span v-else-if="currentMode === 'edit' && form.saveToKeychain" class="text-[10px] italic text-amber-400">
+              (Not saved in vault yet — enter password to save)
             </span>
           </div>
           <input
             v-model="form.secret"
             type="password"
-            :placeholder="currentMode === 'edit' ? 'Enter new password or leave blank to keep existing' : 'Enter password'"
+            :placeholder="currentMode === 'edit' && editingProfileHasVaultSecret ? 'Enter new password or leave blank to keep existing' : 'Enter password'"
             class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
             :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
@@ -1610,7 +1733,7 @@ const handleFormSubmit = () => {
               <label class="block text-[11px] font-medium uppercase tracking-wider" :style="{ color: 'var(--color-text-muted)' }">
                 Passphrase (Optional)
               </label>
-              <span v-if="currentMode === 'edit'" class="text-[10px] italic" :style="{ color: 'var(--color-text-muted)' }">
+              <span v-if="currentMode === 'edit' && editingProfileHasVaultSecret" class="text-[10px] italic" :style="{ color: 'var(--color-text-muted)' }">
                 (Leave blank to keep current passphrase)
               </span>
             </div>
@@ -1642,18 +1765,40 @@ const handleFormSubmit = () => {
         </div>
 
         <!-- Keychain Save Checkbox -->
-        <div class="flex items-center space-x-2 pt-1">
-          <input
-            v-model="form.saveToKeychain"
-            id="keychainCheck"
-            type="checkbox"
-            class="rounded focus:ring-0"
-            :style="{ accentColor: 'var(--color-accent)' }"
-          />
-          <label for="keychainCheck" class="text-xs cursor-pointer flex items-center space-x-1.5" :style="{ color: 'var(--color-text-main)' }">
-            <ShieldCheck class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
-            <span>Save password in Encrypted Vault (Master Password protected)</span>
-          </label>
+        <div class="space-y-2 pt-1">
+          <div class="flex items-center space-x-2">
+            <input
+              v-model="form.saveToKeychain"
+              id="keychainCheck"
+              type="checkbox"
+              class="rounded focus:ring-0"
+              :style="{ accentColor: 'var(--color-accent)' }"
+            />
+            <label for="keychainCheck" class="text-xs cursor-pointer flex items-center space-x-1.5" :style="{ color: 'var(--color-text-main)' }">
+              <ShieldCheck class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
+              <span>Save password in Encrypted Vault (Master Password protected)</span>
+            </label>
+          </div>
+
+          <!-- Inline notice when Master Password Vault is not configured yet -->
+          <div
+            v-if="form.saveToKeychain && !vaultStore.isInitialized"
+            class="p-2.5 rounded-xl border border-amber-700/50 bg-amber-950/30 flex items-center justify-between gap-2 text-[11px]"
+          >
+            <div class="flex items-start space-x-2 text-amber-200/90">
+              <AlertTriangle class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                Master Password Vault is not set up yet. Saving a password will prompt you to create a Master Password, or you can set it up now.
+              </span>
+            </div>
+            <button
+              type="button"
+              @click="handleSetupOrUnlockVault"
+              class="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white shrink-0 transition btn-accent cursor-pointer"
+            >
+              Set Up Vault
+            </button>
+          </div>
         </div>
 
         <!-- Connection Progress in Form Mode -->
@@ -1856,18 +2001,30 @@ const handleFormSubmit = () => {
             />
           </div>
 
-          <div class="flex items-center space-x-2 pt-1">
-            <input
-              v-model="promptSaveKeychain"
-              id="promptSaveKeychain"
-              type="checkbox"
-              class="rounded focus:ring-0"
-              :style="{ accentColor: 'var(--color-accent)' }"
-            />
-            <label for="promptSaveKeychain" class="text-xs cursor-pointer flex items-center space-x-1.5" :style="{ color: 'var(--color-text-main)' }">
-              <ShieldCheck class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
-              <span>Remember password in Encrypted Vault</span>
-            </label>
+          <div class="space-y-2 pt-1">
+            <div class="flex items-center space-x-2">
+              <input
+                v-model="promptSaveKeychain"
+                id="promptSaveKeychain"
+                type="checkbox"
+                class="rounded focus:ring-0"
+                :style="{ accentColor: 'var(--color-accent)' }"
+              />
+              <label for="promptSaveKeychain" class="text-xs cursor-pointer flex items-center space-x-1.5" :style="{ color: 'var(--color-text-main)' }">
+                <ShieldCheck class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
+                <span>Remember password in Encrypted Vault</span>
+              </label>
+            </div>
+
+            <div
+              v-if="promptSaveKeychain && !vaultStore.isInitialized"
+              class="p-2 rounded-lg border border-amber-700/50 bg-amber-950/30 flex items-start space-x-2 text-[11px] text-amber-200/90"
+            >
+              <AlertTriangle class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                Master Password Vault is not set up yet. Clicking Connect will prompt you to create a Master Password to encrypt and store this password.
+              </span>
+            </div>
           </div>
 
           <div class="flex items-center justify-end space-x-2 pt-2">
