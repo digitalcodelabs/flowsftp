@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "flowsftp",
   "version": "0.9.0",
-  "identifier": "com.flowsftp.app",
+  "identifier": "com.flowsftp.desktop",
   "build": {
     "frontendDist": "../.output/public",
     "devUrl": "http://localhost:1420",
