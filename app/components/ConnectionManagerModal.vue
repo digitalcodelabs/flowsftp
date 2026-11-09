@@ -901,17 +901,17 @@ const handleFormSubmit = () => {
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
     <div
       class="w-full max-w-xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95 duration-150 transition-colors duration-150"
-      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
     >
       <!-- Modal Header -->
       <div
         class="flex items-center justify-between px-5 py-3.5 border-b shrink-0 transition-colors duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
       >
         <div class="flex items-center space-x-2.5">
           <div
             class="w-7 h-7 rounded-lg border flex items-center justify-center"
-            :style="{ backgroundColor: 'var(--color-bg-hover)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+            :style="{ backgroundColor: 'var(--color-bg-hover)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)', color: 'var(--color-accent)' }"
           >
             <Server class="w-4 h-4" />
           </div>
@@ -924,10 +924,9 @@ const handleFormSubmit = () => {
           @click="emit('close')"
           :disabled="isConnecting"
           :class="[
-            'p-1.5 rounded-lg transition hover:opacity-80',
+            'w-7 h-7 flex items-center justify-center rounded-lg btn-flat-ghost cursor-pointer',
             isConnecting ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''
           ]"
-          :style="{ color: 'var(--color-text-muted)' }"
           title="Close"
         >
           <X class="w-4 h-4" />
@@ -937,14 +936,14 @@ const handleFormSubmit = () => {
       <!-- Mode Switcher Tabs -->
       <div
         class="flex items-center justify-between border-b px-5 pt-2 shrink-0 transition-colors duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
       >
         <div class="flex space-x-4">
           <button
             @click="currentMode = 'list'"
-            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5"
+            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5 cursor-pointer hover:text-[var(--color-text-main)]"
             :style="currentMode === 'list'
-              ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)', fontWeight: '600' }
+              ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, transparent)', color: 'var(--color-accent)', fontWeight: '600' }
               : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
           >
             <Server class="w-3.5 h-3.5" />
@@ -959,7 +958,7 @@ const handleFormSubmit = () => {
 
           <button
             v-if="currentMode === 'edit'"
-            class="pb-2 text-xs font-semibold border-b-2 border-amber-400 text-amber-300 flex items-center space-x-1.5"
+            class="pb-2 text-xs font-semibold border-b-2 border-amber-400/70 text-amber-300 flex items-center space-x-1.5"
           >
             <Pencil class="w-3.5 h-3.5" />
             <span>Edit Profile</span>
@@ -967,9 +966,9 @@ const handleFormSubmit = () => {
 
           <button
             @click="handleStartAdd"
-            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5"
+            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5 cursor-pointer hover:text-[var(--color-text-main)]"
             :style="currentMode === 'add'
-              ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)', fontWeight: '600' }
+              ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, transparent)', color: 'var(--color-accent)', fontWeight: '600' }
               : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
           >
             <Plus class="w-3.5 h-3.5" />
@@ -984,10 +983,10 @@ const handleFormSubmit = () => {
             type="button"
             @click="handleSetupOrUnlockVault"
             :disabled="isConnecting"
-            class="px-2.5 py-1 text-[11px] rounded-lg font-medium border transition flex items-center space-x-1.5 bg-amber-950/50 text-amber-300 border-amber-700/60 hover:bg-amber-900/60 cursor-pointer"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 btn-warning cursor-pointer"
             title="Master Password Vault is not set up. Click to create your Master Password."
           >
-            <AlertTriangle class="w-3 h-3 text-amber-400 shrink-0" />
+            <AlertTriangle class="w-3 h-3 shrink-0" />
             <span>Set Up Vault</span>
           </button>
           <button
@@ -995,10 +994,10 @@ const handleFormSubmit = () => {
             type="button"
             @click="handleSetupOrUnlockVault"
             :disabled="isConnecting"
-            class="px-2.5 py-1 text-[11px] rounded-lg font-medium border transition flex items-center space-x-1.5 bg-amber-950/40 text-amber-300 border-amber-800/50 hover:bg-amber-900/50 cursor-pointer"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 btn-warning cursor-pointer"
             title="Master Password Vault is locked. Click to unlock saved passwords."
           >
-            <Lock class="w-3 h-3 text-amber-400 shrink-0" />
+            <Lock class="w-3 h-3 shrink-0" />
             <span>Vault Locked</span>
           </button>
           <button
@@ -1006,10 +1005,10 @@ const handleFormSubmit = () => {
             type="button"
             @click="vaultStore.lock()"
             :disabled="isConnecting"
-            class="px-2.5 py-1 text-[11px] rounded-lg font-medium border transition flex items-center space-x-1.5 bg-emerald-950/40 text-emerald-300 border-emerald-800/50 hover:bg-emerald-900/50 cursor-pointer"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 btn-success cursor-pointer"
             title="Vault is unlocked for this session. Click to lock."
           >
-            <Unlock class="w-3 h-3 text-emerald-400 shrink-0" />
+            <Unlock class="w-3 h-3 shrink-0" />
             <span>Vault Unlocked</span>
           </button>
 
@@ -1018,7 +1017,7 @@ const handleFormSubmit = () => {
             @click="handleStartAdd"
             :disabled="isConnecting"
             :class="[
-              'px-2.5 py-1 text-xs rounded-lg font-medium shadow-sm transition flex items-center space-x-1 btn-accent',
+              'px-2.5 py-1 text-xs rounded-lg font-medium flex items-center space-x-1 btn-accent cursor-pointer',
               isConnecting ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''
             ]"
           >
@@ -1066,7 +1065,7 @@ const handleFormSubmit = () => {
         <!-- Master Password Vault Not Configured Notice -->
         <div
           v-if="!vaultStore.isInitialized && totalProfilesCount > 0"
-          class="mb-3 p-3 rounded-xl border border-amber-700/50 bg-amber-950/30 flex items-center justify-between gap-3 shrink-0"
+          class="mb-3 p-3 rounded-xl border border-amber-700/40 bg-amber-950/25 flex items-center justify-between gap-3 shrink-0"
         >
           <div class="flex items-start space-x-2.5 min-w-0">
             <AlertTriangle class="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -1080,7 +1079,7 @@ const handleFormSubmit = () => {
           <button
             type="button"
             @click="handleSetupOrUnlockVault"
-            class="px-3 py-1.5 rounded-lg text-xs font-semibold text-white shrink-0 transition flex items-center space-x-1.5 btn-accent cursor-pointer"
+            class="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0 flex items-center space-x-1.5 btn-accent cursor-pointer"
           >
             <KeyRound class="w-3.5 h-3.5" />
             <span>Set Up Master Password</span>
@@ -1100,8 +1099,7 @@ const handleFormSubmit = () => {
             <button
               v-if="searchQuery"
               @click="searchQuery = ''"
-              class="absolute right-2.5 top-2 hover:opacity-80"
-              :style="{ color: 'var(--color-text-muted)' }"
+              class="absolute right-2 top-1.5 p-0.5 rounded btn-flat-ghost cursor-pointer"
             >
               <X class="w-3.5 h-3.5" />
             </button>
@@ -1112,12 +1110,10 @@ const handleFormSubmit = () => {
             <span class="text-[11px] font-medium mr-0.5 shrink-0" :style="{ color: 'var(--color-text-muted)' }">Folder:</span>
             <button
               @click="selectedGroupFilter = 'all'"
-              class="px-2.5 py-1 rounded-md text-[11px] font-medium transition shrink-0 flex items-center space-x-1 border"
-              :style="selectedGroupFilter === 'all'
-                ? { backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }
-                : { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-text-muted)', borderColor: 'var(--color-border)' }"
+              class="px-2.5 py-1 rounded-md text-[11px] font-medium shrink-0 flex items-center space-x-1 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': selectedGroupFilter === 'all' }"
             >
-              <Layers class="w-3 h-3" />
+              <Layers class="w-3 h-3" :style="selectedGroupFilter === 'all' ? { color: 'var(--color-accent)' } : undefined" />
               <span>All ({{ totalProfilesCount }})</span>
             </button>
 
@@ -1125,10 +1121,8 @@ const handleFormSubmit = () => {
               v-for="grp in availableGroups"
               :key="grp"
               @click="selectedGroupFilter = grp"
-              class="px-2.5 py-1 rounded-md text-[11px] font-medium transition shrink-0 flex items-center space-x-1 border"
-              :style="selectedGroupFilter === grp
-                ? { backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }
-                : { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-text-muted)', borderColor: 'var(--color-border)' }"
+              class="px-2.5 py-1 rounded-md text-[11px] font-medium shrink-0 flex items-center space-x-1 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': selectedGroupFilter === grp }"
             >
               <Folder class="w-3 h-3" :style="{ color: 'var(--color-accent)' }" />
               <span>{{ grp }}</span>
@@ -1136,12 +1130,10 @@ const handleFormSubmit = () => {
 
             <button
               @click="selectedGroupFilter = '__ungrouped__'"
-              class="px-2.5 py-1 rounded-md text-[11px] font-medium transition shrink-0 flex items-center space-x-1 border"
-              :style="selectedGroupFilter === '__ungrouped__'
-                ? { backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }
-                : { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-text-muted)', borderColor: 'var(--color-border)' }"
+              class="px-2.5 py-1 rounded-md text-[11px] font-medium shrink-0 flex items-center space-x-1 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': selectedGroupFilter === '__ungrouped__' }"
             >
-              <FolderOpen class="w-3 h-3" :style="{ color: 'var(--color-text-muted)' }" />
+              <FolderOpen class="w-3 h-3" :style="selectedGroupFilter === '__ungrouped__' ? { color: 'var(--color-accent)' } : { color: 'var(--color-text-muted)' }" />
               <span>Ungrouped</span>
             </button>
           </div>
@@ -1150,13 +1142,13 @@ const handleFormSubmit = () => {
         <!-- Live Connection Progress Log Box -->
         <div
           v-if="connectionLogs.length > 0 || isConnecting"
-          class="mb-3 rounded-xl border shadow-sm overflow-hidden shrink-0 transition-all duration-200"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+          class="mb-3 rounded-xl border overflow-hidden shrink-0 transition-all duration-200"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
         >
           <!-- Log Header -->
           <div
             class="flex items-center justify-between px-3 py-1.5 border-b text-[11px]"
-            :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2">
               <span class="relative flex h-2 w-2">
@@ -1174,8 +1166,7 @@ const handleFormSubmit = () => {
                 v-if="!isConnecting"
                 type="button"
                 @click="clearLogs"
-                class="text-[10px] font-medium px-1.5 py-0.5 rounded transition hover:opacity-80"
-                :style="{ color: 'var(--color-text-muted)' }"
+                class="text-[10px] font-medium px-1.5 py-0.5 rounded btn-flat-ghost cursor-pointer"
               >
                 Clear
               </button>
@@ -1213,8 +1204,8 @@ const handleFormSubmit = () => {
         <!-- Empty State -->
         <div v-if="totalProfilesCount === 0" class="text-center py-12 flex-1 flex flex-col items-center justify-center">
           <div
-            class="w-12 h-12 rounded-2xl border flex items-center justify-center mb-3 shadow-inner"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            class="w-12 h-12 rounded-2xl border flex items-center justify-center mb-3"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <Folder class="w-6 h-6" :style="{ color: 'var(--color-text-muted)' }" />
           </div>
@@ -1224,7 +1215,7 @@ const handleFormSubmit = () => {
           </p>
           <button
             @click="handleStartAdd"
-            class="px-3.5 py-1.5 rounded-lg text-white text-xs font-semibold shadow-md transition flex items-center space-x-1.5 btn-accent"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 btn-accent cursor-pointer"
           >
             <Plus class="w-3.5 h-3.5" />
             <span>Create Your First Connection</span>
@@ -1241,14 +1232,14 @@ const handleFormSubmit = () => {
           <div
             v-for="section in filteredGroupSections"
             :key="section.name"
-            class="rounded-xl border overflow-hidden shadow-sm"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            class="rounded-xl border overflow-hidden"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <!-- Collapsible Folder Header -->
             <div
               @click="toggleGroupCollapse(section.name)"
               class="flex items-center justify-between px-3.5 py-2 cursor-pointer border-b transition group"
-              :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+              :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
             >
               <div class="flex items-center space-x-2">
                 <ChevronDown
@@ -1261,20 +1252,19 @@ const handleFormSubmit = () => {
                 <span class="text-xs font-semibold" :style="{ color: 'var(--color-text-main)' }">{{ section.name }}</span>
                 <span
                   class="px-1.5 py-0.2 rounded-full text-[10px] border font-mono"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)', color: 'var(--color-text-muted)' }"
                 >
                   {{ section.profiles.length }}
                 </span>
               </div>
 
               <!-- Folder Actions -->
-              <div class="flex items-center space-x-1.5">
+              <div class="flex items-center space-x-1">
                 <template v-if="!section.isUngrouped">
                   <button
                     type="button"
                     @click.stop="openRenameGroupModal(section.name)"
-                    class="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center space-x-1 transition hover:text-amber-300 hover:bg-white/5"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center space-x-1 btn-flat-ghost cursor-pointer"
                     title="Rename Folder"
                   >
                     <Pencil class="w-3 h-3" />
@@ -1283,8 +1273,7 @@ const handleFormSubmit = () => {
                   <button
                     type="button"
                     @click.stop="openUngroupModal(section.name)"
-                    class="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center space-x-1 transition hover:text-rose-400 hover:bg-white/5"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-medium flex items-center space-x-1 btn-flat-ghost-danger cursor-pointer"
                     title="Move all profiles in this folder to Ungrouped"
                   >
                     <FolderMinus class="w-3 h-3" />
@@ -1303,7 +1292,7 @@ const handleFormSubmit = () => {
                 v-for="prof in section.profiles"
                 :key="prof.id"
                 class="flex items-center justify-between p-2.5 rounded-lg border transition group"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 48%, transparent)' }"
               >
                 <!-- Profile details -->
                 <div class="flex flex-col min-w-0 flex-1 mr-3">
@@ -1319,8 +1308,7 @@ const handleFormSubmit = () => {
                     <button
                       type="button"
                       @click.stop="openRenameProfileModal(prof)"
-                      class="p-0.5 rounded opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:text-amber-300 transition shrink-0"
-                      :style="{ color: 'var(--color-text-muted)' }"
+                      class="p-0.5 rounded opacity-0 group-hover:opacity-80 hover:!opacity-100 btn-flat-ghost shrink-0 cursor-pointer"
                       title="Rename Profile"
                     >
                       <Pencil class="w-3 h-3" />
@@ -1329,19 +1317,19 @@ const handleFormSubmit = () => {
                       :class="[
                         'px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border',
                         prof.protocol === 'ftp'
-                          ? 'bg-amber-950/70 text-amber-300 border-amber-800/60'
+                          ? 'bg-amber-950/60 text-amber-300 border-amber-800/40'
                           : prof.protocol === 'ftps'
-                          ? 'bg-emerald-950/70 text-emerald-300 border-emerald-800/60'
+                          ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800/40'
                           : ''
                       ]"
-                      :style="prof.protocol !== 'ftp' && prof.protocol !== 'ftps' ? { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', borderColor: 'var(--color-border)' } : undefined"
+                      :style="prof.protocol !== 'ftp' && prof.protocol !== 'ftps' ? { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' } : undefined"
                     >
                       {{ prof.protocol?.toUpperCase() || 'SFTP' }}
                     </span>
                     <span
                       v-if="prof.auth_type === 'KeyFile'"
                       class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border"
-                      :style="{ backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent-secondary)', borderColor: 'var(--color-border)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent-secondary)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
                       title="SSH Private Key"
                     >
                       <KeyRound class="w-3 h-3" />
@@ -1350,7 +1338,7 @@ const handleFormSubmit = () => {
                     <span
                       v-if="isProfileInVault(prof)"
                       class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border"
-                      :style="{ backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', borderColor: 'var(--color-border)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
                       title="Password secured in Encrypted Vault"
                     >
                       <ShieldCheck class="w-3 h-3" />
@@ -1358,7 +1346,7 @@ const handleFormSubmit = () => {
                     </span>
                     <span
                       v-else-if="prof.has_saved_secret"
-                      class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border bg-amber-950/60 text-amber-300 border-amber-700/60"
+                      class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border bg-amber-950/50 text-amber-300 border-amber-700/40"
                       title="Password is not stored in the Master Password Vault yet. Click Connect or Edit to save it to your vault."
                     >
                       <AlertTriangle class="w-3 h-3 text-amber-400" />
@@ -1375,29 +1363,27 @@ const handleFormSubmit = () => {
                 </div>
 
                 <!-- Actions -->
-                <div class="flex items-center space-x-1.5">
+                <div class="flex items-center space-x-1">
                   <button
                     @click="handleQuickConnect(prof)"
                     :disabled="isConnecting"
                     :class="[
-                      'px-3 py-1 rounded-md text-xs font-medium shadow-sm flex items-center space-x-1.5 transition select-none',
+                      'px-3 py-1 rounded-md text-xs font-medium flex items-center space-x-1.5 select-none',
                       connectingProfileId === prof.id
-                        ? 'cursor-wait ring-1 ring-white/50 opacity-90'
+                        ? 'cursor-wait opacity-90 btn-accent'
                         : isConnecting
-                        ? 'opacity-50 cursor-not-allowed border'
-                        : 'btn-accent'
+                        ? 'opacity-50 cursor-not-allowed btn-theme-card'
+                        : 'btn-accent cursor-pointer'
                     ]"
-                    :style="isConnecting && connectingProfileId !== prof.id ? { backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' } : undefined"
                   >
-                    <Loader2 v-if="connectingProfileId === prof.id" class="w-3 h-3 animate-spin text-white" />
+                    <Loader2 v-if="connectingProfileId === prof.id" class="w-3 h-3 animate-spin" />
                     <Terminal v-else class="w-3 h-3" />
                     <span>{{ connectingProfileId === prof.id ? 'Connecting...' : 'Connect' }}</span>
                   </button>
                   <button
                     @click="openRenameProfileModal(prof)"
                     :disabled="isConnecting"
-                    class="p-1.5 rounded-md transition hover:text-amber-300"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="w-7 h-7 flex items-center justify-center rounded-md btn-flat-ghost cursor-pointer"
                     title="Rename Profile"
                   >
                     <Pencil class="w-3.5 h-3.5" />
@@ -1405,8 +1391,7 @@ const handleFormSubmit = () => {
                   <button
                     @click="handleStartEdit(prof)"
                     :disabled="isConnecting"
-                    class="p-1.5 rounded-md transition hover:text-sky-300"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="w-7 h-7 flex items-center justify-center rounded-md btn-flat-ghost cursor-pointer"
                     title="Edit Connection Details (Host, Port, Credentials)"
                   >
                     <SlidersHorizontal class="w-3.5 h-3.5" />
@@ -1414,8 +1399,7 @@ const handleFormSubmit = () => {
                   <button
                     @click="openDeleteConfirm(prof)"
                     :disabled="isConnecting"
-                    class="p-1.5 rounded-md transition hover:text-rose-400"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="w-7 h-7 flex items-center justify-center rounded-md btn-flat-ghost-danger cursor-pointer"
                     title="Delete Profile"
                   >
                     <Trash2 class="w-3.5 h-3.5" />
@@ -1433,7 +1417,7 @@ const handleFormSubmit = () => {
         @submit.prevent="handleFormSubmit"
         class="p-5 flex-1 flex flex-col min-h-0 overflow-y-auto space-y-3.5"
       >
-        <div class="flex items-center justify-between pb-1 border-b" :style="{ borderColor: 'var(--color-border)' }">
+        <div class="flex items-center justify-between pb-1 border-b" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }">
           <div class="flex items-center space-x-1.5 text-xs font-semibold" :style="{ color: 'var(--color-text-main)' }">
             <Pencil v-if="currentMode === 'edit'" class="w-3.5 h-3.5 text-amber-400" />
             <Plus v-else class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
@@ -1455,7 +1439,6 @@ const handleFormSubmit = () => {
               type="text"
               placeholder="e.g. Production Web Server"
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
 
@@ -1471,13 +1454,11 @@ const handleFormSubmit = () => {
                 placeholder="e.g. Work, Clients, Staging"
                 @focus="showFolderDropdown = true"
                 class="w-full pl-8 pr-7 py-1.5 rounded-lg border text-xs placeholder-slate-600 focus:outline-none transition input-theme"
-                :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
               />
               <button
                 type="button"
                 @click="showFolderDropdown = !showFolderDropdown"
-                class="absolute right-2 p-0.5 transition"
-                :style="{ color: 'var(--color-text-muted)' }"
+                class="absolute right-1.5 p-0.5 rounded btn-flat-ghost cursor-pointer"
                 tabindex="-1"
                 title="Toggle folder list"
               >
@@ -1499,7 +1480,7 @@ const handleFormSubmit = () => {
             <div
               v-if="showFolderDropdown"
               class="absolute left-0 right-0 top-full mt-1 border rounded-xl shadow-2xl z-40 p-1.5 max-h-48 overflow-y-auto space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
-              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)' }"
             >
               <div class="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-between" :style="{ color: 'var(--color-text-muted)' }">
                 <span>Select or type folder</span>
@@ -1509,7 +1490,7 @@ const handleFormSubmit = () => {
               <!-- None / Ungrouped option -->
               <div
                 @click="clearFolder"
-                class="px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-between transition"
+                class="px-2.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center justify-between transition hover:bg-black/5 dark:hover:bg-white/5"
                 :style="!form.group ? { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', fontWeight: 600 } : { color: 'var(--color-text-muted)' }"
               >
                 <div class="flex items-center space-x-2">
@@ -1523,7 +1504,7 @@ const handleFormSubmit = () => {
               <div
                 v-for="grp in availableGroups"
                 :key="grp"
-                class="px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition group/folder"
+                class="px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition group/folder hover:bg-black/5 dark:hover:bg-white/5"
                 :style="form.group === grp ? { backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent)', fontWeight: 600 } : { color: 'var(--color-text-main)' }"
               >
                 <div @click="selectFolder(grp)" class="flex items-center space-x-2 truncate flex-1 cursor-pointer">
@@ -1534,8 +1515,7 @@ const handleFormSubmit = () => {
                   <button
                     type="button"
                     @click.stop="openRenameGroupModal(grp)"
-                    class="p-0.5 rounded opacity-0 group-hover/folder:opacity-80 hover:!opacity-100 hover:text-amber-300 transition"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="p-0.5 rounded opacity-0 group-hover/folder:opacity-80 hover:!opacity-100 btn-flat-ghost cursor-pointer"
                     title="Rename this folder"
                   >
                     <Pencil class="w-3 h-3" />
@@ -1564,11 +1544,8 @@ const handleFormSubmit = () => {
             <button
               type="button"
               @click="setProtocol('sftp')"
-              :class="[
-                'py-1.5 text-xs rounded-lg border font-medium transition-colors flex items-center justify-center space-x-1.5',
-                form.protocol === 'sftp' ? 'font-semibold shadow-sm' : ''
-              ]"
-              :style="form.protocol === 'sftp' ? { backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="py-1.5 text-xs rounded-lg font-medium flex items-center justify-center space-x-1.5 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': form.protocol === 'sftp' }"
             >
               <Terminal class="w-3.5 h-3.5" :style="{ color: form.protocol === 'sftp' ? 'var(--color-accent)' : 'var(--color-text-muted)' }" />
               <span>SFTP (SSH)</span>
@@ -1576,29 +1553,19 @@ const handleFormSubmit = () => {
             <button
               type="button"
               @click="setProtocol('ftp')"
-              :class="[
-                'py-1.5 text-xs rounded-lg border font-medium transition-colors flex items-center justify-center space-x-1.5',
-                form.protocol === 'ftp'
-                  ? 'bg-amber-950/70 border-amber-500/60 text-amber-300 font-semibold shadow-sm'
-                  : ''
-              ]"
-              :style="form.protocol !== 'ftp' ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' } : undefined"
+              class="py-1.5 text-xs rounded-lg font-medium flex items-center justify-center space-x-1.5 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': form.protocol === 'ftp' }"
             >
-              <Server class="w-3.5 h-3.5 text-amber-400" />
+              <Server class="w-3.5 h-3.5 text-amber-400/90" />
               <span>FTP (Plain)</span>
             </button>
             <button
               type="button"
               @click="setProtocol('ftps')"
-              :class="[
-                'py-1.5 text-xs rounded-lg border font-medium transition-colors flex items-center justify-center space-x-1.5',
-                form.protocol === 'ftps'
-                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 font-semibold shadow-sm'
-                  : ''
-              ]"
-              :style="form.protocol !== 'ftps' ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' } : undefined"
+              class="py-1.5 text-xs rounded-lg font-medium flex items-center justify-center space-x-1.5 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': form.protocol === 'ftps' }"
             >
-              <ShieldCheck class="w-3.5 h-3.5 text-emerald-400" />
+              <ShieldCheck class="w-3.5 h-3.5 text-emerald-400/90" />
               <span>FTPS (TLS)</span>
             </button>
           </div>
@@ -1616,7 +1583,6 @@ const handleFormSubmit = () => {
               required
               placeholder="192.168.1.50 or server.com"
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
           <div>
@@ -1626,7 +1592,6 @@ const handleFormSubmit = () => {
               type="number"
               required
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
         </div>
@@ -1640,7 +1605,6 @@ const handleFormSubmit = () => {
             required
             :placeholder="form.protocol === 'sftp' ? 'e.g. root, ubuntu' : 'e.g. anonymous or ftpuser'"
             class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
         </div>
 
@@ -1651,25 +1615,19 @@ const handleFormSubmit = () => {
             <button
               type="button"
               @click="form.authType = 'Password'"
-              :class="[
-                'py-1.5 text-xs rounded-lg border font-medium transition-colors flex items-center justify-center space-x-1.5',
-                form.authType === 'Password' ? 'font-semibold shadow-sm' : ''
-              ]"
-              :style="form.authType === 'Password' ? { backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="py-1.5 text-xs rounded-lg font-medium flex items-center justify-center space-x-1.5 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': form.authType === 'Password' }"
             >
-              <Lock class="w-3.5 h-3.5" />
+              <Lock class="w-3.5 h-3.5" :style="form.authType === 'Password' ? { color: 'var(--color-accent)' } : undefined" />
               <span>Password</span>
             </button>
             <button
               type="button"
               @click="form.authType = 'KeyFile'"
-              :class="[
-                'py-1.5 text-xs rounded-lg border font-medium transition-colors flex items-center justify-center space-x-1.5',
-                form.authType === 'KeyFile' ? 'font-semibold shadow-sm' : ''
-              ]"
-              :style="form.authType === 'KeyFile' ? { backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="py-1.5 text-xs rounded-lg font-medium flex items-center justify-center space-x-1.5 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': form.authType === 'KeyFile' }"
             >
-              <KeyRound class="w-3.5 h-3.5" />
+              <KeyRound class="w-3.5 h-3.5" :style="form.authType === 'KeyFile' ? { color: 'var(--color-accent)' } : undefined" />
               <span>Private Key</span>
             </button>
           </div>
@@ -1693,7 +1651,6 @@ const handleFormSubmit = () => {
             type="password"
             :placeholder="currentMode === 'edit' && editingProfileHasVaultSecret ? 'Enter new password or leave blank to keep existing' : 'Enter password'"
             class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
         </div>
 
@@ -1709,17 +1666,15 @@ const handleFormSubmit = () => {
                 type="text"
                 placeholder="C:/Users/name/.ssh/id_rsa or key.ppk"
                 class="flex-1 px-3 py-1.5 rounded-lg border text-xs font-mono focus:outline-none input-theme"
-                :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
               />
               <button
                 type="button"
                 @click="handleBrowseKeyFile"
                 :disabled="isPickingKey"
-                class="px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 shrink-0 transition btn-theme-card"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                class="px-3 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 shrink-0 btn-theme-card cursor-pointer"
                 title="Browse file system for PuTTY (.ppk) or OpenSSH private key"
               >
-                <FolderOpen class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                <FolderOpen class="w-3.5 h-3.5" />
                 <span>{{ isPickingKey ? 'Browsing...' : 'Browse...' }}</span>
               </button>
             </div>
@@ -1742,7 +1697,6 @@ const handleFormSubmit = () => {
               type="password"
               placeholder="Key passphrase if private key is encrypted"
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
         </div>
@@ -1757,7 +1711,6 @@ const handleFormSubmit = () => {
             type="text"
             placeholder="/var/www/html or /home/username or leave blank for server default"
             class="w-full px-3 py-1.5 rounded-lg border text-xs font-mono focus:outline-none input-theme"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
           <p class="text-[10px] mt-1" :style="{ color: 'var(--color-text-muted)' }">
             Automatically navigates to this directory upon connecting.
@@ -1783,7 +1736,7 @@ const handleFormSubmit = () => {
           <!-- Inline notice when Master Password Vault is not configured yet -->
           <div
             v-if="form.saveToKeychain && !vaultStore.isInitialized"
-            class="p-2.5 rounded-xl border border-amber-700/50 bg-amber-950/30 flex items-center justify-between gap-2 text-[11px]"
+            class="p-2.5 rounded-xl border border-amber-700/40 bg-amber-950/25 flex items-center justify-between gap-2 text-[11px]"
           >
             <div class="flex items-start space-x-2 text-amber-200/90">
               <AlertTriangle class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
@@ -1794,7 +1747,7 @@ const handleFormSubmit = () => {
             <button
               type="button"
               @click="handleSetupOrUnlockVault"
-              class="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white shrink-0 transition btn-accent cursor-pointer"
+              class="px-2.5 py-1 rounded-lg text-[11px] font-medium shrink-0 btn-accent cursor-pointer"
             >
               Set Up Vault
             </button>
@@ -1804,12 +1757,12 @@ const handleFormSubmit = () => {
         <!-- Connection Progress in Form Mode -->
         <div
           v-if="connectionLogs.length > 0 || isConnecting"
-          class="rounded-xl border shadow-sm overflow-hidden shrink-0"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+          class="rounded-xl border overflow-hidden shrink-0"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
         >
           <div
             class="flex items-center justify-between px-3 py-1.5 border-b text-[11px]"
-            :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2">
               <span class="relative flex h-2 w-2">
@@ -1843,12 +1796,11 @@ const handleFormSubmit = () => {
         </div>
 
         <!-- Action Buttons in Form -->
-        <div class="flex items-center justify-between pt-3 border-t mt-auto" :style="{ borderColor: 'var(--color-border)' }">
+        <div class="flex items-center justify-between pt-3 border-t mt-auto" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }">
           <button
             type="button"
             @click="handleCancelForm"
-            class="px-3 py-1.5 rounded-lg text-xs transition"
-            :style="{ color: 'var(--color-text-muted)' }"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
           >
             Cancel
           </button>
@@ -1860,22 +1812,21 @@ const handleFormSubmit = () => {
                 type="button"
                 @click="saveProfileData(true)"
                 :disabled="isConnecting || isSaving"
-                class="px-3.5 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition flex items-center space-x-1.5 btn-theme-card"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                class="px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 btn-theme-card cursor-pointer disabled:opacity-50"
                 title="Save changes and connect immediately"
               >
-                <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin text-white" />
-                <Terminal v-else class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin" />
+                <Terminal v-else class="w-3.5 h-3.5" />
                 <span>{{ isConnecting ? 'Connecting...' : 'Update & Connect' }}</span>
               </button>
 
               <button
                 type="submit"
                 :disabled="isSaving || isConnecting"
-                class="px-4 py-1.5 rounded-lg text-white text-xs font-semibold shadow-md flex items-center space-x-1.5 transition btn-accent"
+                class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-xs font-medium flex items-center space-x-1.5 btn-accent cursor-pointer"
                 title="Save profile changes (Enter)"
               >
-                <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+                <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
                 <Check v-else class="w-3.5 h-3.5" />
                 <span>Save Changes</span>
               </button>
@@ -1887,20 +1838,19 @@ const handleFormSubmit = () => {
                 type="button"
                 @click="saveProfileData(false)"
                 :disabled="isSaving || isConnecting"
-                class="px-3.5 py-1.5 rounded-lg border text-xs font-medium shadow-sm transition flex items-center space-x-1.5 btn-theme-card"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                class="px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 btn-theme-card cursor-pointer disabled:opacity-50"
               >
-                <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
-                <Check v-else class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                <span v-if="isSaving" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
+                <Check v-else class="w-3.5 h-3.5" />
                 <span>Save Profile Only</span>
               </button>
 
               <button
                 type="submit"
                 :disabled="isConnecting || isSaving"
-                class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-white text-xs font-semibold shadow-md flex items-center space-x-1.5 transition btn-accent"
+                class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-xs font-medium flex items-center space-x-1.5 btn-accent cursor-pointer"
               >
-                <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin text-white" />
+                <Loader2 v-if="isConnecting" class="w-3.5 h-3.5 animate-spin" />
                 <Terminal v-else class="w-3.5 h-3.5" />
                 <span>{{ isConnecting ? 'Connecting...' : 'Save & Connect' }}</span>
               </button>
@@ -1919,12 +1869,12 @@ const handleFormSubmit = () => {
     >
       <div
         class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
       >
         <div class="flex items-center space-x-3">
           <div
             class="w-9 h-9 rounded-xl border flex items-center justify-center text-base"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
           >
             <KeyRound class="w-4 h-4" />
           </div>
@@ -1938,7 +1888,7 @@ const handleFormSubmit = () => {
           </div>
         </div>
 
-        <div v-if="promptErrorMessage" class="p-2.5 rounded-lg bg-red-950/60 border border-red-800/60 text-red-300 text-xs flex items-center space-x-1.5">
+        <div v-if="promptErrorMessage" class="p-2.5 rounded-lg bg-red-950/50 border border-red-800/40 text-red-300 text-xs flex items-center space-x-1.5">
           <AlertTriangle class="w-3.5 h-3.5 text-red-400 shrink-0" />
           <span>{{ promptErrorMessage }}</span>
         </div>
@@ -1946,12 +1896,12 @@ const handleFormSubmit = () => {
         <!-- Live Auth Progress in Password Prompt Modal -->
         <div
           v-if="connectionLogs.length > 0 || promptIsConnecting"
-          class="rounded-xl border shadow-sm overflow-hidden shrink-0"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+          class="rounded-xl border overflow-hidden shrink-0"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
         >
           <div
             class="flex items-center justify-between px-2.5 py-1 border-b text-[10px]"
-            :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-1.5">
               <span class="relative flex h-1.5 w-1.5">
@@ -1997,7 +1947,6 @@ const handleFormSubmit = () => {
               type="password"
               placeholder="Enter password"
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
 
@@ -2018,7 +1967,7 @@ const handleFormSubmit = () => {
 
             <div
               v-if="promptSaveKeychain && !vaultStore.isInitialized"
-              class="p-2 rounded-lg border border-amber-700/50 bg-amber-950/30 flex items-start space-x-2 text-[11px] text-amber-200/90"
+              class="p-2 rounded-lg border border-amber-700/40 bg-amber-950/25 flex items-start space-x-2 text-[11px] text-amber-200/90"
             >
               <AlertTriangle class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
               <span>
@@ -2031,17 +1980,16 @@ const handleFormSubmit = () => {
             <button
               type="button"
               @click="showPasswordPrompt = false"
-              class="px-3 py-1.5 rounded-lg text-xs transition"
-              :style="{ color: 'var(--color-text-muted)' }"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               :disabled="promptIsConnecting"
-              class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-white text-xs font-semibold shadow flex items-center space-x-1.5 btn-accent"
+              class="px-4 py-1.5 rounded-lg disabled:opacity-50 text-xs font-medium flex items-center space-x-1.5 btn-accent cursor-pointer"
             >
-              <Loader2 v-if="promptIsConnecting" class="w-3.5 h-3.5 animate-spin text-white" />
+              <Loader2 v-if="promptIsConnecting" class="w-3.5 h-3.5 animate-spin" />
               <Terminal v-else class="w-3.5 h-3.5" />
               <span>{{ promptIsConnecting ? 'Connecting...' : 'Connect' }}</span>
             </button>
@@ -2060,15 +2008,15 @@ const handleFormSubmit = () => {
         class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
         :style="{
           backgroundColor: 'var(--color-bg-card)',
-          borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 35%, var(--color-border))'
+          borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 28%, color-mix(in srgb, var(--color-border) 55%, transparent))'
         }"
       >
         <div class="flex items-start space-x-3">
           <div
-            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
             :style="{
-              backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 18%, transparent)',
-              borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 35%, transparent)',
+              backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 12%, transparent)',
+              borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 26%, transparent)',
               color: 'var(--color-danger, #f38ba8)'
             }"
           >
@@ -2084,7 +2032,7 @@ const handleFormSubmit = () => {
 
         <div
           class="p-3 rounded-xl border space-y-1.5 text-xs"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
         >
           <div class="flex items-center font-mono truncate" :style="{ color: 'var(--color-text-main)' }">
             <Server class="w-3.5 h-3.5 mr-2 shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
@@ -2094,7 +2042,7 @@ const handleFormSubmit = () => {
             <Folder class="w-3.5 h-3.5 mr-2 shrink-0" :style="{ color: 'var(--color-text-muted)' }" />
             <span>Folder: {{ profileToDelete?.group }}</span>
           </div>
-          <div v-if="profileToDelete?.has_saved_secret" class="flex items-start text-amber-400/90 text-[11px] pt-1.5 border-t" :style="{ borderColor: 'var(--color-border)' }">
+          <div v-if="profileToDelete?.has_saved_secret" class="flex items-start text-amber-400/90 text-[11px] pt-1.5 border-t" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
             <AlertTriangle class="w-3.5 h-3.5 mr-1.5 shrink-0 mt-0.5 text-amber-400" />
             <span>Encrypted vault credentials for this profile will also be removed.</span>
           </div>
@@ -2105,7 +2053,7 @@ const handleFormSubmit = () => {
             type="button"
             @click="closeDeleteConfirm"
             :disabled="isDeleting"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card cursor-pointer"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
           >
             Cancel
           </button>
@@ -2113,7 +2061,7 @@ const handleFormSubmit = () => {
             type="button"
             @click="executeDeleteProfile"
             :disabled="isDeleting"
-            class="px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer btn-danger"
+            class="px-4 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 cursor-pointer btn-danger"
           >
             <span v-if="isDeleting" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
             <Trash2 v-else class="w-3.5 h-3.5" />
@@ -2132,12 +2080,12 @@ const handleFormSubmit = () => {
     >
       <div
         class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
       >
         <div class="flex items-start space-x-3">
           <div
-            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
           >
             <Folder class="w-5 h-5" />
           </div>
@@ -2161,13 +2109,12 @@ const handleFormSubmit = () => {
               required
               placeholder="e.g. Work, Staging, Clients"
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
 
           <div
             class="p-2.5 rounded-xl border text-[11px] space-y-1"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
           >
             <div class="flex items-center space-x-1.5">
               <Layers class="w-3.5 h-3.5 shrink-0" :style="{ color: 'var(--color-accent)' }" />
@@ -2187,17 +2134,16 @@ const handleFormSubmit = () => {
               type="button"
               @click="closeRenameGroupModal"
               :disabled="isRenamingGroup"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               :disabled="isRenamingGroup || !newGroupName.trim()"
-              class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 shadow-md flex items-center space-x-1.5 transition btn-accent"
+              class="px-4 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 flex items-center space-x-1.5 btn-accent cursor-pointer"
             >
-              <span v-if="isRenamingGroup" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+              <span v-if="isRenamingGroup" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
               <Check v-else class="w-3.5 h-3.5" />
               <span>{{ isRenamingGroup ? 'Renaming...' : 'Save Folder Name' }}</span>
             </button>
@@ -2215,12 +2161,12 @@ const handleFormSubmit = () => {
     >
       <div
         class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
       >
         <div class="flex items-start space-x-3">
           <div
-            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
           >
             <FolderMinus class="w-5 h-5" />
           </div>
@@ -2241,8 +2187,7 @@ const handleFormSubmit = () => {
             type="button"
             @click="closeUngroupModal"
             :disabled="isUngrouping"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            class="px-3.5 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
           >
             Cancel
           </button>
@@ -2250,9 +2195,9 @@ const handleFormSubmit = () => {
             type="button"
             @click="executeUngroup"
             :disabled="isUngrouping"
-            class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-50 shadow-md flex items-center space-x-1.5 transition"
+            class="px-4 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 flex items-center space-x-1.5 btn-warning cursor-pointer"
           >
-            <span v-if="isUngrouping" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+            <span v-if="isUngrouping" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
             <FolderMinus v-else class="w-3.5 h-3.5" />
             <span>{{ isUngrouping ? 'Ungrouping...' : 'Ungroup Folder' }}</span>
           </button>
@@ -2269,12 +2214,12 @@ const handleFormSubmit = () => {
     >
       <div
         class="w-full max-w-sm border rounded-2xl shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
       >
         <div class="flex items-start space-x-3">
           <div
-            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+            class="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
           >
             <Pencil class="w-5 h-5" />
           </div>
@@ -2298,7 +2243,6 @@ const handleFormSubmit = () => {
               required
               placeholder="e.g. Production Web Server"
               class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
             />
           </div>
 
@@ -2307,17 +2251,16 @@ const handleFormSubmit = () => {
               type="button"
               @click="closeRenameProfileModal"
               :disabled="isRenamingProfile"
-              class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition btn-theme-card"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               :disabled="isRenamingProfile || !newProfileName.trim()"
-              class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 shadow-md flex items-center space-x-1.5 transition btn-accent"
+              class="px-4 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 flex items-center space-x-1.5 btn-accent cursor-pointer"
             >
-              <span v-if="isRenamingProfile" class="animate-spin w-3 h-3 border-2 border-white/30 border-t-white rounded-full mr-1" />
+              <span v-if="isRenamingProfile" class="animate-spin w-3 h-3 border-2 border-current border-t-transparent rounded-full mr-1" />
               <Check v-else class="w-3.5 h-3.5" />
               <span>{{ isRenamingProfile ? 'Saving...' : 'Rename Profile' }}</span>
             </button>

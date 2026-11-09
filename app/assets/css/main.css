@@ -78,88 +78,162 @@ html, body, #__nuxt {
   height: 0;
 }
 
-/* Dynamic theme button & control utilities */
+/* Dynamic theme flat button & control utilities */
 .btn-accent {
-  background: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-card, #181926)) !important;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-border)) !important;
-  color: var(--color-text-main, #ffffff) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-card, #181926)) !important;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 24%, color-mix(in srgb, var(--color-border) 45%, transparent)) !important;
+  color: color-mix(in srgb, var(--color-accent) 65%, var(--color-text-main, #f8fafc)) !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   letter-spacing: 0.01em;
 }
-.btn-accent:hover {
-  background: color-mix(in srgb, var(--color-accent) 34%, var(--color-bg-card, #181926)) !important;
-  border-color: var(--color-accent) !important;
+.btn-accent:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-hover, #1e293b)) !important;
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border)) !important;
   color: var(--color-text-main, #ffffff) !important;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent) 25%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  box-shadow: none !important;
 }
-.btn-accent:active {
-  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-card, #181926)) !important;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+.btn-accent:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-card, #181926)) !important;
+  box-shadow: none !important;
 }
 
 .btn-accent-secondary {
-  background: color-mix(in srgb, var(--color-accent-secondary) 22%, var(--color-bg-card, #181926)) !important;
-  border: 1px solid color-mix(in srgb, var(--color-accent-secondary) 55%, var(--color-border)) !important;
-  color: var(--color-text-main, #ffffff) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  background: color-mix(in srgb, var(--color-accent-secondary) 10%, var(--color-bg-card, #181926)) !important;
+  border: 1px solid color-mix(in srgb, var(--color-accent-secondary) 24%, color-mix(in srgb, var(--color-border) 45%, transparent)) !important;
+  color: color-mix(in srgb, var(--color-accent-secondary) 65%, var(--color-text-main, #f8fafc)) !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   letter-spacing: 0.01em;
 }
-.btn-accent-secondary:hover {
-  background: color-mix(in srgb, var(--color-accent-secondary) 34%, var(--color-bg-card, #181926)) !important;
-  border-color: var(--color-accent-secondary) !important;
+.btn-accent-secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-secondary) 18%, var(--color-bg-hover, #1e293b)) !important;
+  border-color: color-mix(in srgb, var(--color-accent-secondary) 42%, var(--color-border)) !important;
   color: var(--color-text-main, #ffffff) !important;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent-secondary) 25%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  box-shadow: none !important;
 }
-.btn-accent-secondary:active {
-  background: color-mix(in srgb, var(--color-accent-secondary) 18%, var(--color-bg-card, #181926)) !important;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+.btn-accent-secondary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent-secondary) 14%, var(--color-bg-card, #181926)) !important;
+  box-shadow: none !important;
 }
 
 .btn-theme-card {
   background-color: var(--color-bg-card) !important;
-  border: 1px solid var(--color-border) !important;
-  color: var(--color-text-main) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent) !important;
+  color: var(--color-text-muted) !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.btn-theme-card:hover {
-  background-color: var(--color-bg-hover) !important;
-  border-color: var(--color-accent, color-mix(in srgb, var(--color-border) 40%, black 60%)) !important;
+.btn-theme-card:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 60%, var(--color-bg-card)) !important;
+  border-color: color-mix(in srgb, var(--color-border) 80%, transparent) !important;
   color: var(--color-text-main) !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  box-shadow: none !important;
 }
-.btn-theme-card:active {
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
-  filter: brightness(0.92);
+.btn-theme-card:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 80%, var(--color-bg-card)) !important;
+  box-shadow: none !important;
 }
 
 .btn-danger {
-  background: color-mix(in srgb, var(--color-danger, #f38ba8) 20%, var(--color-bg-card, #181926)) !important;
-  border: 1px solid color-mix(in srgb, var(--color-danger, #f38ba8) 45%, var(--color-border)) !important;
-  color: var(--color-danger, #f38ba8) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
-  transition: all 0.15s ease;
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 8%, var(--color-bg-card, #181926)) !important;
+  border: 1px solid color-mix(in srgb, var(--color-danger, #ef4444) 22%, transparent) !important;
+  color: color-mix(in srgb, var(--color-danger, #ef4444) 80%, var(--color-text-muted)) !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.btn-danger:hover {
-  background: color-mix(in srgb, var(--color-danger, #f38ba8) 32%, var(--color-bg-card, #181926)) !important;
-  border-color: var(--color-danger, #f38ba8) !important;
-  color: var(--color-text-main, #ffffff) !important;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-danger, #f38ba8) 25%, transparent) !important;
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 18%, var(--color-bg-hover, #1e293b)) !important;
+  border-color: color-mix(in srgb, var(--color-danger, #ef4444) 40%, var(--color-border)) !important;
+  color: var(--color-danger, #f87171) !important;
+  box-shadow: none !important;
 }
-.btn-danger:active {
-  background: color-mix(in srgb, var(--color-danger, #f38ba8) 16%, var(--color-bg-card, #181926)) !important;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+.btn-danger:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, var(--color-bg-card, #181926)) !important;
+  box-shadow: none !important;
+}
+
+.btn-warning {
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 8%, var(--color-bg-card, #181926)) !important;
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 24%, transparent) !important;
+  color: color-mix(in srgb, var(--color-warning, #f59e0b) 75%, var(--color-text-muted)) !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-warning:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 16%, var(--color-bg-hover, #1e293b)) !important;
+  border-color: color-mix(in srgb, var(--color-warning, #f59e0b) 40%, var(--color-border)) !important;
+  color: color-mix(in srgb, var(--color-warning, #f59e0b) 85%, var(--color-text-main)) !important;
+  box-shadow: none !important;
+}
+
+.btn-success {
+  background: color-mix(in srgb, var(--color-success, #10b981) 8%, var(--color-bg-card, #181926)) !important;
+  border: 1px solid color-mix(in srgb, var(--color-success, #10b981) 24%, transparent) !important;
+  color: color-mix(in srgb, var(--color-success, #10b981) 75%, var(--color-text-muted)) !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-success, #10b981) 16%, var(--color-bg-hover, #1e293b)) !important;
+  border-color: color-mix(in srgb, var(--color-success, #10b981) 40%, var(--color-border)) !important;
+  color: color-mix(in srgb, var(--color-success, #10b981) 85%, var(--color-text-main)) !important;
+  box-shadow: none !important;
+}
+
+.btn-flat-choice {
+  background-color: var(--color-bg-card);
+  border: 1px solid color-mix(in srgb, var(--color-border) 48%, transparent);
+  color: var(--color-text-muted);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-flat-choice:not(.btn-flat-choice--active):hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 55%, var(--color-bg-card));
+  border-color: color-mix(in srgb, var(--color-border) 75%, transparent);
+  color: var(--color-text-main);
+}
+.btn-flat-choice--active {
+  background-color: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-hover));
+  border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  color: var(--color-text-main);
+  box-shadow: none;
+}
+
+.btn-flat-ghost {
+  background-color: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-flat-ghost:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 60%, transparent);
+  border-color: color-mix(in srgb, var(--color-border) 45%, transparent);
+  color: var(--color-text-main);
+}
+.btn-flat-ghost-danger {
+  background-color: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  box-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-flat-ghost-danger:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger, #ef4444) 28%, transparent);
+  color: var(--color-danger, #f87171);
 }
 
 .input-theme {
   background-color: var(--color-bg-pane) !important;
-  border: 1px solid var(--color-border) !important;
+  border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent) !important;
   color: var(--color-text-main) !important;
+  box-shadow: none !important;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .input-theme:focus {
-  border-color: var(--color-accent) !important;
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)) !important;
   outline: none;
 }
 
@@ -167,14 +241,6 @@ html, body, #__nuxt {
    Catppuccin Latte & Light Theme Contrast & Icon Enhancement
    Maps Mocha dark-theme pastel strokes/fills to high-contrast Latte equivalents
    ========================================================================== */
-
-/* Latte Card & Button Tweaks */
-html.light .btn-theme-card {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
-}
-html.light .btn-theme-card:hover {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08) !important;
-}
 
 /* Text color adaptations for light theme */
 html.light .text-amber-300 {

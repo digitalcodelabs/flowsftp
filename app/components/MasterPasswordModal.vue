@@ -178,13 +178,13 @@ const handleSubmit = async () => {
   >
     <div
       class="w-full max-w-sm rounded-2xl border shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-100"
-      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
     >
       <!-- Header -->
       <div class="flex items-center space-x-3">
         <div
           class="w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
         >
           <ShieldCheck class="w-5 h-5" />
         </div>
@@ -221,7 +221,6 @@ const handleSubmit = async () => {
             type="password"
             placeholder="Current master password"
             class="w-full px-3 py-1.5 rounded-lg border text-xs placeholder-slate-600 focus:outline-none font-mono input-theme"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
         </div>
 
@@ -236,7 +235,6 @@ const handleSubmit = async () => {
             type="password"
             :placeholder="vaultStore.modalMode === 'setup' ? 'Choose a strong master password' : 'Enter master password'"
             class="w-full px-3 py-1.5 rounded-lg border text-xs placeholder-slate-600 focus:outline-none font-mono input-theme"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
         </div>
 
@@ -248,12 +246,11 @@ const handleSubmit = async () => {
             type="password"
             placeholder="Re-enter password"
             class="w-full px-3 py-1.5 rounded-lg border text-xs placeholder-slate-600 focus:outline-none font-mono input-theme"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           />
         </div>
 
         <!-- Error Message -->
-        <div v-if="errorMessage" class="p-2.5 rounded-lg bg-red-950/60 border border-red-800/60 text-red-300 text-xs flex items-center space-x-2">
+        <div v-if="errorMessage" class="p-2.5 rounded-lg bg-red-950/50 border border-red-800/40 text-red-300 text-xs flex items-center space-x-2">
           <AlertTriangle class="w-3.5 h-3.5 text-red-400 shrink-0" />
           <span class="flex-1">{{ errorMessage }}</span>
         </div>
@@ -261,7 +258,7 @@ const handleSubmit = async () => {
         <!-- Reset Vault Confirmation Panel -->
         <div
           v-if="showResetConfirm"
-          class="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs space-y-2 animate-fadeIn"
+          class="p-3 rounded-lg bg-amber-950/30 border border-amber-800/40 text-xs space-y-2 animate-fadeIn"
         >
           <div class="flex items-center space-x-2 text-amber-300 font-medium">
             <AlertTriangle class="w-4 h-4 text-amber-400 shrink-0" />
@@ -274,8 +271,7 @@ const handleSubmit = async () => {
             <button
               type="button"
               @click="showResetConfirm = false"
-              class="px-2.5 py-1 rounded text-[11px] border btn-theme-card"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="px-2.5 py-1 rounded-md text-[11px] font-medium btn-theme-card cursor-pointer"
             >
               Back
             </button>
@@ -283,7 +279,7 @@ const handleSubmit = async () => {
               type="button"
               @click="handleResetVault"
               :disabled="isSubmitting"
-              class="px-2.5 py-1 rounded text-[11px] bg-red-600 hover:bg-red-700 text-white font-medium transition"
+              class="px-2.5 py-1 rounded-md text-[11px] font-medium btn-danger cursor-pointer"
             >
               Confirm &amp; Reset
             </button>
@@ -297,7 +293,7 @@ const handleSubmit = async () => {
               v-if="vaultStore.modalMode === 'unlock' && !showResetConfirm"
               type="button"
               @click="showResetConfirm = true"
-              class="text-[11px] text-red-400 hover:text-red-300 transition underline underline-offset-2"
+              class="text-[11px] px-2 py-1 rounded-md btn-flat-ghost-danger cursor-pointer"
             >
               Forgot master password?
             </button>
@@ -306,17 +302,16 @@ const handleSubmit = async () => {
             <button
               type="button"
               @click="handleCancel"
-              class="px-3 py-1.5 rounded-lg border text-xs font-medium transition btn-theme-card"
-              :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              class="px-3 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               :disabled="isSubmitting || showResetConfirm"
-              class="px-3.5 py-1.5 rounded-lg text-white text-xs font-medium shadow-sm transition disabled:opacity-50 flex items-center space-x-1 btn-accent"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 flex items-center space-x-1 btn-accent cursor-pointer"
             >
-              <span v-if="isSubmitting" class="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full mr-1" />
+              <span v-if="isSubmitting" class="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full mr-1" />
               <span>
                 {{
                   vaultStore.modalMode === 'setup'

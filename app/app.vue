@@ -471,7 +471,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         <!-- View Switcher Tabs -->
         <div
           class="flex items-center space-x-1 p-0.5 rounded-lg border shrink-0 transition-colors"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
         >
           <button
             @click="currentTab = 'terminal'"
@@ -480,8 +480,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
               ? {
                   backgroundColor: 'var(--color-bg-hover)',
                   color: 'var(--color-accent)',
-                  borderColor: 'var(--color-border)',
-                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)'
+                  borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)',
+                  boxShadow: 'none'
                 }
               : {
                   color: 'var(--color-text-muted)',
@@ -504,8 +504,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
               ? {
                   backgroundColor: 'var(--color-bg-hover)',
                   color: 'var(--color-accent-secondary)',
-                  borderColor: 'var(--color-border)',
-                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)'
+                  borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)',
+                  boxShadow: 'none'
                 }
               : {
                   color: 'var(--color-text-muted)',
@@ -631,7 +631,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         <!-- Notice if active session is FTP/FTPS -->
         <template v-if="sshStore.activeSession && (sshStore.activeSession.protocol === 'ftp' || sshStore.activeSession.protocol === 'ftps')">
           <div class="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div class="w-14 h-14 rounded-2xl bg-amber-950/40 border border-amber-700/40 flex items-center justify-center text-amber-400 mb-4 shadow-xl">
+            <div class="w-14 h-14 rounded-2xl bg-amber-950/35 border border-amber-700/35 flex items-center justify-center text-amber-400 mb-4">
               <Server class="w-7 h-7" />
             </div>
             <h2 class="text-base font-semibold mb-1" :style="{ color: 'var(--color-text-main)' }">
@@ -642,9 +642,9 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             </p>
             <button
               @click="currentTab = 'sftp'"
-              class="px-4 py-2 rounded-lg text-white text-xs font-semibold shadow-md flex items-center space-x-2 transition btn-accent-secondary"
+              class="px-4 py-2 rounded-lg text-xs font-medium flex items-center space-x-2 btn-accent-secondary cursor-pointer"
             >
-              <FolderSync class="w-3.5 h-3.5" />
+              <FolderSync class="w-3.5 h-3.5 shrink-0" />
               <span>Switch to SFTP / FTP Browser</span>
             </button>
           </div>
@@ -673,8 +673,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
           <!-- Empty State (No active sessions) -->
           <div class="flex-1 flex flex-col items-center justify-center text-center p-8">
             <div
-              class="w-14 h-14 rounded-2xl border flex items-center justify-center mb-4 shadow-xl transition-colors duration-150"
-              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+              class="w-14 h-14 rounded-2xl border flex items-center justify-center mb-4 transition-colors duration-150"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
             >
               <svg class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -686,7 +686,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             </p>
             <button
               @click="showConnectModal = true"
-              class="px-4 py-2 rounded-lg text-xs font-semibold shadow-md transition-all btn-accent flex items-center space-x-2 cursor-pointer"
+              class="px-4 py-2 rounded-lg text-xs font-medium btn-accent flex items-center space-x-2 cursor-pointer"
             >
               <Server class="w-3.5 h-3.5 shrink-0" />
               <span>Open Connection Manager</span>

@@ -70,7 +70,12 @@ onUnmounted(() => {
   >
     <div
       class="w-full max-w-md rounded-2xl border shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-100"
-      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: isChanged ? 'rgb(220 38 38 / 0.6)' : 'var(--color-border)' }"
+      :style="{
+        backgroundColor: 'var(--color-bg-card)',
+        borderColor: isChanged
+          ? 'color-mix(in srgb, var(--color-danger, #ef4444) 32%, color-mix(in srgb, var(--color-border) 55%, transparent))'
+          : 'color-mix(in srgb, var(--color-border) 65%, transparent)'
+      }"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="host-key-title"
@@ -78,7 +83,7 @@ onUnmounted(() => {
       <div class="flex items-start space-x-3">
         <div
           class="w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0"
-          :class="isChanged ? 'bg-red-950/60 border-red-600/50 text-red-400' : 'bg-amber-950/60 border-amber-600/40 text-amber-400'"
+          :class="isChanged ? 'bg-red-950/40 border-red-600/35 text-red-400' : 'bg-amber-950/40 border-amber-600/35 text-amber-400'"
         >
           <ShieldAlert v-if="isChanged" class="w-5 h-5" />
           <ShieldQuestion v-else class="w-5 h-5" />
@@ -103,7 +108,7 @@ onUnmounted(() => {
 
       <div
         class="rounded-xl border p-3 space-y-2.5 text-[11px] select-text"
-        :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
       >
         <div class="space-y-0.5">
           <div class="uppercase tracking-wider text-[10px] font-medium" :style="{ color: 'var(--color-text-muted)' }">
@@ -141,8 +146,7 @@ onUnmounted(() => {
           ref="rejectButtonRef"
           type="button"
           @click="respond(false)"
-          class="px-3 py-1.5 rounded-lg border text-xs font-medium transition btn-theme-card cursor-pointer"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium btn-theme-card cursor-pointer"
         >
           Cancel
         </button>
@@ -150,8 +154,8 @@ onUnmounted(() => {
           ref="acceptButtonRef"
           type="button"
           @click="respond(true)"
-          class="px-3.5 py-1.5 rounded-lg text-white text-xs font-semibold shadow-sm transition cursor-pointer"
-          :class="isChanged ? 'bg-red-600 hover:bg-red-700' : 'btn-accent'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+          :class="isChanged ? 'btn-danger' : 'btn-accent'"
         >
           {{ isChanged ? 'Replace Key & Connect' : 'Trust & Connect' }}
         </button>

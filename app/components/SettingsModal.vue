@@ -463,12 +463,12 @@ const browserOtherFonts = computed(() => {
   >
     <div
       class="w-full max-w-4xl h-[680px] max-h-[92vh] rounded-2xl border shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100 transition-colors duration-150"
-      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
     >
       <!-- Header -->
       <div
         class="flex items-center justify-between px-6 py-4 border-b shrink-0 transition-colors duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)' }"
       >
         <div class="flex items-center space-x-2.5 select-none">
           <!-- <img :src="appIcon" alt="FlowSFTP" class="w-5 h-5 rounded-md object-contain shrink-0" /> -->
@@ -476,8 +476,7 @@ const browserOtherFonts = computed(() => {
         </div>
         <button
           @click="emit('close')"
-          class="p-1.5 rounded-lg transition"
-          :style="{ color: 'var(--color-text-muted)' }"
+          class="btn-flat-ghost w-7 h-7 flex items-center justify-center rounded-lg cursor-pointer"
           title="Close"
         >
           <X class="w-4 h-4" />
@@ -487,76 +486,76 @@ const browserOtherFonts = computed(() => {
       <!-- Tabs Navigation -->
       <div
         class="flex border-b px-6 pt-2.5 space-x-4 text-xs font-medium overflow-x-auto no-scrollbar shrink-0 transition-colors duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)' }"
       >
         <button
           @click="activeTab = 'themes'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'themes' }"
-          :style="activeTab === 'themes' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'themes' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Palette class="w-3.5 h-3.5" />
           <span>Themes & Colors</span>
         </button>
         <button
           @click="activeTab = 'appearance'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'appearance' }"
-          :style="activeTab === 'appearance' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'appearance' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Type class="w-3.5 h-3.5" />
           <span>Fonts & Sizing</span>
         </button>
         <button
           @click="activeTab = 'keymap'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'keymap' }"
-          :style="activeTab === 'keymap' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'keymap' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Keyboard class="w-3.5 h-3.5" />
           <span>Keymap & Shortcuts</span>
         </button>
         <button
           @click="activeTab = 'transfers'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'transfers' }"
-          :style="activeTab === 'transfers' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'transfers' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Zap class="w-3.5 h-3.5" />
           <span>Transfers</span>
         </button>
         <button
           @click="activeTab = 'security'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'security' }"
-          :style="activeTab === 'security' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'security' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Shield class="w-3.5 h-3.5" />
           <span>Password Vault</span>
         </button>
         <button
           @click="activeTab = 'protocols'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'protocols' }"
-          :style="activeTab === 'protocols' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'protocols' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Globe class="w-3.5 h-3.5" />
           <span>Protocols</span>
         </button>
         <button
           @click="activeTab = 'developer'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'developer' }"
-          :style="activeTab === 'developer' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'developer' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Code2 class="w-3.5 h-3.5" />
           <span>Developer</span>
         </button>
         <button
           @click="activeTab = 'about'"
-          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0"
+          class="pb-2 border-b-2 transition-colors flex items-center space-x-1.5 shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
           :class="{ 'font-semibold': activeTab === 'about' }"
-          :style="activeTab === 'about' ? { borderColor: 'var(--color-accent)', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
+          :style="activeTab === 'about' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Info class="w-3.5 h-3.5" />
           <span>About</span>
@@ -570,7 +569,7 @@ const browserOtherFonts = computed(() => {
           <!-- Top Toolbar: Status, Import from JSON, Export JSON -->
           <div
             class="rounded-xl border p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-colors duration-150"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div>
               <div class="flex items-center space-x-2">
@@ -595,8 +594,7 @@ const browserOtherFonts = computed(() => {
 
               <button
                 @click="triggerImportFile"
-                class="px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center space-x-1.5 shadow-sm btn-theme-card"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                class="px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center space-x-1.5 cursor-pointer btn-theme-card"
                 title="Select a JSON theme file from disk"
               >
                 <Upload class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
@@ -605,8 +603,7 @@ const browserOtherFonts = computed(() => {
 
               <button
                 @click="showPasteModal = true"
-                class="px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center space-x-1.5 shadow-sm btn-theme-card"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                class="px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center space-x-1.5 cursor-pointer btn-theme-card"
                 title="Paste theme JSON text directly"
               >
                 <FileCode class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
@@ -615,8 +612,7 @@ const browserOtherFonts = computed(() => {
 
               <button
                 @click="handleExportTheme(themeStore.currentTheme)"
-                class="px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center space-x-1.5 shadow-sm btn-theme-card"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                class="px-2.5 py-1.5 rounded-lg border text-xs font-medium transition flex items-center space-x-1.5 cursor-pointer btn-theme-card"
                 title="Export current active theme as a JSON file"
               >
                 <Download class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
@@ -645,14 +641,12 @@ const browserOtherFonts = computed(() => {
               v-for="theme in themeStore.allThemes"
               :key="theme.id"
               @click="themeStore.setTheme(theme.id)"
-              :class="[
-                'p-3.5 rounded-xl border text-left cursor-pointer transition-all duration-150 flex flex-col justify-between group relative shadow-sm',
-                themeStore.currentThemeId === theme.id ? 'shadow-md' : ''
-              ]"
+              class="p-3.5 rounded-xl border text-left cursor-pointer transition-all duration-150 flex flex-col justify-between group relative"
               :style="{
                 backgroundColor: themeStore.currentThemeId === theme.id ? theme.ui.bgCard : theme.ui.bgApp,
-                borderColor: themeStore.currentThemeId === theme.id ? theme.ui.borderActive : theme.ui.border,
-                boxShadow: themeStore.currentThemeId === theme.id ? `0 0 0 2px ${theme.ui.accent}` : undefined,
+                borderColor: themeStore.currentThemeId === theme.id
+                  ? `color-mix(in srgb, ${theme.ui.accent} 42%, ${theme.ui.border})`
+                  : `color-mix(in srgb, ${theme.ui.border} 55%, transparent)`,
               }"
             >
               <!-- Card Top Row: Title, Tag, Check -->
@@ -665,28 +659,28 @@ const browserOtherFonts = computed(() => {
                     <span
                       v-if="theme.id === 'default'"
                       class="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
-                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                     >
                       Default
                     </span>
                     <span
                       v-else-if="theme.isCustom"
                       class="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
-                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent-secondary)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent-secondary)' }"
                     >
                       Custom JSON
                     </span>
                     <span
                       v-else
                       class="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
-                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
                     >
                       Preset
                     </span>
                     <span
                       v-if="isLightTheme(theme)"
                       class="px-1.5 py-0.2 rounded text-[9px] font-mono tracking-wider font-semibold border shrink-0"
-                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: theme.ui.accent }"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: theme.ui.accent }"
                     >
                       ☀️ Light
                     </span>
@@ -696,7 +690,7 @@ const browserOtherFonts = computed(() => {
                     <div
                       v-if="themeStore.currentThemeId === theme.id"
                       class="w-4 h-4 rounded-full flex items-center justify-center font-bold text-[10px]"
-                      :style="{ backgroundColor: theme.ui.accent, color: theme.ui.bgApp }"
+                      :style="{ backgroundColor: `color-mix(in srgb, ${theme.ui.accent} 20%, ${theme.ui.bgCard})`, color: theme.ui.accent }"
                     >
                       ✓
                     </div>
@@ -705,8 +699,7 @@ const browserOtherFonts = computed(() => {
                     <button
                       v-if="theme.isCustom"
                       @click.stop="themeStore.deleteCustomTheme(theme.id)"
-                      class="p-1 rounded transition hover:text-red-400"
-                      :style="{ color: 'var(--color-text-muted)' }"
+                      class="btn-flat-ghost-danger p-1 rounded cursor-pointer"
                       title="Delete this custom theme"
                     >
                       <Trash2 class="w-3.5 h-3.5" />
@@ -720,35 +713,35 @@ const browserOtherFonts = computed(() => {
               </div>
 
               <!-- Color Palette Swatches Strip -->
-              <div class="mt-3 pt-2.5 border-t flex items-center justify-between" :style="{ borderColor: theme.ui.border }">
+              <div class="mt-3 pt-2.5 border-t flex items-center justify-between" :style="{ borderColor: `color-mix(in srgb, ${theme.ui.border} 55%, transparent)` }">
                 <div class="flex items-center space-x-1.5">
                   <div
-                    class="w-3.5 h-3.5 rounded-full border shadow-sm"
+                    class="w-3.5 h-3.5 rounded-full border"
                     :style="{ backgroundColor: theme.ui.bgApp, borderColor: theme.ui.border }"
                     title="App Background"
                   />
                   <div
-                    class="w-3.5 h-3.5 rounded-full border shadow-sm"
+                    class="w-3.5 h-3.5 rounded-full border"
                     :style="{ backgroundColor: theme.ui.accent, borderColor: theme.ui.border }"
                     title="Primary Accent"
                   />
                   <div
-                    class="w-3.5 h-3.5 rounded-full border shadow-sm"
+                    class="w-3.5 h-3.5 rounded-full border"
                     :style="{ backgroundColor: theme.ui.accentSecondary, borderColor: theme.ui.border }"
                     title="Secondary Accent"
                   />
                   <div
-                    class="w-3.5 h-3.5 rounded-full border shadow-sm"
+                    class="w-3.5 h-3.5 rounded-full border"
                     :style="{ backgroundColor: theme.terminal.green, borderColor: theme.ui.border }"
                     title="Terminal Green"
                   />
                   <div
-                    class="w-3.5 h-3.5 rounded-full border shadow-sm"
+                    class="w-3.5 h-3.5 rounded-full border"
                     :style="{ backgroundColor: theme.terminal.yellow, borderColor: theme.ui.border }"
                     title="Terminal Yellow"
                   />
                   <div
-                    class="w-3.5 h-3.5 rounded-full border shadow-sm"
+                    class="w-3.5 h-3.5 rounded-full border"
                     :style="{ backgroundColor: theme.terminal.cyan, borderColor: theme.ui.border }"
                     title="Terminal Cyan"
                   />
@@ -756,8 +749,7 @@ const browserOtherFonts = computed(() => {
 
                 <button
                   @click.stop="handleExportTheme(theme)"
-                  class="text-[10px] transition flex items-center space-x-1"
-                  :style="{ color: 'var(--color-text-muted)' }"
+                  class="btn-flat-ghost px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 cursor-pointer"
                   title="Export this theme to JSON file"
                 >
                   <Download class="w-3 h-3" />
@@ -838,7 +830,7 @@ const browserOtherFonts = computed(() => {
           <!-- Terminal Font & Size Settings -->
           <div
             class="rounded-xl border p-4 space-y-3.5"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
@@ -847,8 +839,7 @@ const browserOtherFonts = computed(() => {
               </div>
               <button
                 @click="settingsStore.resetTerminalDefaults()"
-                class="text-[11px] flex items-center space-x-1 transition"
-                :style="{ color: 'var(--color-text-muted)' }"
+                class="btn-flat-ghost px-2 py-0.5 rounded text-[11px] flex items-center space-x-1 cursor-pointer"
                 title="Reset Terminal Font Defaults"
               >
                 <RotateCcw class="w-3 h-3" />
@@ -1026,7 +1017,7 @@ const browserOtherFonts = computed(() => {
           <!-- File Browser (FTP Preview) Font Settings -->
           <div
             class="rounded-xl border p-4 space-y-3.5"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
@@ -1035,8 +1026,7 @@ const browserOtherFonts = computed(() => {
               </div>
               <button
                 @click="settingsStore.resetBrowserDefaults()"
-                class="text-[11px] flex items-center space-x-1 transition"
-                :style="{ color: 'var(--color-text-muted)' }"
+                class="btn-flat-ghost px-2 py-0.5 rounded text-[11px] flex items-center space-x-1 cursor-pointer"
                 title="Reset File Browser Font Defaults"
               >
                 <RotateCcw class="w-3 h-3" />
@@ -1173,8 +1163,8 @@ const browserOtherFonts = computed(() => {
                     :key="sz"
                     type="button"
                     @click="settingsStore.browserFontSize = sz"
-                    class="py-1 text-center rounded-md border text-xs font-mono font-medium transition"
-                    :style="settingsStore.browserFontSize === sz ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-accent-secondary)', color: 'var(--color-accent-secondary)', fontWeight: 'bold' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                    class="btn-flat-choice py-1 text-center rounded-md text-xs font-mono font-medium cursor-pointer"
+                    :class="{ 'btn-flat-choice--active font-semibold': settingsStore.browserFontSize === sz }"
                   >
                     {{ sz }}px
                   </button>
@@ -1189,24 +1179,24 @@ const browserOtherFonts = computed(() => {
                 <button
                   type="button"
                   @click="settingsStore.browserRowDensity = 'compact'"
-                  class="py-1.5 text-xs rounded-lg border font-medium transition text-center"
-                  :style="settingsStore.browserRowDensity === 'compact' ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-accent-secondary)', color: 'var(--color-accent-secondary)', fontWeight: 'bold' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                  class="btn-flat-choice py-1.5 text-xs rounded-lg font-medium text-center cursor-pointer"
+                  :class="{ 'btn-flat-choice--active font-semibold': settingsStore.browserRowDensity === 'compact' }"
                 >
                   Compact
                 </button>
                 <button
                   type="button"
                   @click="settingsStore.browserRowDensity = 'normal'"
-                  class="py-1.5 text-xs rounded-lg border font-medium transition text-center"
-                  :style="settingsStore.browserRowDensity === 'normal' ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-accent-secondary)', color: 'var(--color-accent-secondary)', fontWeight: 'bold' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                  class="btn-flat-choice py-1.5 text-xs rounded-lg font-medium text-center cursor-pointer"
+                  :class="{ 'btn-flat-choice--active font-semibold': settingsStore.browserRowDensity === 'normal' }"
                 >
                   Normal
                 </button>
                 <button
                   type="button"
                   @click="settingsStore.browserRowDensity = 'relaxed'"
-                  class="py-1.5 text-xs rounded-lg border font-medium transition text-center"
-                  :style="settingsStore.browserRowDensity === 'relaxed' ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-accent-secondary)', color: 'var(--color-accent-secondary)', fontWeight: 'bold' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                  class="btn-flat-choice py-1.5 text-xs rounded-lg font-medium text-center cursor-pointer"
+                  :class="{ 'btn-flat-choice--active font-semibold': settingsStore.browserRowDensity === 'relaxed' }"
                 >
                   Relaxed
                 </button>
@@ -1215,15 +1205,15 @@ const browserOtherFonts = computed(() => {
 
             <!-- Live Browser Font Preview Box -->
             <div
-              class="mt-2 p-3 rounded-lg border shadow-inner"
-              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+              class="mt-2 p-3 rounded-lg border"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
             >
               <div class="text-[10px] uppercase font-mono tracking-wider mb-1.5" :style="{ color: 'var(--color-text-muted)' }">Live File Preview</div>
               <div
                 class="rounded border overflow-hidden transition-all duration-150"
                 :style="{
                   backgroundColor: 'var(--color-bg-pane)',
-                  borderColor: 'var(--color-border)',
+                  borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)',
                   fontFamily: settingsStore.browserFontFamily,
                   fontSize: settingsStore.browserFontSize + 'px',
                 }"
@@ -1261,7 +1251,7 @@ const browserOtherFonts = computed(() => {
           <!-- Code Editor (CodeMirror 6) Settings -->
           <div
             class="rounded-xl border p-4 space-y-3.5"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
@@ -1281,16 +1271,16 @@ const browserOtherFonts = computed(() => {
               <button
                 type="button"
                 @click="settingsStore.editorVimMode = !settingsStore.editorVimMode"
-                class="px-3 py-1.5 rounded-lg border text-xs font-mono font-semibold flex items-center space-x-1.5 transition"
-                :class="settingsStore.editorVimMode ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300' : 'bg-slate-800/40 border-slate-700/60 text-slate-400'"
+                class="px-3 py-1.5 rounded-lg border text-xs font-mono font-medium flex items-center space-x-1.5 transition cursor-pointer"
+                :class="settingsStore.editorVimMode ? 'btn-success' : 'btn-flat-choice'"
               >
                 <span>{{ settingsStore.editorVimMode ? 'Vim Enabled' : 'Standard Mode' }}</span>
-                <span class="w-2 h-2 rounded-full" :class="settingsStore.editorVimMode ? 'bg-emerald-400' : 'bg-slate-600'" />
+                <span class="w-2 h-2 rounded-full" :class="settingsStore.editorVimMode ? 'bg-emerald-400' : 'bg-zinc-500'" />
               </button>
             </div>
 
             <!-- Editor Font Size -->
-            <div class="pt-2 border-t" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="pt-2 border-t" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }">
               <div class="flex items-center justify-between mb-1">
                 <label class="block text-[11px] font-medium" :style="{ color: 'var(--color-text-muted)' }">Editor Font Size</label>
                 <span class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">{{ settingsStore.editorFontSize }}px</span>
@@ -1315,7 +1305,7 @@ const browserOtherFonts = computed(() => {
           <!-- Preset Selector -->
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center justify-between">
               <div>
@@ -1326,8 +1316,7 @@ const browserOtherFonts = computed(() => {
               </div>
               <button
                 @click="settingsStore.resetAllKeymaps()"
-                class="text-[11px] flex items-center space-x-1 transition shrink-0"
-                :style="{ color: 'var(--color-text-muted)' }"
+                class="btn-flat-ghost px-2 py-0.5 rounded text-[11px] flex items-center space-x-1 shrink-0 cursor-pointer"
                 title="Reset All Shortcuts to Defaults"
               >
                 <RotateCcw class="w-3 h-3" />
@@ -1341,8 +1330,8 @@ const browserOtherFonts = computed(() => {
                 :key="preset.id"
                 type="button"
                 @click="settingsStore.applyKeymapPreset(preset.id)"
-                class="p-2.5 rounded-lg border text-left transition flex flex-col justify-between"
-                :style="currentPresetId === preset.id ? { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-accent)', color: 'var(--color-text-main)' } : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                class="btn-flat-choice p-2.5 rounded-lg text-left flex flex-col justify-between cursor-pointer"
+                :class="{ 'btn-flat-choice--active': currentPresetId === preset.id }"
               >
                 <div class="flex items-center justify-between mb-1">
                   <span class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">{{ preset.name }}</span>
@@ -1356,12 +1345,12 @@ const browserOtherFonts = computed(() => {
           <!-- Connection Tabs Navigation -->
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2">
               <div
                 class="w-5 h-5 rounded-md border flex items-center justify-center"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
               >
                 <Layers class="w-3.5 h-3.5" />
               </div>
@@ -1371,12 +1360,12 @@ const browserOtherFonts = computed(() => {
               </div>
             </div>
 
-            <div class="divide-y pt-1" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="divide-y pt-1" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
               <div
                 v-for="action in connectionActions"
                 :key="action.id"
                 class="py-2.5 flex items-center justify-between gap-3"
-                :style="{ borderColor: 'var(--color-border)' }"
+                :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
               >
                 <div class="min-w-0 flex-1">
                   <div class="font-medium text-xs" :style="{ color: 'var(--color-text-main)' }">{{ action.title }}</div>
@@ -1386,14 +1375,13 @@ const browserOtherFonts = computed(() => {
                 <div class="flex items-center space-x-2 shrink-0">
                   <!-- Recording State -->
                   <div v-if="recordingAction === action.id" class="flex items-center space-x-2">
-                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/70 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
+                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/50 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
                       <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                       <span>{{ recordingPreview || 'Press keys...' }}</span>
                     </span>
                     <button
                       @click="stopRecording"
-                      class="px-2 py-1 text-[11px] rounded border transition btn-theme-card"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      class="px-2 py-1 text-[11px] rounded border transition cursor-pointer btn-theme-card"
                     >
                       Cancel (Esc)
                     </button>
@@ -1407,8 +1395,8 @@ const browserOtherFonts = computed(() => {
                         :key="idx"
                       >
                         <kbd
-                          class="px-2 py-0.5 text-xs rounded border font-semibold shadow-sm"
-                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                          class="px-2 py-0.5 text-xs rounded border font-semibold"
+                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                         >
                           {{ part }}
                         </kbd>
@@ -1424,19 +1412,17 @@ const browserOtherFonts = computed(() => {
 
                     <button
                       @click="startRecording(action.id)"
-                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 btn-theme-card"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 cursor-pointer btn-theme-card"
                       title="Record new shortcut"
                     >
-                      <Edit2 class="w-3 h-3" :style="{ color: 'var(--color-text-muted)' }" />
+                      <Edit2 class="w-3 h-3" />
                       <span>Edit</span>
                     </button>
 
                     <button
                       v-if="settingsStore.keymaps[action.id] !== action.defaultShortcut"
                       @click="settingsStore.resetKeymapAction(action.id)"
-                      class="p-1 rounded transition"
-                      :style="{ color: 'var(--color-text-muted)' }"
+                      class="btn-flat-ghost p-1 rounded cursor-pointer"
                       title="Reset to default"
                     >
                       <RotateCcw class="w-3 h-3" />
@@ -1450,12 +1436,12 @@ const browserOtherFonts = computed(() => {
           <!-- View Switcher (Terminal ↔ Files) -->
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2">
               <div
                 class="w-5 h-5 rounded-md border flex items-center justify-center"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent-secondary)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent-secondary)' }"
               >
                 <ArrowLeftRight class="w-3.5 h-3.5" />
               </div>
@@ -1465,12 +1451,12 @@ const browserOtherFonts = computed(() => {
               </div>
             </div>
 
-            <div class="divide-y pt-1" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="divide-y pt-1" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
               <div
                 v-for="action in viewActions"
                 :key="action.id"
                 class="py-2.5 flex items-center justify-between gap-3"
-                :style="{ borderColor: 'var(--color-border)' }"
+                :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
               >
                 <div class="min-w-0 flex-1">
                   <div class="font-medium text-xs" :style="{ color: 'var(--color-text-main)' }">{{ action.title }}</div>
@@ -1480,14 +1466,13 @@ const browserOtherFonts = computed(() => {
                 <div class="flex items-center space-x-2 shrink-0">
                   <!-- Recording State -->
                   <div v-if="recordingAction === action.id" class="flex items-center space-x-2">
-                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/70 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
+                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/50 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
                       <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                       <span>{{ recordingPreview || 'Press keys...' }}</span>
                     </span>
                     <button
                       @click="stopRecording"
-                      class="px-2 py-1 text-[11px] rounded border transition btn-theme-card"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      class="px-2 py-1 text-[11px] rounded border transition cursor-pointer btn-theme-card"
                     >
                       Cancel (Esc)
                     </button>
@@ -1501,8 +1486,8 @@ const browserOtherFonts = computed(() => {
                         :key="idx"
                       >
                         <kbd
-                          class="px-2 py-0.5 text-xs rounded border font-semibold shadow-sm"
-                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                          class="px-2 py-0.5 text-xs rounded border font-semibold"
+                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                         >
                           {{ part }}
                         </kbd>
@@ -1518,19 +1503,17 @@ const browserOtherFonts = computed(() => {
 
                     <button
                       @click="startRecording(action.id)"
-                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 btn-theme-card"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 cursor-pointer btn-theme-card"
                       title="Record new shortcut"
                     >
-                      <Edit2 class="w-3 h-3" :style="{ color: 'var(--color-text-muted)' }" />
+                      <Edit2 class="w-3 h-3" />
                       <span>Edit</span>
                     </button>
 
                     <button
                       v-if="settingsStore.keymaps[action.id] !== action.defaultShortcut"
                       @click="settingsStore.resetKeymapAction(action.id)"
-                      class="p-1 rounded transition"
-                      :style="{ color: 'var(--color-text-muted)' }"
+                      class="btn-flat-ghost p-1 rounded cursor-pointer"
                       title="Reset to default"
                     >
                       <RotateCcw class="w-3 h-3" />
@@ -1544,12 +1527,12 @@ const browserOtherFonts = computed(() => {
           <!-- Dual-Pane File Manager Navigation & Operations -->
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2">
               <div
                 class="w-5 h-5 rounded-md border flex items-center justify-center"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
               >
                 <FolderSync class="w-3.5 h-3.5" />
               </div>
@@ -1559,12 +1542,12 @@ const browserOtherFonts = computed(() => {
               </div>
             </div>
 
-            <div class="divide-y pt-1" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="divide-y pt-1" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
               <div
                 v-for="action in fileManagerActions"
                 :key="action.id"
                 class="py-2.5 flex items-center justify-between gap-3"
-                :style="{ borderColor: 'var(--color-border)' }"
+                :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
               >
                 <div class="min-w-0 flex-1">
                   <div class="font-medium text-xs" :style="{ color: 'var(--color-text-main)' }">{{ action.title }}</div>
@@ -1574,14 +1557,13 @@ const browserOtherFonts = computed(() => {
                 <div class="flex items-center space-x-2 shrink-0">
                   <!-- Recording State -->
                   <div v-if="recordingAction === action.id" class="flex items-center space-x-2">
-                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/70 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
+                    <span class="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-600/50 text-amber-300 font-mono text-xs animate-pulse flex items-center space-x-1.5">
                       <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                       <span>{{ recordingPreview || 'Press keys...' }}</span>
                     </span>
                     <button
                       @click="stopRecording"
-                      class="px-2 py-1 text-[11px] rounded border transition btn-theme-card"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      class="px-2 py-1 text-[11px] rounded border transition cursor-pointer btn-theme-card"
                     >
                       Cancel (Esc)
                     </button>
@@ -1595,8 +1577,8 @@ const browserOtherFonts = computed(() => {
                         :key="idx"
                       >
                         <kbd
-                          class="px-2 py-0.5 text-xs rounded border font-semibold shadow-sm"
-                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                          class="px-2 py-0.5 text-xs rounded border font-semibold"
+                          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                         >
                           {{ part }}
                         </kbd>
@@ -1612,19 +1594,17 @@ const browserOtherFonts = computed(() => {
 
                     <button
                       @click="startRecording(action.id)"
-                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 btn-theme-card"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                      class="px-2 py-1 text-[11px] font-medium rounded border transition flex items-center space-x-1 cursor-pointer btn-theme-card"
                       title="Record new shortcut"
                     >
-                      <Edit2 class="w-3 h-3" :style="{ color: 'var(--color-text-muted)' }" />
+                      <Edit2 class="w-3 h-3" />
                       <span>Edit</span>
                     </button>
 
                     <button
                       v-if="settingsStore.keymaps[action.id] !== action.defaultShortcut"
                       @click="settingsStore.resetKeymapAction(action.id)"
-                      class="p-1 rounded transition"
-                      :style="{ color: 'var(--color-text-muted)' }"
+                      class="btn-flat-ghost p-1 rounded cursor-pointer"
                       title="Reset to default"
                     >
                       <RotateCcw class="w-3 h-3" />
@@ -1641,12 +1621,12 @@ const browserOtherFonts = computed(() => {
           <!-- Top Card: Transfer Queue & Concurrency Controls -->
           <div
             class="rounded-xl border p-4 space-y-4 transition-colors"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2">
               <div
                 class="w-6 h-6 rounded-lg border flex items-center justify-center"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
               >
                 <Zap class="w-3.5 h-3.5" />
               </div>
@@ -1660,13 +1640,13 @@ const browserOtherFonts = computed(() => {
               <!-- Concurrency Slider -->
               <div
                 class="p-3 rounded-lg border space-y-2"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
               >
                 <div class="flex items-center justify-between">
                   <span class="text-xs font-medium" :style="{ color: 'var(--color-text-main)' }">Simultaneous Transfers</span>
                   <span
-                    class="px-2 py-0.5 rounded text-xs font-mono font-bold border"
-                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                    class="px-2 py-0.5 rounded text-xs font-mono font-semibold border"
+                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                   >
                     {{ sftpStore.maxSimultaneousTransfers }} connection{{ sftpStore.maxSimultaneousTransfers > 1 ? 's' : '' }}
                   </span>
@@ -1689,13 +1669,12 @@ const browserOtherFonts = computed(() => {
               <!-- Conflict Resolution Policy -->
               <div
                 class="p-3 rounded-lg border space-y-2"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
               >
                 <span class="text-xs font-medium block" :style="{ color: 'var(--color-text-main)' }">Default File Conflict Action</span>
                 <select
                   v-model="sftpStore.conflictPolicy"
                   class="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none input-theme font-medium cursor-pointer"
-                  :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                 >
                   <option value="ask">Ask / Prompt Dialog (Compare size &amp; date)</option>
                   <option value="overwrite">Overwrite Destination File</option>
@@ -1710,7 +1689,7 @@ const browserOtherFonts = computed(() => {
             <!-- Auto-remove completed toggle -->
             <div
               class="flex items-center justify-between pt-2 border-t"
-              :style="{ borderColor: 'var(--color-border)' }"
+              :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
             >
               <div>
                 <span class="text-xs font-medium block" :style="{ color: 'var(--color-text-main)' }">Auto-remove Successful Transfers from Queue</span>
@@ -1719,11 +1698,14 @@ const browserOtherFonts = computed(() => {
               <button
                 type="button"
                 @click="sftpStore.autoRemoveSuccessful = !sftpStore.autoRemoveSuccessful"
-                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-                :style="{ backgroundColor: sftpStore.autoRemoveSuccessful ? 'var(--color-accent)' : 'var(--color-border)' }"
+                class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease-in-out focus:outline-none"
+                :style="sftpStore.autoRemoveSuccessful
+                  ? { backgroundColor: 'color-mix(in srgb, var(--color-accent) 45%, var(--color-bg-card))', borderColor: 'color-mix(in srgb, var(--color-accent) 55%, var(--color-border))' }
+                  : { backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
               >
                 <span
-                  class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"
+                  class="pointer-events-none inline-block h-3.5 w-3.5 mt-[2px] ml-[2px] transform rounded-full transition duration-200 ease-in-out"
+                  :style="{ backgroundColor: sftpStore.autoRemoveSuccessful ? 'var(--color-text-main)' : 'var(--color-text-muted)' }"
                   :class="sftpStore.autoRemoveSuccessful ? 'translate-x-4' : 'translate-x-0'"
                 />
               </button>
@@ -1733,14 +1715,14 @@ const browserOtherFonts = computed(() => {
           <!-- Bottom Card: Intelligent Ignore Filter (Upload & Download) -->
           <div
             class="rounded-xl border p-4 space-y-4 transition-colors"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <!-- Card Header with Master Toggle -->
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-start space-x-2.5">
                 <div
                   class="w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 mt-0.5"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                 >
                   <Filter class="w-3.5 h-3.5" />
                 </div>
@@ -1752,8 +1734,8 @@ const browserOtherFonts = computed(() => {
                     <span
                       class="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold uppercase tracking-wider"
                       :style="settingsStore.enableTransferIgnoreFilter
-                        ? { backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)' }
-                        : { backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }"
+                        ? { backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.25)' }
+                        : { backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', border: '1px solid color-mix(in srgb, var(--color-border) 55%, transparent)' }"
                     >
                       {{ settingsStore.enableTransferIgnoreFilter ? 'Active' : 'Disabled' }}
                     </span>
@@ -1769,11 +1751,14 @@ const browserOtherFonts = computed(() => {
                 <button
                   type="button"
                   @click="settingsStore.enableTransferIgnoreFilter = !settingsStore.enableTransferIgnoreFilter"
-                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
-                  :style="{ backgroundColor: settingsStore.enableTransferIgnoreFilter ? 'var(--color-accent)' : 'var(--color-border)' }"
+                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors duration-200 ease-in-out focus:outline-none"
+                  :style="settingsStore.enableTransferIgnoreFilter
+                    ? { backgroundColor: 'color-mix(in srgb, var(--color-accent) 45%, var(--color-bg-card))', borderColor: 'color-mix(in srgb, var(--color-accent) 55%, var(--color-border))' }
+                    : { backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
                 >
                   <span
-                    class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"
+                    class="pointer-events-none inline-block h-3.5 w-3.5 mt-[2px] ml-[2px] transform rounded-full transition duration-200 ease-in-out"
+                    :style="{ backgroundColor: settingsStore.enableTransferIgnoreFilter ? 'var(--color-text-main)' : 'var(--color-text-muted)' }"
                     :class="settingsStore.enableTransferIgnoreFilter ? 'translate-x-4' : 'translate-x-0'"
                   />
                 </button>
@@ -1795,7 +1780,6 @@ const browserOtherFonts = computed(() => {
                       placeholder="e.g. vendor, __pycache__, .env.*, custom-cache, *.bak"
                       @keydown.enter.prevent="handleAddIgnorePattern"
                       class="w-full pl-8 pr-3 py-1.5 rounded-lg border font-mono text-xs focus:outline-none input-theme"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                     />
                     <Folder class="w-3.5 h-3.5 absolute left-2.5 top-2.5 opacity-40 pointer-events-none" />
                   </div>
@@ -1803,7 +1787,7 @@ const browserOtherFonts = computed(() => {
                     type="button"
                     @click="handleAddIgnorePattern"
                     :disabled="!newIgnorePatternInput.trim()"
-                    class="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center space-x-1.5 btn-accent disabled:opacity-40 disabled:cursor-not-allowed shadow-sm shrink-0"
+                    class="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-accent disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                   >
                     <Plus class="w-3.5 h-3.5" />
                     <span>Add Pattern</span>
@@ -1825,8 +1809,7 @@ const browserOtherFonts = computed(() => {
                   <button
                     type="button"
                     @click="settingsStore.resetIgnorePatterns()"
-                    class="text-[10px] opacity-70 hover:opacity-100 transition flex items-center space-x-1 cursor-pointer"
-                    :style="{ color: 'var(--color-text-muted)' }"
+                    class="btn-flat-ghost px-2 py-0.5 rounded text-[10px] flex items-center space-x-1 cursor-pointer"
                     title="Restore default ignore rules"
                   >
                     <RotateCcw class="w-3 h-3" />
@@ -1836,13 +1819,13 @@ const browserOtherFonts = computed(() => {
 
                 <div
                   class="p-2.5 rounded-lg border min-h-[70px] max-h-[160px] overflow-y-auto flex flex-wrap gap-1.5 items-start"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
                 >
                   <span
                     v-for="pat in settingsStore.transferIgnorePatterns"
                     :key="pat"
-                    class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md font-mono text-[11px] border transition group hover:border-red-400/50"
-                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md font-mono text-[11px] border transition group hover:border-red-400/40"
+                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-main)' }"
                   >
                     <Folder v-if="!pat.includes('*')" class="w-3 h-3 opacity-50 shrink-0" />
                     <FileCode v-else class="w-3 h-3 opacity-50 shrink-0" />
@@ -1850,7 +1833,7 @@ const browserOtherFonts = computed(() => {
                     <button
                       type="button"
                       @click="settingsStore.removeIgnorePattern(pat)"
-                      class="ml-0.5 p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 opacity-60 hover:opacity-100 transition cursor-pointer"
+                      class="ml-0.5 p-0.5 rounded hover:bg-red-500/15 hover:text-red-400 opacity-60 hover:opacity-100 transition cursor-pointer"
                       title="Remove this ignore rule"
                     >
                       <X class="w-3 h-3" />
@@ -1870,11 +1853,10 @@ const browserOtherFonts = computed(() => {
                     :key="preset"
                     type="button"
                     @click="settingsStore.addIgnorePattern(preset)"
-                    class="px-2 py-0.5 rounded border text-[10px] font-mono transition flex items-center space-x-1 opacity-75 hover:opacity-100 cursor-pointer btn-theme-card"
-                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                    class="px-2 py-0.5 rounded border text-[10px] font-mono transition flex items-center space-x-1 cursor-pointer btn-theme-card"
                     :title="`Add ${preset} to ignore patterns`"
                   >
-                    <Plus class="w-2.5 h-2.5 opacity-50" />
+                    <Plus class="w-2.5 h-2.5 opacity-60" />
                     <span>{{ preset }}</span>
                   </button>
                   <span
@@ -1892,7 +1874,7 @@ const browserOtherFonts = computed(() => {
             <div
               v-else
               class="p-3 rounded-lg border text-xs flex items-center space-x-2.5"
-              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
             >
               <AlertTriangle class="w-4 h-4 text-amber-500 shrink-0" />
               <span>
@@ -1906,7 +1888,7 @@ const browserOtherFonts = computed(() => {
         <div v-if="activeTab === 'security'" class="space-y-4">
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-start justify-between">
               <div>
@@ -1920,20 +1902,20 @@ const browserOtherFonts = computed(() => {
               <span
                 v-if="!vaultStore.isInitialized"
                 class="px-2 py-0.5 rounded-full text-[10px] font-semibold border"
-                :style="{ backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', borderColor: 'var(--color-border)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
               >
                 Not Configured
               </span>
               <span
                 v-else-if="vaultStore.isUnlocked"
-                class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 flex items-center space-x-1"
+                class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/50 text-emerald-300 border border-emerald-700/40 flex items-center space-x-1"
               >
                 <Unlock class="w-3 h-3 text-emerald-400" />
                 <span>Unlocked</span>
               </span>
               <span
                 v-else
-                class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-700/60 flex items-center space-x-1"
+                class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-950/50 text-amber-300 border border-amber-700/40 flex items-center space-x-1"
               >
                 <Lock class="w-3 h-3 text-amber-400" />
                 <span>Locked</span>
@@ -1941,11 +1923,11 @@ const browserOtherFonts = computed(() => {
             </div>
 
             <!-- Actions -->
-            <div class="pt-2 border-t flex items-center space-x-2" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="pt-2 border-t flex items-center space-x-2" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
               <template v-if="!vaultStore.isInitialized">
                 <button
                   @click="handleSetupMasterPassword"
-                  class="px-3 py-1.5 rounded-lg text-white font-medium text-xs transition flex items-center space-x-1.5 btn-accent"
+                  class="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-accent"
                 >
                   <KeyRound class="w-3.5 h-3.5" />
                   <span>Set Up Master Password</span>
@@ -1955,16 +1937,15 @@ const browserOtherFonts = computed(() => {
                 <button
                   v-if="vaultStore.isUnlocked"
                   @click="handleLockVault"
-                  class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 btn-theme-card"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-theme-card"
                 >
-                  <Lock class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                  <Lock class="w-3.5 h-3.5" />
                   <span>Lock Vault Now</span>
                 </button>
                 <button
                   v-else
                   @click="handleUnlockVault"
-                  class="px-3 py-1.5 rounded-lg text-white font-medium text-xs transition flex items-center space-x-1.5 btn-accent"
+                  class="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-accent"
                 >
                   <Unlock class="w-3.5 h-3.5" />
                   <span>Unlock Vault</span>
@@ -1972,20 +1953,18 @@ const browserOtherFonts = computed(() => {
 
                 <button
                   @click="handleChangeMasterPassword"
-                  class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 btn-theme-card"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
+                  class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-theme-card"
                 >
-                  <KeyRound class="w-3.5 h-3.5" :style="{ color: 'var(--color-text-muted)' }" />
+                  <KeyRound class="w-3.5 h-3.5" />
                   <span>Change Master Password</span>
                 </button>
 
                 <button
                   @click="showResetVaultConfirm = true"
-                  class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 text-red-400 hover:text-red-300 hover:border-red-800/80"
-                  :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                  class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-danger"
                   title="Clear encrypted vault if master password is forgotten"
                 >
-                  <Trash2 class="w-3.5 h-3.5 text-red-400" />
+                  <Trash2 class="w-3.5 h-3.5" />
                   <span>Reset Vault</span>
                 </button>
               </template>
@@ -1994,7 +1973,7 @@ const browserOtherFonts = computed(() => {
             <!-- Inline reset confirmation -->
             <div
               v-if="showResetVaultConfirm"
-              class="p-3 rounded-lg bg-red-950/30 border border-red-900/60 text-xs space-y-2 mt-2"
+              class="p-3 rounded-lg bg-red-950/25 border border-red-900/40 text-xs space-y-2 mt-2"
             >
               <div class="flex items-center space-x-2 text-red-300 font-medium">
                 <AlertTriangle class="w-4 h-4 text-red-400 shrink-0" />
@@ -2007,15 +1986,14 @@ const browserOtherFonts = computed(() => {
                 <button
                   type="button"
                   @click="showResetVaultConfirm = false"
-                  class="px-2.5 py-1 rounded text-[11px] border btn-theme-card"
-                  :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                  class="px-2.5 py-1 rounded text-[11px] border cursor-pointer btn-theme-card"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   @click="handleResetVault"
-                  class="px-2.5 py-1 rounded text-[11px] bg-red-600 hover:bg-red-700 text-white font-medium transition"
+                  class="px-2.5 py-1 rounded text-[11px] font-medium cursor-pointer btn-danger"
                 >
                   Confirm Reset
                 </button>
@@ -2025,7 +2003,7 @@ const browserOtherFonts = computed(() => {
 
           <div
             class="p-3 rounded-xl border text-[11px] space-y-1.5"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
           >
             <div class="font-semibold flex items-center space-x-1.5" :style="{ color: 'var(--color-text-main)' }">
               <span>🛡️</span>
@@ -2047,7 +2025,7 @@ const browserOtherFonts = computed(() => {
         <div v-if="activeTab === 'protocols'" class="space-y-4">
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center justify-between">
               <div>
@@ -2058,7 +2036,7 @@ const browserOtherFonts = computed(() => {
               </div>
             </div>
 
-            <div class="divide-y pt-1" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="divide-y pt-1" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
               <!-- SFTP -->
               <div class="py-2.5 flex items-center justify-between">
                 <div class="space-y-0.5">
@@ -2066,7 +2044,7 @@ const browserOtherFonts = computed(() => {
                     <span>SFTP (SSH File Transfer Protocol)</span>
                     <span
                       class="px-1.5 py-0.2 rounded text-[10px] border font-semibold"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                     >
                       Active
                     </span>
@@ -2084,7 +2062,7 @@ const browserOtherFonts = computed(() => {
                     <span>FTP & FTPS (Native TLS)</span>
                     <span
                       class="px-1.5 py-0.2 rounded text-[10px] border font-semibold"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
+                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                     >
                       Active
                     </span>
@@ -2103,7 +2081,7 @@ const browserOtherFonts = computed(() => {
           <!-- External Editor Section -->
           <div
             class="rounded-xl border p-4 space-y-4"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2.5">
               <Code2 class="w-4 h-4" :style="{ color: 'var(--color-accent)' }" />
@@ -2120,15 +2098,16 @@ const browserOtherFonts = computed(() => {
               <button
                 type="button"
                 @click="settingsStore.preferredExternalEditor = 'default'"
-                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
-                :class="settingsStore.preferredExternalEditor === 'default' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
-                :style="{
-                  backgroundColor: settingsStore.preferredExternalEditor === 'default' ? undefined : 'var(--color-bg-card)',
-                  borderColor: settingsStore.preferredExternalEditor === 'default' ? undefined : 'var(--color-border)',
-                }"
+                class="btn-flat-choice flex items-center space-x-3 p-3 rounded-lg text-left cursor-pointer"
+                :class="{ 'btn-flat-choice--active': settingsStore.preferredExternalEditor === 'default' }"
               >
-                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'default' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
-                  <div v-if="settingsStore.preferredExternalEditor === 'default'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <div
+                  class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                  :style="settingsStore.preferredExternalEditor === 'default'
+                    ? { borderColor: 'var(--color-accent)', backgroundColor: 'color-mix(in srgb, var(--color-accent) 22%, transparent)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)' }"
+                >
+                  <div v-if="settingsStore.preferredExternalEditor === 'default'" class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: 'var(--color-accent)' }" />
                 </div>
                 <div>
                   <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">System Default App</div>
@@ -2139,72 +2118,76 @@ const browserOtherFonts = computed(() => {
               <button
                 type="button"
                 @click="settingsStore.preferredExternalEditor = 'code'"
-                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
-                :class="settingsStore.preferredExternalEditor === 'code' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
-                :style="{
-                  backgroundColor: settingsStore.preferredExternalEditor === 'code' ? undefined : 'var(--color-bg-card)',
-                  borderColor: settingsStore.preferredExternalEditor === 'code' ? undefined : 'var(--color-border)',
-                }"
+                class="btn-flat-choice flex items-center space-x-3 p-3 rounded-lg text-left cursor-pointer"
+                :class="{ 'btn-flat-choice--active': settingsStore.preferredExternalEditor === 'code' }"
               >
-                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'code' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
-                  <div v-if="settingsStore.preferredExternalEditor === 'code'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <div
+                  class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                  :style="settingsStore.preferredExternalEditor === 'code'
+                    ? { borderColor: 'var(--color-accent)', backgroundColor: 'color-mix(in srgb, var(--color-accent) 22%, transparent)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)' }"
+                >
+                  <div v-if="settingsStore.preferredExternalEditor === 'code'" class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: 'var(--color-accent)' }" />
                 </div>
                 <div>
                   <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Visual Studio Code</div>
-                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono text-sky-700 dark:text-sky-300">code &lt;file&gt;</code> on PATH</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono" :style="{ color: 'var(--color-accent)' }">code &lt;file&gt;</code> on PATH</div>
                 </div>
               </button>
 
               <button
                 type="button"
                 @click="settingsStore.preferredExternalEditor = 'cursor'"
-                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
-                :class="settingsStore.preferredExternalEditor === 'cursor' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
-                :style="{
-                  backgroundColor: settingsStore.preferredExternalEditor === 'cursor' ? undefined : 'var(--color-bg-card)',
-                  borderColor: settingsStore.preferredExternalEditor === 'cursor' ? undefined : 'var(--color-border)',
-                }"
+                class="btn-flat-choice flex items-center space-x-3 p-3 rounded-lg text-left cursor-pointer"
+                :class="{ 'btn-flat-choice--active': settingsStore.preferredExternalEditor === 'cursor' }"
               >
-                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'cursor' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
-                  <div v-if="settingsStore.preferredExternalEditor === 'cursor'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <div
+                  class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                  :style="settingsStore.preferredExternalEditor === 'cursor'
+                    ? { borderColor: 'var(--color-accent)', backgroundColor: 'color-mix(in srgb, var(--color-accent) 22%, transparent)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)' }"
+                >
+                  <div v-if="settingsStore.preferredExternalEditor === 'cursor'" class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: 'var(--color-accent)' }" />
                 </div>
                 <div>
                   <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Cursor AI</div>
-                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono text-sky-700 dark:text-sky-300">cursor &lt;file&gt;</code> on PATH</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono" :style="{ color: 'var(--color-accent)' }">cursor &lt;file&gt;</code> on PATH</div>
                 </div>
               </button>
 
               <button
                 type="button"
                 @click="settingsStore.preferredExternalEditor = 'subl'"
-                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
-                :class="settingsStore.preferredExternalEditor === 'subl' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
-                :style="{
-                  backgroundColor: settingsStore.preferredExternalEditor === 'subl' ? undefined : 'var(--color-bg-card)',
-                  borderColor: settingsStore.preferredExternalEditor === 'subl' ? undefined : 'var(--color-border)',
-                }"
+                class="btn-flat-choice flex items-center space-x-3 p-3 rounded-lg text-left cursor-pointer"
+                :class="{ 'btn-flat-choice--active': settingsStore.preferredExternalEditor === 'subl' }"
               >
-                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'subl' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
-                  <div v-if="settingsStore.preferredExternalEditor === 'subl'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <div
+                  class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                  :style="settingsStore.preferredExternalEditor === 'subl'
+                    ? { borderColor: 'var(--color-accent)', backgroundColor: 'color-mix(in srgb, var(--color-accent) 22%, transparent)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)' }"
+                >
+                  <div v-if="settingsStore.preferredExternalEditor === 'subl'" class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: 'var(--color-accent)' }" />
                 </div>
                 <div>
                   <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Sublime Text</div>
-                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono text-sky-700 dark:text-sky-300">subl &lt;file&gt;</code> on PATH</div>
+                  <div class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">Launches <code class="font-mono" :style="{ color: 'var(--color-accent)' }">subl &lt;file&gt;</code> on PATH</div>
                 </div>
               </button>
 
               <button
                 type="button"
                 @click="settingsStore.preferredExternalEditor = 'notepad++'"
-                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
-                :class="settingsStore.preferredExternalEditor === 'notepad++' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
-                :style="{
-                  backgroundColor: settingsStore.preferredExternalEditor === 'notepad++' ? undefined : 'var(--color-bg-card)',
-                  borderColor: settingsStore.preferredExternalEditor === 'notepad++' ? undefined : 'var(--color-border)',
-                }"
+                class="btn-flat-choice flex items-center space-x-3 p-3 rounded-lg text-left cursor-pointer"
+                :class="{ 'btn-flat-choice--active': settingsStore.preferredExternalEditor === 'notepad++' }"
               >
-                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'notepad++' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
-                  <div v-if="settingsStore.preferredExternalEditor === 'notepad++'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <div
+                  class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                  :style="settingsStore.preferredExternalEditor === 'notepad++'
+                    ? { borderColor: 'var(--color-accent)', backgroundColor: 'color-mix(in srgb, var(--color-accent) 22%, transparent)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)' }"
+                >
+                  <div v-if="settingsStore.preferredExternalEditor === 'notepad++'" class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: 'var(--color-accent)' }" />
                 </div>
                 <div>
                   <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Notepad++</div>
@@ -2215,15 +2198,16 @@ const browserOtherFonts = computed(() => {
               <button
                 type="button"
                 @click="settingsStore.preferredExternalEditor = 'custom'"
-                class="flex items-center space-x-3 p-3 rounded-lg border text-left transition cursor-pointer"
-                :class="settingsStore.preferredExternalEditor === 'custom' ? 'border-sky-500/60 bg-sky-500/10' : 'hover:bg-black/5 dark:hover:bg-white/5'"
-                :style="{
-                  backgroundColor: settingsStore.preferredExternalEditor === 'custom' ? undefined : 'var(--color-bg-card)',
-                  borderColor: settingsStore.preferredExternalEditor === 'custom' ? undefined : 'var(--color-border)',
-                }"
+                class="btn-flat-choice flex items-center space-x-3 p-3 rounded-lg text-left cursor-pointer"
+                :class="{ 'btn-flat-choice--active': settingsStore.preferredExternalEditor === 'custom' }"
               >
-                <div class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0" :class="settingsStore.preferredExternalEditor === 'custom' ? 'border-sky-500 bg-sky-500' : 'border-zinc-400 dark:border-zinc-600'">
-                  <div v-if="settingsStore.preferredExternalEditor === 'custom'" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <div
+                  class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+                  :style="settingsStore.preferredExternalEditor === 'custom'
+                    ? { borderColor: 'var(--color-accent)', backgroundColor: 'color-mix(in srgb, var(--color-accent) 22%, transparent)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)' }"
+                >
+                  <div v-if="settingsStore.preferredExternalEditor === 'custom'" class="w-1.5 h-1.5 rounded-full" :style="{ backgroundColor: 'var(--color-accent)' }" />
                 </div>
                 <div>
                   <div class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Custom Command / Path</div>
@@ -2242,21 +2226,20 @@ const browserOtherFonts = computed(() => {
                 type="text"
                 placeholder="e.g. C:\Program Files\Zed\zed.exe or nvim"
                 class="w-full px-3 py-2 rounded-lg border text-xs font-mono focus:outline-none input-theme"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
               />
             </div>
 
             <!-- Info box -->
-            <div class="p-3 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-900 dark:text-sky-200 text-[11px] leading-relaxed">
+            <div class="p-3 rounded-lg bg-sky-500/8 border border-sky-500/20 text-sky-900 dark:text-sky-200 text-[11px] leading-relaxed">
               <span class="font-semibold text-sky-700 dark:text-sky-300">How Live Sync Works:</span>
-              When you open a remote file in an external editor, FlowSFTP downloads a temporary staging copy, preserves its file extension for syntax highlighting, and watches it with a real-time filesystem watcher. Whenever you save in your editor (<kbd class="px-1 py-0.2 rounded border bg-sky-500/20 text-sky-950 dark:text-sky-100 border-sky-500/30 font-mono text-[10px]">Ctrl+S</kbd>), FlowSFTP automatically debounces and uploads your changes back to the remote server.
+              When you open a remote file in an external editor, FlowSFTP downloads a temporary staging copy, preserves its file extension for syntax highlighting, and watches it with a real-time filesystem watcher. Whenever you save in your editor (<kbd class="px-1 py-0.2 rounded border bg-sky-500/15 text-sky-950 dark:text-sky-100 border-sky-500/25 font-mono text-[10px]">Ctrl+S</kbd>), FlowSFTP automatically debounces and uploads your changes back to the remote server.
             </div>
           </div>
 
           <!-- Directory Watchers & Auto-Upload Section -->
           <div
             class="rounded-xl border p-4 space-y-4"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2.5">
@@ -2270,7 +2253,7 @@ const browserOtherFonts = computed(() => {
               </div>
             </div>
 
-            <div v-if="dirWatcherStore.pairings.length === 0" class="p-4 rounded-lg border border-dashed text-center text-xs" :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }">
+            <div v-if="dirWatcherStore.pairings.length === 0" class="p-4 rounded-lg border border-dashed text-center text-xs" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }">
               No folder pairings active. Right-click any local folder in the file browser and choose "Pair with Remote (Live Auto-Sync)" to start.
             </div>
 
@@ -2279,7 +2262,7 @@ const browserOtherFonts = computed(() => {
                 v-for="p in dirWatcherStore.pairings"
                 :key="p.id"
                 class="p-3 rounded-lg border flex items-center justify-between text-xs"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
               >
                 <div class="space-y-1 min-w-0 flex-1 pr-3">
                   <div class="flex items-center space-x-2 font-mono text-[11px]">
@@ -2295,14 +2278,13 @@ const browserOtherFonts = computed(() => {
                 <div class="flex items-center space-x-1.5 shrink-0">
                   <button
                     @click="dirWatcherStore.toggleWatcher(p.id, !p.enabled)"
-                    class="px-2 py-1 rounded border text-xs cursor-pointer"
-                    :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+                    class="px-2.5 py-1 rounded-md border text-xs cursor-pointer btn-theme-card"
                   >
                     {{ p.enabled ? 'Pause' : 'Resume' }}
                   </button>
                   <button
                     @click="dirWatcherStore.stopWatcher(p.id)"
-                    class="p-1 rounded text-rose-400 hover:bg-rose-950/40 cursor-pointer"
+                    class="btn-flat-ghost-danger p-1.5 rounded-md cursor-pointer"
                     title="Remove pairing"
                   >
                     <Trash2 class="w-3.5 h-3.5" />
@@ -2315,7 +2297,7 @@ const browserOtherFonts = computed(() => {
           <!-- Remote Search & Grep Section -->
           <div
             class="rounded-xl border p-4 space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div class="flex items-center space-x-2.5">
               <Search class="w-4 h-4 text-sky-400" />
@@ -2345,9 +2327,9 @@ const browserOtherFonts = computed(() => {
           <!-- App Header Card -->
           <div
             class="rounded-xl border p-6 flex flex-col items-center text-center space-y-3"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
-            <img :src="appIcon" alt="FlowSFTP" class="w-20 h-20 object-contain drop-shadow-md" />
+            <img :src="appIcon" alt="FlowSFTP" class="w-20 h-20 object-contain" />
             <div>
               <h3 class="text-lg font-bold tracking-tight" :style="{ color: 'var(--color-text-main)' }">FlowSFTP</h3>
               <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">v0.9.1-beta.2 (Beta Release)</p>
@@ -2360,9 +2342,9 @@ const browserOtherFonts = computed(() => {
           <!-- Company & Contact Card -->
           <div
             class="rounded-xl border p-5 space-y-4"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
-            <div class="flex items-center justify-between border-b pb-3" :style="{ borderColor: 'var(--color-border)' }">
+            <div class="flex items-center justify-between border-b pb-3" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
               <div>
                 <div class="text-[11px] font-semibold uppercase tracking-wider" :style="{ color: 'var(--color-text-muted)' }">
                   Developed & Maintained By
@@ -2374,9 +2356,8 @@ const browserOtherFonts = computed(() => {
               <button
                 @click="openExternalUrl('https://digitalcodelabs.dev')"
                 class="px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card cursor-pointer"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-accent)' }"
               >
-                <Globe class="w-3.5 h-3.5" />
+                <Globe class="w-3.5 h-3.5" :style="{ color: 'var(--color-accent)' }" />
                 <span>digitalcodelabs.dev</span>
                 <ExternalLink class="w-3 h-3 ml-0.5 opacity-70" />
               </button>
@@ -2385,8 +2366,7 @@ const browserOtherFonts = computed(() => {
             <!-- Contact Emails -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div
-                class="rounded-lg border p-3 flex flex-col justify-between space-y-2 cursor-pointer transition hover:border-[var(--color-accent)]"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                class="btn-flat-choice rounded-lg p-3 flex flex-col justify-between space-y-2 cursor-pointer"
                 @click="openExternalUrl('mailto:contact@digitalcodelabs.dev')"
               >
                 <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
@@ -2399,8 +2379,7 @@ const browserOtherFonts = computed(() => {
               </div>
 
               <div
-                class="rounded-lg border p-3 flex flex-col justify-between space-y-2 cursor-pointer transition hover:border-[var(--color-accent)]"
-                :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+                class="btn-flat-choice rounded-lg p-3 flex flex-col justify-between space-y-2 cursor-pointer"
                 @click="openExternalUrl('mailto:dan@spiral8.net')"
               >
                 <div class="flex items-center space-x-2 text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
@@ -2417,7 +2396,7 @@ const browserOtherFonts = computed(() => {
           <!-- License & Tech Specs Card -->
           <div
             class="rounded-xl border p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
           >
             <div>
               <span class="font-medium" :style="{ color: 'var(--color-text-main)' }">License:</span>
@@ -2433,11 +2412,11 @@ const browserOtherFonts = computed(() => {
       <!-- Footer -->
       <div
         class="flex items-center justify-end px-6 py-3.5 border-t shrink-0 transition-colors duration-150"
-        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)' }"
       >
         <button
           @click="emit('close')"
-          class="px-5 py-2 rounded-lg text-xs font-semibold shadow-sm transition-colors btn-theme-card cursor-pointer"
+          class="px-5 py-1.5 rounded-lg text-xs font-medium transition-colors btn-theme-card cursor-pointer"
         >
           Done
         </button>
@@ -2451,7 +2430,7 @@ const browserOtherFonts = computed(() => {
     >
       <div
         class="w-full max-w-lg rounded-xl border shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-100"
-        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }"
+        :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
       >
         <div class="flex items-center justify-between">
           <h4 class="font-semibold text-sm flex items-center space-x-2" :style="{ color: 'var(--color-text-main)' }">
@@ -2460,8 +2439,7 @@ const browserOtherFonts = computed(() => {
           </h4>
           <button
             @click="showPasteModal = false"
-            class="p-1 rounded transition"
-            :style="{ color: 'var(--color-text-muted)' }"
+            class="btn-flat-ghost w-7 h-7 flex items-center justify-center rounded-lg cursor-pointer"
           >
             <X class="w-4 h-4" />
           </button>
@@ -2475,21 +2453,19 @@ const browserOtherFonts = computed(() => {
           v-model="pastedJson"
           rows="10"
           class="w-full font-mono text-xs p-3 rounded-lg border focus:outline-none input-theme"
-          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
           placeholder='{ "name": "My Custom Theme", "ui": { ... }, "terminal": { ... } }'
         />
 
         <div class="flex items-center justify-end space-x-2">
           <button
             @click="showPasteModal = false"
-            class="px-3 py-1.5 rounded-lg border text-xs transition btn-theme-card"
-            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+            class="px-3 py-1.5 rounded-lg border text-xs transition cursor-pointer btn-theme-card"
           >
             Cancel
           </button>
           <button
             @click="handleImportPasted"
-            class="px-4 py-1.5 rounded-lg text-white font-semibold text-xs shadow transition btn-accent"
+            class="px-4 py-1.5 rounded-lg font-medium text-xs transition cursor-pointer btn-accent"
           >
             Import & Apply
           </button>
