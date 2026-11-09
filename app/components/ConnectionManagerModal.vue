@@ -1111,19 +1111,6 @@ const handleFormSubmit = () => {
             <FileDown v-else class="w-3.5 h-3.5 shrink-0" />
             <span>Import SSH Config</span>
           </button>
-
-          <button
-            v-if="currentMode === 'list'"
-            @click="handleStartAdd"
-            :disabled="isConnecting"
-            :class="[
-              'px-2.5 py-1 text-xs rounded-lg font-medium flex items-center space-x-1 whitespace-nowrap shrink-0 btn-accent cursor-pointer',
-              isConnecting ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''
-            ]"
-          >
-            <Plus class="w-3.5 h-3.5 shrink-0" />
-            <span>New Profile</span>
-          </button>
         </div>
       </div>
 
