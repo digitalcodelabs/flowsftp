@@ -561,29 +561,29 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         <button
           v-if="sshStore.activeSession"
           @click="handleDisconnect"
-          class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-all duration-150 cursor-pointer bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-600 hover:text-white hover:border-red-600 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60 dark:hover:bg-red-900/80 dark:hover:text-white dark:hover:border-red-500"
+          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border shadow-sm transition-all duration-150 cursor-pointer bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-600 hover:text-white hover:border-red-600 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60 dark:hover:bg-red-900/80 dark:hover:text-white dark:hover:border-red-500"
           title="Disconnect active connection"
+          aria-label="Disconnect active connection"
         >
           <LogOut class="w-3.5 h-3.5 shrink-0" />
-          <span class="hidden sm:inline font-medium">Disconnect</span>
         </button>
 
         <button
           @click="settingsStore.openSettings()"
-          class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
-          title="Open Settings"
+          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
+          :title="`Open Settings (${settingsStore.keymaps.openKeymap || 'Ctrl+Shift+P'})`"
+          aria-label="Open Settings"
         >
           <Settings class="w-3.5 h-3.5 shrink-0" />
-          <span class="hidden sm:inline">Settings</span>
         </button>
 
         <button
           @click="showConnectModal = true"
-          class="flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
+          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
           title="Open Connection Manager"
+          aria-label="Open Connection Manager"
         >
           <Server class="w-3.5 h-3.5 shrink-0" />
-          <span>Connections</span>
         </button>
 
         <!-- Vertical Separator before Window Controls -->
