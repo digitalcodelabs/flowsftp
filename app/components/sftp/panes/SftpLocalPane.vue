@@ -60,6 +60,7 @@ const props = defineProps<{
   getGitStatus: (isLocal: boolean, file: LocalFileEntry) => string | null
   allowSwitchSource?: boolean
   currentSource?: string
+  stacked?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -221,11 +222,11 @@ defineExpose({
 <template>
   <div
     ref="rootEl"
-    class="flex flex-col h-full overflow-hidden relative transition-colors duration-150 shrink-0 min-w-0"
-    :style="{
-      width: `${widthPercent}%`,
-      backgroundColor: 'var(--color-bg-pane)',
-    }"
+    class="flex flex-col overflow-hidden relative transition-colors duration-150 shrink-0 min-w-0 min-h-0"
+    :class="stacked ? 'w-full' : 'h-full'"
+    :style="stacked
+      ? { height: `${widthPercent}%`, width: '100%', backgroundColor: 'var(--color-bg-pane)' }
+      : { width: `${widthPercent}%`, backgroundColor: 'var(--color-bg-pane)' }"
     @click="emit('select-pane')"
     @dragover="emit('dragover', $event)"
     @dragenter="emit('dragenter', $event)"
@@ -235,10 +236,10 @@ defineExpose({
   >
     <!-- Local Header Toolbar -->
     <div
-      class="flex items-center justify-between px-3 h-9 border-b transition-colors duration-150 shrink-0"
+      class="flex items-center justify-between gap-2 px-3 h-9 border-b transition-colors duration-150 shrink-0"
       :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
     >
-      <div class="flex items-center space-x-2">
+      <div class="flex items-center space-x-2 min-w-0">
         <span
           class="w-2 h-2 rounded-full transition-all duration-150 shrink-0"
           :class="active ? 'opacity-100 scale-100 ring-2 ring-emerald-500/40 shadow-sm shadow-emerald-500/20' : 'opacity-25 scale-75'"
@@ -246,23 +247,23 @@ defineExpose({
           title="Active navigation pane"
         />
         <!-- Source Switcher Dropdown Button -->
-        <div class="relative inline-block text-left" ref="sourceDropdownRef">
+        <div class="relative inline-block text-left shrink-0" ref="sourceDropdownRef">
           <button
             @click.stop="toggleSourceDropdown"
-            class="flex items-center gap-1.5 px-1.5 py-0.5 rounded transition hover:bg-zinc-500/10 focus:outline-none group select-none"
+            class="h-6 flex items-center gap-1.5 px-1.5 rounded transition hover:bg-zinc-500/10 focus:outline-none group select-none"
             :class="{ 'cursor-pointer': allowSwitchSource }"
             :title="allowSwitchSource ? 'Switch pane source (Local Files / Remote Sessions)' : ''"
           >
-            <Monitor class="w-3.5 h-3.5 opacity-80" :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }" />
+            <Monitor class="w-3.5 h-3.5 opacity-80 shrink-0" :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }" />
             <span
-              class="text-xs font-semibold transition-colors duration-150"
+              class="text-xs font-semibold transition-colors duration-150 whitespace-nowrap"
               :style="{ color: active ? 'var(--color-accent)' : 'var(--color-text-main)' }"
             >
               Local Files
             </span>
             <ChevronDown
               v-if="allowSwitchSource && sshStore.sessions.length > 0"
-              class="w-3 h-3 transition-transform duration-200 opacity-60 group-hover:opacity-100"
+              class="w-3 h-3 transition-transform duration-200 opacity-60 group-hover:opacity-100 shrink-0"
               :class="{ 'rotate-180': showSourceDropdown }"
             />
           </button>
@@ -324,30 +325,30 @@ defineExpose({
           </div>
         </div>
 
-        <span class="text-[11px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
+        <span class="text-[11px] font-mono hidden xl:inline truncate" :style="{ color: 'var(--color-text-muted)' }">
           ({{ selectedPaths.size > 0 ? `${selectedPaths.size} of ` : '' }}{{ searchQuery || (isComparing && hideIdenticalFiles) ? `${filteredFiles.length} of ${sftpStore.localFiles.length}` : `${filteredFiles.length}` }} items)
         </span>
       </div>
 
-      <div class="flex items-center space-x-1.5">
+      <div class="flex items-center space-x-1 shrink-0">
         <!-- Batch Actions for Local Selection -->
         <template v-if="selectedFiles.length > 0">
           <button
             v-if="sessionId"
             @click="emit('batch-upload', selectedFiles)"
             :title="`Upload ${selectedFiles.length} selected item(s) to remote (Alt+F5)`"
-            class="h-6 px-1.5 rounded text-xs transition flex items-center justify-center bg-sky-500/15 hover:bg-sky-500/30 text-sky-700 dark:text-sky-400 border border-sky-500/30 shadow-sm"
+            class="w-6 h-6 shrink-0 rounded text-xs transition flex items-center justify-center bg-sky-500/15 hover:bg-sky-500/30 text-sky-700 dark:text-sky-400 border border-sky-500/30 shadow-sm"
           >
             <CatppuccinIcon name="upload" :size="15" />
           </button>
           <button
             @click="emit('batch-delete', selectedFiles)"
             :title="`Delete ${selectedFiles.length} selected item(s) (F8 / Delete)`"
-            class="h-6 px-1.5 rounded text-red-400 hover:bg-red-950/60 text-xs transition flex items-center justify-center border border-transparent hover:border-red-500/30"
+            class="w-6 h-6 shrink-0 rounded text-red-400 hover:bg-red-950/60 text-xs transition flex items-center justify-center border border-transparent hover:border-red-500/30"
           >
             <CatppuccinIcon name="delete" :size="15" />
           </button>
-          <div class="h-3.5 w-px mx-0.5" :style="{ backgroundColor: 'var(--color-border)' }" />
+          <div class="h-3.5 w-px mx-0.5 shrink-0" :style="{ backgroundColor: 'var(--color-border)' }" />
         </template>
 
         <!-- Toggle Directory Comparison -->
@@ -355,11 +356,11 @@ defineExpose({
           v-if="sessionId"
           @click="emit('toggle-comparison')"
           :title="isComparing ? 'Exit Directory Comparison (Ctrl+Shift+C)' : 'Compare with Remote Directory (Ctrl+Shift+C)'"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :class="isComparing ? 'text-indigo-400 bg-indigo-500/10' : ''"
           :style="{ color: isComparing ? 'var(--color-accent)' : 'var(--color-text-muted)' }"
         >
-          <GitCompare class="w-4 h-4" />
+          <GitCompare class="w-4 h-4 shrink-0" />
         </button>
 
         <!-- Toggle Synchronized Browsing -->
@@ -367,11 +368,11 @@ defineExpose({
           v-if="sessionId"
           @click="sftpStore.toggleSynchronizedBrowsing()"
           :title="sftpStore.isSynchronizedBrowsing ? 'Synchronized Browsing is ON (Lockstep Navigation)' : 'Turn ON Synchronized Browsing (Lockstep Navigation)'"
-          class="p-1 rounded text-xs transition hover:opacity-80 relative"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80 relative"
           :class="sftpStore.isSynchronizedBrowsing ? 'text-sky-700 dark:text-sky-400 bg-sky-500/15 ring-1 ring-sky-400/40' : ''"
           :style="{ color: sftpStore.isSynchronizedBrowsing ? 'var(--color-accent)' : 'var(--color-text-muted)' }"
         >
-          <FolderSync class="w-4 h-4" />
+          <FolderSync class="w-4 h-4 shrink-0" />
           <span v-if="sftpStore.isSynchronizedBrowsing" class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-sky-500 dark:bg-sky-400 animate-pulse" />
         </button>
 
@@ -379,11 +380,11 @@ defineExpose({
         <button
           @click="emit('toggle-filter')"
           :title="showFilter ? 'Close Filter (Ctrl+F)' : 'Filter files (Ctrl+F)'"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :class="showFilter || searchQuery ? 'text-emerald-400' : ''"
           :style="{ color: showFilter || searchQuery ? 'var(--color-accent)' : 'var(--color-text-muted)' }"
         >
-          <Search class="w-4 h-4" />
+          <Search class="w-4 h-4 shrink-0" />
         </button>
 
         <!-- Folder History: Back (Alt+Left) -->
@@ -392,10 +393,10 @@ defineExpose({
           :disabled="!canNavigateBack"
           :class="{ 'opacity-30 cursor-not-allowed': !canNavigateBack }"
           title="Go back (Alt+Left)"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
-          <ChevronLeft class="w-4 h-4" />
+          <ChevronLeft class="w-4 h-4 shrink-0" />
         </button>
 
         <!-- Folder History: Forward (Alt+Right) -->
@@ -404,10 +405,10 @@ defineExpose({
           :disabled="!canNavigateForward"
           :class="{ 'opacity-30 cursor-not-allowed': !canNavigateForward }"
           title="Go forward (Alt+Right)"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
-          <ChevronRight class="w-4 h-4" />
+          <ChevronRight class="w-4 h-4 shrink-0" />
         </button>
 
         <!-- Parent Directory: Up (Backspace) -->
@@ -416,17 +417,17 @@ defineExpose({
           :disabled="!canNavigateUp"
           :class="{ 'opacity-30 cursor-not-allowed': !canNavigateUp }"
           title="Go to parent directory (Backspace)"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
           </svg>
         </button>
         <button
           @click="emit('refresh')"
           title="Refresh (F5)"
-          class="p-1 rounded text-xs transition hover:opacity-80 flex items-center justify-center"
+          class="w-6 h-6 shrink-0 rounded text-xs transition hover:opacity-80 flex items-center justify-center"
           :style="{ color: 'var(--color-text-muted)' }"
         >
           <CatppuccinIcon
@@ -440,18 +441,18 @@ defineExpose({
         <button
           @click="emit('update:showHiddenFiles', !showHiddenFiles)"
           :title="showHiddenFiles ? 'Hide dotfiles' : 'Show hidden dotfiles (.env, .git, etc.)'"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :class="showHiddenFiles ? 'text-indigo-400' : ''"
           :style="{ color: showHiddenFiles ? 'var(--color-accent)' : 'var(--color-text-muted)' }"
         >
-          <Eye v-if="showHiddenFiles" class="w-4 h-4" />
-          <EyeOff v-else class="w-4 h-4" />
+          <Eye v-if="showHiddenFiles" class="w-4 h-4 shrink-0" />
+          <EyeOff v-else class="w-4 h-4 shrink-0" />
         </button>
 
         <button
           @click="emit('new-file')"
           title="New File"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
           <CatppuccinIcon name="file" :size="15" />
@@ -459,7 +460,7 @@ defineExpose({
         <button
           @click="emit('new-folder')"
           title="New Directory"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
           <CatppuccinIcon name="folder" :size="15" />
@@ -468,32 +469,32 @@ defineExpose({
           v-if="sessionId"
           @click="emit('open-dir-watcher')"
           title="Directory Watcher & Live Auto-Upload (Folder Pairing)"
-          class="p-1 rounded text-xs transition hover:opacity-80 text-sky-600 dark:text-sky-400"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80 text-sky-600 dark:text-sky-400"
         >
-          <FolderSync class="w-4 h-4" />
+          <FolderSync class="w-4 h-4 shrink-0" />
         </button>
 
-        <div class="h-3.5 w-px mx-0.5" :style="{ backgroundColor: 'var(--color-border)' }" />
+        <div class="h-3.5 w-px mx-0.5 shrink-0" :style="{ backgroundColor: 'var(--color-border)' }" />
 
         <!-- Settings button -->
         <button
           @click="emit('open-settings')"
           title="Settings (Transfers, Master Password, Protocols)"
-          class="p-1 rounded text-xs transition hover:opacity-80"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
           :style="{ color: 'var(--color-text-muted)' }"
         >
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
 
         <!-- WSL Shortcut Menu -->
-        <div class="relative">
+        <div class="relative shrink-0">
           <button
             @click="toggleWslMenu"
             title="Browse WSL Linux distributions"
-            class="px-2 py-0.5 rounded border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card"
+            class="h-6 px-2 rounded border text-xs font-medium flex items-center space-x-1 transition btn-theme-card shrink-0"
           >
             <span>WSL</span>
             <span class="text-[9px]" :style="{ color: 'var(--color-text-muted)' }">▼</span>
@@ -574,7 +575,7 @@ defineExpose({
         <button
           @click="emit('toggle-bookmark')"
           :title="isBookmarked ? 'Remove Bookmark' : 'Bookmark this folder'"
-          class="p-1.5 rounded-lg border text-xs transition btn-theme-card flex items-center justify-center"
+          class="w-6 h-6 shrink-0 rounded-lg border text-xs transition btn-theme-card flex items-center justify-center"
           :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
         >
           <CatppuccinIcon
@@ -585,10 +586,10 @@ defineExpose({
         <button
           @click.stop="showBookmarksMenu = !showBookmarksMenu"
           title="Saved Local Bookmarks"
-          class="p-1.5 rounded-lg border text-xs transition btn-theme-card"
+          class="w-6 h-6 shrink-0 rounded-lg border text-xs transition btn-theme-card flex items-center justify-center"
           :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'var(--color-border)' }"
         >
-          <ChevronDown class="w-3.5 h-3.5 text-slate-400" />
+          <ChevronDown class="w-3.5 h-3.5 text-slate-400 shrink-0" />
         </button>
 
         <!-- Bookmarks Dropdown Menu -->
@@ -715,7 +716,7 @@ defineExpose({
       </div>
       <table
         v-else
-        class="min-w-[620px] w-full text-left border-collapse select-none"
+        class="min-w-[360px] w-full text-left border-collapse select-none"
         @dragover="emit('dragover', $event)"
         @drop="emit('drop', $event)"
         :style="{
@@ -729,7 +730,7 @@ defineExpose({
         >
           <tr>
             <th
-              :class="[rowPaddingClass, 'font-medium min-w-[220px] cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
+              :class="[rowPaddingClass, 'font-medium min-w-[140px] cursor-pointer select-none hover:text-[var(--color-text-main)] transition-colors']"
               :style="sortBy === 'name' ? { color: 'var(--color-accent)' } : undefined"
               @click="emit('sort', 'name')"
               :title="sortBy === 'name' ? (sortOrder === 'asc' ? 'Sorted by Name (Ascending) - Click to sort Descending' : 'Sorted by Name (Descending) - Click to sort Ascending') : 'Sort by Name'"

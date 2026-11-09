@@ -91,21 +91,30 @@ const remotePaneRef = computed<HTMLElement | null>(() => remotePaneComp.value?.r
 const splitContainerRef = ref<HTMLElement | null>(null)
 const leftPanePercent = ref(50)
 const isResizingHorizontal = ref(false)
+const isStackedLayout = ref(false)
+let splitContainerResizeObserver: ResizeObserver | null = null
 
 const transferQueueRef = ref<InstanceType<typeof SftpTransferQueue> | null>(null)
 
 const startHorizontalResize = (e: MouseEvent) => {
   isResizingHorizontal.value = true
-  document.body.style.cursor = 'col-resize'
+  document.body.style.cursor = isStackedLayout.value ? 'row-resize' : 'col-resize'
   document.body.style.userSelect = 'none'
 
   const onMouseMove = (ev: MouseEvent) => {
     if (!splitContainerRef.value) return
     const containerRect = splitContainerRef.value.getBoundingClientRect()
-    if (containerRect.width <= 0) return
-    const relativeX = ev.clientX - containerRect.left
-    const percent = (relativeX / containerRect.width) * 100
-    leftPanePercent.value = Math.max(20, Math.min(80, Math.round(percent * 10) / 10))
+    if (isStackedLayout.value) {
+      if (containerRect.height <= 0) return
+      const relativeY = ev.clientY - containerRect.top
+      const percent = (relativeY / containerRect.height) * 100
+      leftPanePercent.value = Math.max(20, Math.min(80, Math.round(percent * 10) / 10))
+    } else {
+      if (containerRect.width <= 0) return
+      const relativeX = ev.clientX - containerRect.left
+      const percent = (relativeX / containerRect.width) * 100
+      leftPanePercent.value = Math.max(20, Math.min(80, Math.round(percent * 10) / 10))
+    }
   }
 
   const onMouseUp = () => {
@@ -1535,6 +1544,22 @@ onMounted(() => {
     }
   }
 
+  if (splitContainerRef.value && typeof ResizeObserver !== 'undefined') {
+    const updateLayoutMode = (width: number) => {
+      if (width > 0) {
+        isStackedLayout.value = width < 760
+      }
+    }
+    updateLayoutMode(splitContainerRef.value.clientWidth)
+    splitContainerResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) {
+        updateLayoutMode(entry.contentRect.width)
+      }
+    })
+    splitContainerResizeObserver.observe(splitContainerRef.value)
+  }
+
   sftpStore.initLocal()
   vaultStore.init()
   externalEditStore.init()
@@ -1552,6 +1577,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (splitContainerResizeObserver) {
+    splitContainerResizeObserver.disconnect()
+    splitContainerResizeObserver = null
+  }
   window.removeEventListener('auxclick', handleAuxClick)
   window.removeEventListener('keydown', handleWindowShortcut)
   window.removeEventListener('click', closeContextMenu)
@@ -2839,7 +2868,8 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
     <!-- Global Drag/Resize Overlays (Prevents iframes, selections, and sub-elements from eating mousemove/mouseup) -->
     <div
       v-if="isResizingHorizontal"
-      class="fixed inset-0 z-[99999] cursor-col-resize select-none pointer-events-auto"
+      class="fixed inset-0 z-[99999] select-none pointer-events-auto"
+      :class="isStackedLayout ? 'cursor-row-resize' : 'cursor-col-resize'"
     />
     <!-- Auto-Reconnect / Connection Health Toast Banner -->
     <div
@@ -3303,7 +3333,8 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
     <!-- Top Panes Layout (Left & Right Resizable Panes) -->
     <div
       ref="splitContainerRef"
-      class="flex-1 flex flex-row overflow-hidden relative"
+      class="flex-1 flex overflow-hidden relative"
+      :class="isStackedLayout ? 'flex-col' : 'flex-row'"
     >
       <!-- LEFT PANE: Local File System OR Remote Session (Dual-Remote Mode) -->
       <SftpLocalPane
@@ -3311,6 +3342,7 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
         ref="localPaneComp"
         :active="activePane === 'local'"
         :width-percent="leftPanePercent"
+        :stacked="isStackedLayout"
         :session-id="props.sessionId"
         :allow-switch-source="true"
         :current-source="'local'"
@@ -3382,6 +3414,7 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
         ref="leftRemotePaneComp"
         :active="activePane === 'local'"
         :width-percent="leftPanePercent"
+        :stacked="isStackedLayout"
         :session-id="leftPaneSource"
         :is-left-pane="true"
         :allow-switch-source="true"
@@ -3453,18 +3486,24 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
         @toggle-bookmark="toggleRemoteBookmark"
       />
 
-      <!-- Vertical Splitter Handle (Horizontal Resize between Local & Remote) -->
+      <!-- Splitter Handle (Resize between Local & Remote) -->
       <div
         @mousedown.prevent="startHorizontalResize"
-        class="w-1.5 z-30 cursor-col-resize flex items-center justify-center transition-all group flex-shrink-0 relative select-none"
-        :class="{ 'bg-sky-500/50': isResizingHorizontal }"
+        class="z-30 flex items-center justify-center transition-all group flex-shrink-0 relative select-none"
+        :class="[
+          isStackedLayout ? 'h-1.5 w-full cursor-row-resize' : 'w-1.5 cursor-col-resize',
+          { 'bg-sky-500/50': isResizingHorizontal }
+        ]"
         :style="{ backgroundColor: isResizingHorizontal ? 'var(--color-accent)' : 'var(--color-border)' }"
         title="Drag to resize panes (Double-click to reset 50/50)"
         @dblclick="resetHorizontalSplit"
       >
         <div
-          class="w-0.5 h-8 rounded-full transition-colors"
-          :class="isResizingHorizontal ? 'bg-white' : 'bg-zinc-400 group-hover:bg-white'"
+          class="rounded-full transition-colors"
+          :class="[
+            isStackedLayout ? 'h-0.5 w-8' : 'w-0.5 h-8',
+            isResizingHorizontal ? 'bg-white' : 'bg-zinc-400 group-hover:bg-white'
+          ]"
         />
       </div>
 
@@ -3473,6 +3512,7 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
         ref="remotePaneComp"
         :active="activePane === 'remote'"
         :width-percent="100 - leftPanePercent"
+        :stacked="isStackedLayout"
         :session-id="props.sessionId"
         :allow-switch-source="sshStore.sessions.length > 1"
         :current-source="props.sessionId || undefined"

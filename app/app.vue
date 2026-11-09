@@ -475,7 +475,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         >
           <button
             @click="currentTab = 'terminal'"
-            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5 cursor-pointer border"
+            class="h-6 px-2.5 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5 cursor-pointer border shrink-0"
             :style="currentTab === 'terminal'
               ? {
                   backgroundColor: 'var(--color-bg-hover)',
@@ -499,7 +499,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
           </button>
           <button
             @click="currentTab = 'sftp'"
-            class="px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5 cursor-pointer border"
+            class="h-6 px-2.5 rounded-md text-xs font-medium transition-all duration-150 flex items-center space-x-1.5 cursor-pointer border shrink-0"
             :style="currentTab === 'sftp'
               ? {
                   backgroundColor: 'var(--color-bg-hover)',
@@ -550,7 +550,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             :data-session-id="sess.sessionId"
             @click="selectSession(sess.sessionId)"
             :title="`${sess.username}@${sess.host}:${sess.port} (${sess.protocol?.toUpperCase() || 'SFTP'}) • ${settingsStore.keymaps.nextSession} to switch`"
-            class="header-session-tab group flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border transition-all duration-150 shrink-0 max-w-[140px] sm:max-w-[180px] no-drag"
+            class="header-session-tab group h-7 flex items-center space-x-1.5 px-2 rounded-md text-xs cursor-pointer border transition-all duration-150 shrink-0 max-w-[140px] sm:max-w-[180px] no-drag"
             :class="{ 'header-session-tab--active': sess.sessionId === sshStore.activeSessionId }"
           >
             <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="sess.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" />
@@ -581,7 +581,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         <button
           v-if="sshStore.activeSession"
           @click="handleDisconnect"
-          class="header-disconnect-btn flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
+          class="header-disconnect-btn w-7 h-7 shrink-0 flex items-center justify-center text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
           title="Disconnect active connection"
           aria-label="Disconnect active connection"
         >
@@ -590,7 +590,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <button
           @click="settingsStore.openSettings()"
-          class="header-icon-btn flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
+          class="header-icon-btn w-7 h-7 shrink-0 flex items-center justify-center text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
           :title="`Open Settings (${settingsStore.keymaps.openKeymap || 'Ctrl+Shift+P'})`"
           aria-label="Open Settings"
         >
@@ -599,7 +599,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <button
           @click="showConnectModal = true"
-          class="header-icon-btn flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
+          class="header-icon-btn w-7 h-7 shrink-0 flex items-center justify-center text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
           title="Open Connection Manager"
           aria-label="Open Connection Manager"
         >
