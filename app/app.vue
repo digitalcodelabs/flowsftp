@@ -550,10 +550,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             :data-session-id="sess.sessionId"
             @click="selectSession(sess.sessionId)"
             :title="`${sess.username}@${sess.host}:${sess.port} (${sess.protocol?.toUpperCase() || 'SFTP'}) • ${settingsStore.keymaps.nextSession} to switch`"
-            class="group flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border transition-all shrink-0 max-w-[140px] sm:max-w-[180px] no-drag"
-            :style="sess.sessionId === sshStore.activeSessionId
-              ? { backgroundColor: 'var(--color-bg-hover)', borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)', color: 'var(--color-text-main)' }
-              : { backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 45%, transparent)', color: 'var(--color-text-muted)' }"
+            class="header-session-tab group flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border transition-all duration-150 shrink-0 max-w-[140px] sm:max-w-[180px] no-drag"
+            :class="{ 'header-session-tab--active': sess.sessionId === sshStore.activeSessionId }"
           >
             <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="sess.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" />
             <span
@@ -583,7 +581,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         <button
           v-if="sshStore.activeSession"
           @click="handleDisconnect"
-          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-all duration-150 cursor-pointer bg-red-500/8 text-red-500/80 border-red-500/15 hover:bg-red-600 hover:text-white hover:border-red-600 dark:bg-red-950/25 dark:text-red-400/80 dark:border-red-900/30 dark:hover:bg-red-900/80 dark:hover:text-white dark:hover:border-red-700/60"
+          class="header-disconnect-btn flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
           title="Disconnect active connection"
           aria-label="Disconnect active connection"
         >
@@ -592,8 +590,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <button
           @click="settingsStore.openSettings()"
-          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer hover:text-[var(--color-text-main)] hover:bg-[var(--color-bg-hover)] hover:border-[var(--color-border)]"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
+          class="header-icon-btn flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
           :title="`Open Settings (${settingsStore.keymaps.openKeymap || 'Ctrl+Shift+P'})`"
           aria-label="Open Settings"
         >
@@ -602,8 +599,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <button
           @click="showConnectModal = true"
-          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer hover:text-[var(--color-text-main)] hover:bg-[var(--color-bg-hover)] hover:border-[var(--color-border)]"
-          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
+          class="header-icon-btn flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
           title="Open Connection Manager"
           aria-label="Open Connection Manager"
         >
@@ -737,3 +733,47 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
     <HostKeyPromptModal />
   </div>
 </template>
+
+<style scoped>
+.header-session-tab {
+  background-color: var(--color-bg-card);
+  border-color: color-mix(in srgb, var(--color-border) 45%, transparent);
+  color: var(--color-text-muted);
+}
+
+.header-session-tab:not(.header-session-tab--active):hover {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 55%, var(--color-bg-card));
+  border-color: color-mix(in srgb, var(--color-border) 70%, transparent);
+  color: var(--color-text-main);
+}
+
+.header-session-tab--active {
+  background-color: var(--color-bg-hover);
+  border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+  color: var(--color-text-main);
+}
+
+.header-icon-btn {
+  background-color: var(--color-bg-card);
+  border-color: color-mix(in srgb, var(--color-border) 50%, transparent);
+  color: var(--color-text-muted);
+}
+
+.header-icon-btn:hover {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 65%, var(--color-bg-card));
+  border-color: color-mix(in srgb, var(--color-border) 85%, transparent);
+  color: var(--color-text-main);
+}
+
+.header-disconnect-btn {
+  background-color: color-mix(in srgb, var(--color-danger, #ef4444) 8%, var(--color-bg-card));
+  border-color: color-mix(in srgb, var(--color-danger, #ef4444) 22%, transparent);
+  color: color-mix(in srgb, var(--color-danger, #ef4444) 80%, var(--color-text-muted));
+}
+
+.header-disconnect-btn:hover {
+  background-color: color-mix(in srgb, var(--color-danger, #ef4444) 18%, var(--color-bg-hover));
+  border-color: color-mix(in srgb, var(--color-danger, #ef4444) 40%, var(--color-border));
+  color: var(--color-danger, #f87171);
+}
+</style>
