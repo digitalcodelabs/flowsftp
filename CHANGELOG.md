@@ -1,0 +1,53 @@
+# Changelog
+
+All notable changes to **FlowSFTP** are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [0.9.1] — v0.9.1-beta.2 (2026-11-09)
+
+### Release Highlights
+- **Transfer While Counting (Streaming Crawls & FTP Connection Pool)**: Uploading or downloading deep folders with thousands of files now begins transferring almost immediately instead of waiting for the entire directory tree to be counted first.
+- **Calm, Flat UI Redesign**: Every button, tab, input, and modal across the header, **Settings**, **Connection Manager**, and **Vault** dialogs now uses a flat, low-brightness, soft-bordered aesthetic that is easy on the eyes during long sessions.
+- **First-Class Tiling Window Manager Support (Hyprland / Omarchy / Wayland)**: Removed rigid minimum window constraints and added responsive vertical dual-pane stacking so FlowSFTP scales cleanly in narrow side-by-side or quarter-screen tiles on Linux tiling compositors.
+- **Terminal Zoom & Clipboard Shortcuts**: Zoom terminal text on the fly with `Ctrl + +` / `Ctrl + -` / `Ctrl + 0`, and copy/paste terminal selections effortlessly with `Ctrl + Shift + C` and `Ctrl + Shift + V`.
+
+### Added
+- **Streaming Directory Crawls (`sftp` & `ftp`)**: Recursive local and remote folder crawls now emit discovered batches incrementally (every 50 items or 150ms) so the transfer queue begins uploading/downloading right away while counting continues in the background.
+- **Concurrent FTP/FTPS Worker Pool**: Dedicated pooled FTP transfer connections allow multiple files to transfer while directory crawling and interactive browsing remain responsive.
+- **Terminal Font Zoom Shortcuts**: Support `Ctrl + =` / `Ctrl + +` (zoom in), `Ctrl + -` (zoom out), and `Ctrl + 0` (reset to `13px`) directly inside the integrated SSH terminal.
+- **Terminal Keyboard Copy & Paste**: Support `Ctrl + Shift + C` to copy active mouse selections to the clipboard and `Ctrl + Shift + V` to paste into the active SSH session.
+- **Empty-State Quick Settings Button**: Added a `Settings` button alongside `Connection Manager` on the initial no-session welcome screen for immediate access to themes, fonts, and keymaps on first launch.
+- **File Browser Font Size Slider**: Replaced the fixed 4-preset font size buttons in **Settings -> Fonts & Sizing** with a smooth `10px`–`20px` range slider and proportional file/folder icon scaling.
+- **Quick Settings Shortcut (`Ctrl + Shift + P`)**: Bound `Ctrl + Shift + P` to open Settings from anywhere in the app while suppressing the default WebView print dialog.
+- **Master Password Vault Onboarding**: Saving connection credentials when the vault is uninitialized now guides users directly through Master Password setup, with live vault status controls (`Set Up Vault`, `Vault Locked`, `Vault Unlocked`) in the Connection Manager header.
+
+### Changed
+- **Flat, Low-Brightness Button & Border System**: Removed 3D glossy `inset` bevels, drop shadows, and bright neon hover glows across `.btn-accent`, `.btn-accent-secondary`, `.btn-theme-card`, `.btn-danger`, toggle switches, and modal cards in favor of subtle surface tints, soft `color-mix` borders, and a gentle hover brightness lift.
+- **Minimal Icon-Only Titlebar Controls**: Streamlined header `Disconnect`, `Settings`, and `Connection Manager` buttons to compact square icon buttons (`28x28`) with descriptive tooltips and softer active session tab borders.
+- **Responsive Dual-Pane Tiling Layout**: Removed fixed `minWidth` / `minHeight` window restrictions in Tauri config, locked toolbar icon buttons against flex distortion, and automatically switch the dual-pane SFTP browser into a stacked top/bottom split with a horizontal resize handle when window width drops below `640px`.
+- **Smart SSH Key Selection**: Selecting a `.pub` public key file in the Connection Manager automatically resolves to its sibling private key when available, and the file picker now surfaces extensionless OpenSSH keys (such as `id_ed25519` and `id_rsa`).
+
+### Fixed
+- **Windows Console Flash Prevention**: Applied `CREATE_NO_WINDOW` (`0x08000000`) to background `git`, `wsl`, `reg`, and `tar` subprocesses on Windows so terminal windows never flicker during Git status checks, WSL detection, or archive operations.
+- **macOS Bundle Configuration**: Resolved Tauri bundle naming collision on macOS builds.
+- **Security & Stability Hardening**:
+  - Guarded local archive extraction against path traversal (`Zip-Slip`) outside destination directories.
+  - Switched Master Password vault verifier checks to constant-time comparison and stopped persisting plaintext session secrets in `sessionStorage`.
+  - Preserved original remote POSIX file permissions when auto-uploading files via External Editor Live Sync.
+  - Bounded remote SSH grep/find stdout memory buffers and hardened shell argument escaping.
+  - Fixed session teardown and cancelled connection races so background watchers, staged temp files, and SSH handles clean up deterministically.
+
+---
+
+## [0.9.0] — v0.9.0-beta.1 (2026-11-05)
+
+### Highlights
+- **Dual-Pane SFTP / FTP / FTPS File Manager**: Support for Local ↔ Remote and direct Server-to-Server (Remote ↔ Remote) browsing, drag-and-drop transfers, synchronized lockstep navigation, and visual directory comparison (`Ctrl + Shift + C`).
+- **Hardware-Accelerated Multi-Tab SSH Terminal**: Integrated `xterm.js` + WebGL terminal with one-click *"Open in Terminal"* folder navigation and custom JSON theme support (including Catppuccin Mocha & Latte).
+- **SSH Host-Key Verification (TOFU)**: Interactive fingerprint verification modal for unknown and changed SSH host keys backed by `known_hosts`.
+- **Developer Workflow Suite**: Built-in **CodeMirror 6** editor with optional **Vim mode**, **Quick Look** media/code/PDF/Markdown preview (`Space`), **External Editor Live Sync** (VS Code, Cursor, Sublime Text, Notepad++), **Live Directory Watcher** folder pairing, and kernel-speed **Remote SSH Search & Grep** (`Ctrl + Shift + F`).
+- **FileZilla-Style 3-Tab Transfer Queue**: Resizable bottom transfer drawer with `Queued`, `Failed`, and `Successful` tabs, smart conflict resolution (**Overwrite**, **Resume**, **Auto-Rename**, **Skip**), configurable glob ignore rules, and queue completion actions.
+- **Modular Store Architecture & Test Suite**: Extracted transfer pipeline, queue pump, conflict resolution, directory browser, and file operations into dedicated composables covered by 149 automated Vitest unit tests.
