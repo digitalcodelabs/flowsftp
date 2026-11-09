@@ -246,6 +246,28 @@ const handleGlobalKeyDown = (e: KeyboardEvent) => {
     }
   }
 
+  // Terminal Zoom shortcuts when in the Terminal view: Ctrl + (zoom in), Ctrl - (zoom out), Ctrl 0 (reset zoom)
+  if (currentTab.value === 'terminal' && isCtrlOrCmd && !e.altKey) {
+    if (e.key === '+' || e.key === '=' || e.code === 'Equal' || e.code === 'NumpadAdd') {
+      e.preventDefault()
+      e.stopPropagation()
+      settingsStore.zoomInTerminal()
+      return
+    }
+    if (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+      e.preventDefault()
+      e.stopPropagation()
+      settingsStore.zoomOutTerminal()
+      return
+    }
+    if (!e.shiftKey && (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) {
+      e.preventDefault()
+      e.stopPropagation()
+      settingsStore.resetTerminalZoom()
+      return
+    }
+  }
+
   // If we are in the SFTP browser view, do not intercept file manager actions or plain F2
   if (currentTab.value === 'sftp') {
     if (e.key === 'F2') return
@@ -530,8 +552,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             :title="`${sess.username}@${sess.host}:${sess.port} (${sess.protocol?.toUpperCase() || 'SFTP'}) • ${settingsStore.keymaps.nextSession} to switch`"
             class="group flex items-center space-x-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border transition-all shrink-0 max-w-[140px] sm:max-w-[180px] no-drag"
             :style="sess.sessionId === sshStore.activeSessionId
-              ? { backgroundColor: 'var(--color-bg-hover)', borderColor: 'var(--color-border-active)', color: 'var(--color-text-main)' }
-              : { backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
+              ? { backgroundColor: 'var(--color-bg-hover)', borderColor: 'color-mix(in srgb, var(--color-border) 75%, transparent)', color: 'var(--color-text-main)' }
+              : { backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 45%, transparent)', color: 'var(--color-text-muted)' }"
           >
             <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="sess.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" />
             <span
@@ -561,7 +583,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         <button
           v-if="sshStore.activeSession"
           @click="handleDisconnect"
-          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border shadow-sm transition-all duration-150 cursor-pointer bg-red-500/10 text-red-600 border-red-500/30 hover:bg-red-600 hover:text-white hover:border-red-600 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/60 dark:hover:bg-red-900/80 dark:hover:text-white dark:hover:border-red-500"
+          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-all duration-150 cursor-pointer bg-red-500/8 text-red-500/80 border-red-500/15 hover:bg-red-600 hover:text-white hover:border-red-600 dark:bg-red-950/25 dark:text-red-400/80 dark:border-red-900/30 dark:hover:bg-red-900/80 dark:hover:text-white dark:hover:border-red-700/60"
           title="Disconnect active connection"
           aria-label="Disconnect active connection"
         >
@@ -570,7 +592,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <button
           @click="settingsStore.openSettings()"
-          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
+          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer hover:text-[var(--color-text-main)] hover:bg-[var(--color-bg-hover)] hover:border-[var(--color-border)]"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
           :title="`Open Settings (${settingsStore.keymaps.openKeymap || 'Ctrl+Shift+P'})`"
           aria-label="Open Settings"
         >
@@ -579,7 +602,8 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <button
           @click="showConnectModal = true"
-          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border shadow-sm transition-colors duration-150 btn-theme-card cursor-pointer"
+          class="flex items-center justify-center p-1.5 text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer hover:text-[var(--color-text-main)] hover:bg-[var(--color-bg-hover)] hover:border-[var(--color-border)]"
+          :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
           title="Open Connection Manager"
           aria-label="Open Connection Manager"
         >

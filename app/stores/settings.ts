@@ -432,10 +432,25 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  function zoomInTerminal() {
+    terminalFontSize.value = Math.min(32, (Number(terminalFontSize.value) || 13) + 1)
+  }
+
+  function zoomOutTerminal() {
+    terminalFontSize.value = Math.max(8, (Number(terminalFontSize.value) || 13) - 1)
+  }
+
+  function resetTerminalZoom() {
+    terminalFontSize.value = 13
+  }
+
   return {
     terminalFontFamily,
     terminalFontSize,
     terminalLineHeight,
+    zoomInTerminal,
+    zoomOutTerminal,
+    resetTerminalZoom,
     browserFontFamily,
     browserFontSize,
     browserRowDensity,

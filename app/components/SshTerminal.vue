@@ -42,6 +42,51 @@ let isUnmounted = false
 
 let lastCols = 0
 let lastRows = 0
+let lastClipboardPasteAt = 0
+
+const copyTerminalSelection = () => {
+  const selection = terminal?.getSelection()
+  if (!selection) return
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(selection).catch((err) => {
+      console.warn('Failed to copy terminal selection to clipboard:', err)
+    })
+  }
+}
+
+const pasteClipboardIntoTerminal = () => {
+  if (!navigator.clipboard?.readText) return
+  lastClipboardPasteAt = Date.now()
+  navigator.clipboard
+    .readText()
+    .then((text) => {
+      if (text && terminal) {
+        terminal.paste(text)
+      }
+    })
+    .catch((err) => {
+      console.warn('Failed to read clipboard for terminal paste:', err)
+    })
+}
+
+const handleNativePaste = (e: ClipboardEvent) => {
+  // Prevent duplicate paste if our Ctrl+Shift+V / Cmd+V keydown handler already invoked terminal.paste()
+  if (Date.now() - lastClipboardPasteAt < 150) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+}
+
+const handleTerminalWheel = (e: WheelEvent) => {
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    if (e.deltaY < 0) {
+      settingsStore.zoomInTerminal()
+    } else if (e.deltaY > 0) {
+      settingsStore.zoomOutTerminal()
+    }
+  }
+}
 
 // Watch for live font/size setting changes
 watch(
@@ -150,8 +195,64 @@ const initTerminal = async () => {
     console.warn('WebGL renderer unavailable, falling back to DOM renderer:', err)
   }
 
-  // Intercept application shortcuts before xterm processes them (e.g. Ctrl+Tab to cycle connections, Ctrl+` to toggle view)
+  // Intercept application shortcuts before xterm processes them (e.g. Ctrl+Tab to cycle connections, Ctrl+` to toggle view, zoom, copy/paste)
   terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+    const isCtrlOrCmd = event.ctrlKey || event.metaKey
+
+    // Copy selected terminal text: Ctrl+Shift+C (or Cmd+C on macOS)
+    const isCopyShortcut =
+      (event.ctrlKey && event.shiftKey && !event.altKey && (event.key.toLowerCase() === 'c' || event.code === 'KeyC')) ||
+      (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key.toLowerCase() === 'c' || event.code === 'KeyC'))
+    if (isCopyShortcut) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown') {
+        copyTerminalSelection()
+      }
+      return false
+    }
+
+    // Paste clipboard text into terminal: Ctrl+Shift+V (or Cmd+V on macOS)
+    const isPasteShortcut =
+      (event.ctrlKey && event.shiftKey && !event.altKey && (event.key.toLowerCase() === 'v' || event.code === 'KeyV')) ||
+      (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key.toLowerCase() === 'v' || event.code === 'KeyV'))
+    if (isPasteShortcut) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.type === 'keydown') {
+        pasteClipboardIntoTerminal()
+      }
+      return false
+    }
+
+    // Terminal Zoom shortcuts: Ctrl + (zoom in), Ctrl - (zoom out), Ctrl 0 (reset zoom)
+    if (isCtrlOrCmd && !event.altKey) {
+      if (event.key === '+' || event.key === '=' || event.code === 'Equal' || event.code === 'NumpadAdd') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.type === 'keydown') {
+          settingsStore.zoomInTerminal()
+        }
+        return false
+      }
+      if (event.key === '-' || event.key === '_' || event.code === 'Minus' || event.code === 'NumpadSubtract') {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.type === 'keydown') {
+          settingsStore.zoomOutTerminal()
+        }
+        return false
+      }
+      if (!event.shiftKey && (event.key === '0' || event.code === 'Digit0' || event.code === 'Numpad0')) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.type === 'keydown') {
+          settingsStore.resetTerminalZoom()
+        }
+        return false
+      }
+    }
+
     if (event.type === 'keydown') {
       // Standard terminal editing keys must always go directly to xterm
       if (
@@ -284,6 +385,8 @@ defineExpose({
     <!-- Terminal Container -->
     <div
       ref="terminalEl"
+      @paste.capture="handleNativePaste"
+      @wheel="handleTerminalWheel"
       class="flex-1 w-full h-full overflow-hidden p-2 text-sm focus:outline-none"
       :style="{ backgroundColor: 'var(--color-terminal-bg)' }"
       tabindex="0"
