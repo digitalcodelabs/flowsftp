@@ -1497,6 +1497,15 @@ const handleRemoteParentClick = () => {
 }
 
 const scrollToRow = (pane: 'local' | 'remote', index: number) => {
+  if (pane === 'local') {
+    if (leftPaneSource.value === 'local') {
+      localPaneComp.value?.scrollToIndex?.(index)
+    } else {
+      leftRemotePaneComp.value?.scrollToIndex?.(index)
+    }
+  } else {
+    remotePaneComp.value?.scrollToIndex?.(index)
+  }
   nextTick(() => {
     const id = `${pane}-row-${index === -1 ? 'parent' : index}`
     const el = document.getElementById(id)
@@ -1570,6 +1579,7 @@ onMounted(() => {
   }
   loadBookmarks()
   startHeartbeat()
+  window.addEventListener('flowsftp:bookmarks-updated', loadBookmarks)
   window.addEventListener('online', handleNetworkOnline)
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('keydown', handleWindowShortcut)
@@ -1581,6 +1591,7 @@ onUnmounted(() => {
     splitContainerResizeObserver.disconnect()
     splitContainerResizeObserver = null
   }
+  window.removeEventListener('flowsftp:bookmarks-updated', loadBookmarks)
   window.removeEventListener('auxclick', handleAuxClick)
   window.removeEventListener('keydown', handleWindowShortcut)
   window.removeEventListener('click', closeContextMenu)

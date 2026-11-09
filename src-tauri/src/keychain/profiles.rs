@@ -233,6 +233,58 @@ pub fn rename_profile(
     Ok(updated)
 }
 
+fn import_profiles_to_path(
+    path: &Path,
+    incoming: Vec<SavedConnectionProfile>,
+    replace_existing: bool,
+) -> Result<usize, String> {
+    let mut profiles = if replace_existing {
+        Vec::new()
+    } else {
+        load_profiles_from_path(path)?
+    };
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut imported_count = 0usize;
+    for mut item in incoming {
+        if item.id.trim().is_empty() || item.host.trim().is_empty() {
+            continue;
+        }
+        if item.created_at == 0 {
+            item.created_at = now_secs;
+        }
+        if item.name.trim().is_empty() {
+            item.name = format!("{}@{}", item.username, item.host);
+        }
+        if let Some(idx) = profiles.iter().position(|p| p.id == item.id) {
+            profiles[idx] = item;
+        } else {
+            profiles.push(item);
+        }
+        imported_count += 1;
+    }
+
+    let json = serde_json::to_string_pretty(&profiles)
+        .map_err(|e| format!("Failed to serialize profiles: {}", e))?;
+
+    atomic_write_file(path, &json)?;
+    Ok(imported_count)
+}
+
+pub fn import_profiles(
+    app: &tauri::AppHandle,
+    profiles: Vec<SavedConnectionProfile>,
+    replace_existing: bool,
+) -> Result<usize, String> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = get_storage_path(app)?;
+    import_profiles_to_path(&path, profiles, replace_existing)
+}
+
 fn get_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     get_app_data_file(app, "vault.json")
 }
@@ -294,6 +346,66 @@ mod tests {
         let loaded = load_profiles_from_path(&file_path).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].host, "example.com");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_profiles_supports_merge_and_replace_modes() {
+        let dir = std::env::temp_dir().join(format!("flowsftp_import_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("saved_connections.json");
+
+        let p1 = SavedConnectionProfile {
+            id: "prof-1".to_string(),
+            name: "Prod".to_string(),
+            group: Some("Work".to_string()),
+            protocol: "sftp".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 22,
+            username: "ubuntu".to_string(),
+            auth_type: "Password".to_string(),
+            key_path: None,
+            has_saved_secret: true,
+            default_remote_path: None,
+            created_at: 100,
+        };
+        let p2 = SavedConnectionProfile {
+            id: "prof-2".to_string(),
+            name: "Staging".to_string(),
+            group: None,
+            protocol: "sftp".to_string(),
+            host: "10.0.0.2".to_string(),
+            port: 2222,
+            username: "deploy".to_string(),
+            auth_type: "Agent".to_string(),
+            key_path: None,
+            has_saved_secret: false,
+            default_remote_path: Some("/var/www".to_string()),
+            created_at: 0,
+        };
+
+        let count = import_profiles_to_path(&file_path, vec![p1.clone()], false).unwrap();
+        assert_eq!(count, 1);
+
+        // Merge: update prof-1 name and add prof-2
+        let mut p1_updated = p1;
+        p1_updated.name = "Prod Updated".to_string();
+        let merged = import_profiles_to_path(&file_path, vec![p1_updated, p2.clone()], false).unwrap();
+        assert_eq!(merged, 2);
+
+        let loaded = load_profiles_from_path(&file_path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].name, "Prod Updated");
+        assert_eq!(loaded[1].id, "prof-2");
+        assert!(loaded[1].created_at > 0);
+
+        // Replace mode: keep only prof-2
+        let replaced = import_profiles_to_path(&file_path, vec![p2], true).unwrap();
+        assert_eq!(replaced, 1);
+        let after_replace = load_profiles_from_path(&file_path).unwrap();
+        assert_eq!(after_replace.len(), 1);
+        assert_eq!(after_replace[0].id, "prof-2");
 
         let _ = fs::remove_dir_all(&dir);
     }

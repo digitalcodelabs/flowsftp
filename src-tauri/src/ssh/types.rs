@@ -74,3 +74,25 @@ pub struct SessionInfo {
 fn default_protocol() -> String {
     "sftp".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssh_auth_method_roundtrips_password_keyfile_and_agent() {
+        let agent: SshAuthMethod = serde_json::from_str(r#"{"type":"Agent"}"#).unwrap();
+        assert!(matches!(agent, SshAuthMethod::Agent));
+        assert_eq!(serde_json::to_string(&agent).unwrap(), r#"{"type":"Agent"}"#);
+
+        let pwd: SshAuthMethod =
+            serde_json::from_str(r#"{"type":"Password","value":"secret"}"#).unwrap();
+        assert!(matches!(pwd, SshAuthMethod::Password(ref s) if s == "secret"));
+
+        let kf: SshAuthMethod = serde_json::from_str(
+            r#"{"type":"KeyFile","value":{"path":"/tmp/id_ed25519","passphrase":null}}"#,
+        )
+        .unwrap();
+        assert!(matches!(kf, SshAuthMethod::KeyFile { ref path, passphrase: None } if path == "/tmp/id_ed25519"));
+    }
+}

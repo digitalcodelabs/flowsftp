@@ -19,9 +19,9 @@ use commands::external_edit::{
 use commands::search::{sftp_cancel_search, sftp_search_remote};
 use commands::ftp::ftp_connect;
 use commands::keychain::{
-    keychain_delete_profile, keychain_get_secret, keychain_list_profiles,
-    keychain_rename_group, keychain_rename_profile, keychain_save_profile,
-    pick_key_file, vault_delete_file, vault_load_file, vault_save_file,
+    keychain_delete_profile, keychain_get_secret, keychain_import_profiles,
+    keychain_list_profiles, keychain_rename_group, keychain_rename_profile,
+    keychain_save_profile, pick_key_file, vault_delete_file, vault_load_file, vault_save_file,
 };
 use commands::sftp::{
     sftp_canonicalize_remote, sftp_check_conflict, sftp_copy_local_paths, sftp_create_local_dir,
@@ -42,8 +42,8 @@ use commands::sftp::{
     sftp_calculate_remote_checksum, sftp_calculate_local_checksum,
 };
 use commands::ssh::{
-    ssh_connect, ssh_disconnect, ssh_get_history, ssh_host_key_respond, ssh_list_sessions,
-    ssh_resize_pty, ssh_write_stdin,
+    ssh_connect, ssh_disconnect, ssh_get_history, ssh_host_key_respond, ssh_list_config_hosts,
+    ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
 };
 use state::AppState;
 
@@ -69,6 +69,7 @@ pub fn run() {
             ssh_list_sessions,
             ssh_get_history,
             ssh_host_key_respond,
+            ssh_list_config_hosts,
             // FTP Commands
             ftp_connect,
             // SFTP File Browser Commands
@@ -142,6 +143,7 @@ pub fn run() {
             keychain_rename_group,
             keychain_rename_profile,
             keychain_list_profiles,
+            keychain_import_profiles,
             keychain_delete_profile,
             keychain_get_secret,
             // Master Password Encrypted Vault Commands

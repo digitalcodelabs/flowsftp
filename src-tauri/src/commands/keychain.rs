@@ -1,7 +1,7 @@
 use tauri::AppHandle;
 use crate::keychain::profiles::{
-    delete_profile, delete_vault_file, load_profiles, load_vault_file, rename_group,
-    rename_profile, save_profile, save_vault_file, SavedConnectionProfile,
+    delete_profile, delete_vault_file, import_profiles, load_profiles, load_vault_file,
+    rename_group, rename_profile, save_profile, save_vault_file, SavedConnectionProfile,
 };
 use crate::keychain::KeychainManager;
 
@@ -37,6 +37,15 @@ pub async fn keychain_list_profiles(
     app: AppHandle,
 ) -> Result<Vec<SavedConnectionProfile>, String> {
     load_profiles(&app)
+}
+
+#[tauri::command]
+pub async fn keychain_import_profiles(
+    app: AppHandle,
+    profiles: Vec<SavedConnectionProfile>,
+    replace_existing: bool,
+) -> Result<usize, String> {
+    import_profiles(&app, profiles, replace_existing)
 }
 
 #[tauri::command]

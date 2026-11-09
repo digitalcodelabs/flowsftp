@@ -6,6 +6,8 @@ use crate::ssh::client::SshClientHandler;
 use crate::ssh::types::{SshAuthMethod, SshConnectConfig};
 
 use russh::client::Handle;
+use russh::keys::agent::client::{AgentClient, AgentStream};
+use russh::keys::agent::AgentIdentity;
 use russh_sftp::client::SftpSession;
 
 pub enum SessionCommand {
@@ -346,7 +348,7 @@ pub async fn spawn_ssh_session(
             }
         }
         SshAuthMethod::Agent => {
-            return Err("SSH Agent authentication not yet implemented".to_string());
+            authenticate_with_system_agent(&mut handle, &config.username, &app).await?;
         }
     }
 
@@ -463,6 +465,222 @@ pub async fn spawn_ssh_session(
         is_closed,
         stdout_history,
     })
+}
+
+#[cfg(unix)]
+async fn connect_system_ssh_agent(
+    app: &AppHandle,
+) -> Result<AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>, String> {
+    let _ = app.emit("ssh:connect_log", "Connecting to SSH agent via SSH_AUTH_SOCK...");
+    AgentClient::connect_env()
+        .await
+        .map(|client| client.dynamic())
+        .map_err(|e| {
+            format!(
+                "Could not connect to SSH agent ({e}). Ensure ssh-agent (or 1Password/Bitwarden SSH agent) is running and SSH_AUTH_SOCK is set."
+            )
+        })
+}
+
+#[cfg(windows)]
+async fn connect_system_ssh_agent(
+    app: &AppHandle,
+) -> Result<AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>, String> {
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        let trimmed = sock.trim();
+        if !trimmed.is_empty()
+            && let Ok(client) = AgentClient::connect_named_pipe(trimmed).await
+        {
+            let _ = app.emit(
+                "ssh:connect_log",
+                format!("Connected to SSH agent via SSH_AUTH_SOCK ({trimmed})."),
+            );
+            return Ok(client.dynamic());
+        }
+    }
+
+    const OPENSSH_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+    if let Ok(client) = AgentClient::connect_named_pipe(OPENSSH_PIPE).await {
+        let _ = app.emit(
+            "ssh:connect_log",
+            "Connected to Windows OpenSSH Agent pipe.",
+        );
+        return Ok(client.dynamic());
+    }
+
+    if let Ok(client) = AgentClient::connect_pageant().await {
+        let _ = app.emit("ssh:connect_log", "Connected to Pageant SSH agent.");
+        return Ok(client.dynamic());
+    }
+
+    Err(
+        "Could not connect to any running SSH agent (checked Windows OpenSSH Agent pipe and Pageant). Start the 'OpenSSH Authentication Agent' service, 1Password/Bitwarden SSH Agent, or Pageant."
+            .to_string(),
+    )
+}
+
+async fn authenticate_with_system_agent(
+    handle: &mut Handle<SshClientHandler>,
+    username: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let mut agent = connect_system_ssh_agent(app).await?;
+    let identities = agent
+        .request_identities()
+        .await
+        .map_err(|e| format!("Failed to query identities from SSH agent: {e}"))?;
+
+    if identities.is_empty() {
+        let _ = app.emit(
+            "ssh:connect_log",
+            "SSH agent is running, but no identities are loaded.",
+        );
+        return Err(
+            "SSH agent is running but holds no keys. Add a key with 'ssh-add' or unlock your SSH agent."
+                .to_string(),
+        );
+    }
+
+    let _ = app.emit(
+        "ssh:connect_log",
+        format!(
+            "Found {} identit{} in SSH agent. Negotiating authentication...",
+            identities.len(),
+            if identities.len() == 1 { "y" } else { "ies" }
+        ),
+    );
+
+    let best_rsa_hash: Option<russh::keys::HashAlg> = handle
+        .best_supported_rsa_hash()
+        .await
+        .ok()
+        .flatten()
+        .flatten();
+    let mut last_err: Option<String> = None;
+
+    for identity in identities {
+        if handle.is_closed() {
+            break;
+        }
+
+        match identity {
+            AgentIdentity::Certificate {
+                certificate,
+                comment,
+            } => {
+                let is_rsa = certificate.algorithm().is_rsa();
+                let hash_alg = if is_rsa {
+                    best_rsa_hash.or(Some(russh::keys::HashAlg::Sha256))
+                } else {
+                    None
+                };
+                let label = if comment.trim().is_empty() {
+                    certificate.algorithm().as_str().to_string()
+                } else {
+                    format!("{} ({})", certificate.algorithm().as_str(), comment.trim())
+                };
+                let _ = app.emit(
+                    "ssh:connect_log",
+                    format!("Trying SSH agent certificate {label}..."),
+                );
+
+                match handle
+                    .authenticate_certificate_with(username, certificate, hash_alg, &mut agent)
+                    .await
+                {
+                    Ok(res) if res.success() => {
+                        let _ = app.emit(
+                            "ssh:connect_log",
+                            format!("Authentication verified via SSH agent certificate ({label})."),
+                        );
+                        return Ok(());
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        last_err = Some(e.to_string());
+                    }
+                }
+            }
+            AgentIdentity::PublicKey { key, comment } => {
+                let is_rsa = key.algorithm().is_rsa();
+                let key_alg_str = key.algorithm().as_str().to_string();
+                let algs_to_try: Vec<Option<russh::keys::HashAlg>> = if is_rsa {
+                    let mut list = Vec::new();
+                    if let Some(best) = best_rsa_hash {
+                        list.push(Some(best));
+                    }
+                    for fallback in [
+                        Some(russh::keys::HashAlg::Sha512),
+                        Some(russh::keys::HashAlg::Sha256),
+                        None,
+                    ] {
+                        if !list.contains(&fallback) {
+                            list.push(fallback);
+                        }
+                    }
+                    list
+                } else {
+                    vec![None]
+                };
+
+                for hash_alg in algs_to_try {
+                    if handle.is_closed() {
+                        break;
+                    }
+                    let alg_desc = match hash_alg {
+                        Some(russh::keys::HashAlg::Sha512) => "rsa-sha2-512",
+                        Some(russh::keys::HashAlg::Sha256) => "rsa-sha2-256",
+                        Some(_) => "rsa",
+                        None => {
+                            if is_rsa {
+                                "ssh-rsa"
+                            } else {
+                                &key_alg_str
+                            }
+                        }
+                    };
+                    let label = if comment.trim().is_empty() {
+                        alg_desc.to_string()
+                    } else {
+                        format!("{alg_desc} ({})", comment.trim())
+                    };
+                    let _ = app.emit(
+                        "ssh:connect_log",
+                        format!("Trying SSH agent key {label}..."),
+                    );
+
+                    match handle
+                        .authenticate_publickey_with(username, key.clone(), hash_alg, &mut agent)
+                        .await
+                    {
+                        Ok(res) if res.success() => {
+                            let _ = app.emit(
+                                "ssh:connect_log",
+                                format!("Authentication verified via SSH agent ({label})."),
+                            );
+                            return Ok(());
+                        }
+                        Ok(_) => {
+                            // If server rejected the public key itself, no need to retry other RSA hashes for the same key
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = Some(e.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = app.emit(
+        "ssh:connect_log",
+        "Authentication failed: none of the SSH agent keys were accepted by server.",
+    );
+    Err(last_err.unwrap_or_else(|| {
+        "Authentication failed: none of the keys in your SSH agent were accepted by the server"
+            .to_string()
+    }))
 }
 
 #[cfg(test)]

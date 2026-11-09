@@ -25,6 +25,7 @@ import {
   Terminal,
   Loader2,
   SlidersHorizontal,
+  FileDown,
 } from 'lucide-vue-next'
 import { useKeychainStore, type SavedConnectionProfile } from '../stores/keychain'
 import { useVaultStore } from '../stores/vault'
@@ -124,7 +125,7 @@ const form = ref({
   host: '',
   port: 22,
   username: '',
-  authType: 'Password' as 'Password' | 'KeyFile',
+  authType: 'Password' as 'Password' | 'KeyFile' | 'Agent',
   secret: '',
   keyPath: '',
   defaultRemotePath: '',
@@ -345,6 +346,72 @@ const handleBrowseKeyFile = async () => {
   }
 }
 
+interface SshConfigHostEntry {
+  alias: string
+  host: string
+  port: number
+  username: string
+  identity_file?: string | null
+}
+
+const isImportingSshConfig = ref(false)
+
+const handleImportSshConfig = async () => {
+  if (isImportingSshConfig.value || isConnecting.value) return
+  errorMessage.value = null
+  isImportingSshConfig.value = true
+  try {
+    const hosts = await invoke<SshConfigHostEntry[]>('ssh_list_config_hosts')
+    if (!hosts || hosts.length === 0) {
+      showSuccess('No concrete Host entries found in ~/.ssh/config')
+      return
+    }
+    const existing = keychainStore.profiles
+    const nowSecs = Math.floor(Date.now() / 1000)
+    const toImport: SavedConnectionProfile[] = []
+
+    for (let i = 0; i < hosts.length; i++) {
+      const entry = hosts[i]!
+      const alreadyExists = existing.some(
+        (p) =>
+          p.name.toLowerCase() === entry.alias.toLowerCase() ||
+          ((p.protocol || 'sftp') === 'sftp' &&
+            p.host.toLowerCase() === entry.host.toLowerCase() &&
+            p.port === entry.port &&
+            p.username === entry.username)
+      )
+      if (alreadyExists) continue
+
+      const hasIdentity = Boolean(entry.identity_file && entry.identity_file.trim())
+      toImport.push({
+        id: `sshcfg-${nowSecs}-${i}-${entry.alias.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+        name: entry.alias,
+        group: 'SSH Config',
+        protocol: 'sftp',
+        host: entry.host,
+        port: entry.port || 22,
+        username: entry.username,
+        auth_type: hasIdentity ? 'KeyFile' : 'Agent',
+        key_path: hasIdentity ? entry.identity_file!.trim() : undefined,
+        has_saved_secret: false,
+        created_at: nowSecs,
+      })
+    }
+
+    if (toImport.length === 0) {
+      showSuccess(`All ${hosts.length} host${hosts.length === 1 ? '' : 's'} from ~/.ssh/config are already saved`)
+      return
+    }
+
+    const importedCount = await keychainStore.importProfiles(toImport, false)
+    showSuccess(`Imported ${importedCount} host${importedCount === 1 ? '' : 's'} from ~/.ssh/config`)
+  } catch (err: any) {
+    errorMessage.value = err?.message || String(err) || 'Failed to read ~/.ssh/config'
+  } finally {
+    isImportingSshConfig.value = false
+  }
+}
+
 // Navigation between modes
 const handleStartAdd = () => {
   editingProfileId.value = null
@@ -374,7 +441,7 @@ const handleStartEdit = (profile: SavedConnectionProfile) => {
     host: profile.host,
     port: profile.port,
     username: profile.username,
-    authType: (profile.auth_type as 'Password' | 'KeyFile') || 'Password',
+    authType: (profile.auth_type as 'Password' | 'KeyFile' | 'Agent') || 'Password',
     secret: '', // Left blank so existing secret is preserved unless intentionally updated
     keyPath: profile.key_path || '',
     defaultRemotePath: profile.default_remote_path || '',
@@ -468,6 +535,9 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
       }
       addLog('Credentials found. Connecting...', 'info')
       await doConnect(profile, { type: 'Password', value: secret })
+    } else if (profile.auth_type === 'Agent') {
+      addLog('Using system SSH agent for authentication...', 'info')
+      await doConnect(profile, { type: 'Agent' })
     } else {
       let passphrase: string | undefined
       if (profile.has_saved_secret) {
@@ -599,11 +669,13 @@ const saveProfileData = async (shouldConnect: boolean) => {
       addLog(`Initiating connection to "${profileName}" (${host}:${port})...`, 'info')
     }
 
-    const hasNewSecret = !!form.value.secret.trim()
+    const effectiveAuthType = form.value.protocol === 'sftp' ? form.value.authType : 'Password'
+    const supportsSecret = effectiveAuthType !== 'Agent'
+    const hasNewSecret = supportsSecret && !!form.value.secret.trim()
     const hasExistingVaultSecret = Boolean(
-      existingProfile?.has_saved_secret && vaultStore.isConfigured && vaultStore.hasSecretInVault(profileId)
+      supportsSecret && existingProfile?.has_saved_secret && vaultStore.isConfigured && vaultStore.hasSecretInVault(profileId)
     )
-    const willHaveSecret = form.value.saveToKeychain
+    const willHaveSecret = supportsSecret && form.value.saveToKeychain
       ? (hasNewSecret || hasExistingVaultSecret)
       : false
 
@@ -615,14 +687,14 @@ const saveProfileData = async (shouldConnect: boolean) => {
       host,
       port,
       username,
-      auth_type: form.value.protocol === 'sftp' ? form.value.authType : 'Password',
-      key_path: form.value.protocol === 'sftp' && form.value.authType === 'KeyFile' ? form.value.keyPath.trim() : undefined,
+      auth_type: effectiveAuthType,
+      key_path: effectiveAuthType === 'KeyFile' ? form.value.keyPath.trim() : undefined,
       has_saved_secret: willHaveSecret,
       default_remote_path: form.value.defaultRemotePath.trim() || undefined,
       created_at: existingProfile?.created_at || Math.floor(Date.now() / 1000),
     }
 
-    if (!form.value.saveToKeychain) {
+    if (!supportsSecret || !form.value.saveToKeychain) {
       await keychainStore.saveProfile(profileToSave, null)
       await vaultStore.deleteSecret(profileToSave.id)
     } else if (hasNewSecret && form.value.saveToKeychain) {
@@ -669,22 +741,24 @@ const saveProfileData = async (shouldConnect: boolean) => {
       }
     }
 
-    if (form.value.authType === 'Password' && !secretToUse) {
+    if (effectiveAuthType === 'Password' && !secretToUse) {
       currentMode.value = 'list'
       await handleQuickConnect(profileToSave)
       return
     }
 
     const authPayload =
-      form.value.authType === 'Password'
+      effectiveAuthType === 'Password'
         ? { type: 'Password' as const, value: secretToUse }
-        : {
-            type: 'KeyFile' as const,
-            value: {
-              path: form.value.keyPath.trim(),
-              passphrase: secretToUse || undefined,
-            },
-          }
+        : effectiveAuthType === 'Agent'
+          ? { type: 'Agent' as const }
+          : {
+              type: 'KeyFile' as const,
+              value: {
+                path: form.value.keyPath.trim(),
+                passphrase: secretToUse || undefined,
+              },
+            }
 
     await doConnect(profileToSave, authPayload)
   } catch (err: any) {
@@ -1014,6 +1088,22 @@ const handleFormSubmit = () => {
 
           <button
             v-if="currentMode === 'list'"
+            type="button"
+            @click="handleImportSshConfig"
+            :disabled="isConnecting || isImportingSshConfig"
+            :class="[
+              'px-2.5 py-1 text-xs rounded-lg border font-medium flex items-center space-x-1.5 btn-theme-card cursor-pointer',
+              (isConnecting || isImportingSshConfig) ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''
+            ]"
+            title="Import servers from ~/.ssh/config"
+          >
+            <Loader2 v-if="isImportingSshConfig" class="w-3.5 h-3.5 animate-spin" />
+            <FileDown v-else class="w-3.5 h-3.5" />
+            <span>Import SSH Config</span>
+          </button>
+
+          <button
+            v-if="currentMode === 'list'"
             @click="handleStartAdd"
             :disabled="isConnecting"
             :class="[
@@ -1213,13 +1303,26 @@ const handleFormSubmit = () => {
           <p class="text-[11px] mb-4 max-w-xs" :style="{ color: 'var(--color-text-muted)' }">
             Save your servers, group them into folders, and protect credentials with your master password vault.
           </p>
-          <button
-            @click="handleStartAdd"
-            class="px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 btn-accent cursor-pointer"
-          >
-            <Plus class="w-3.5 h-3.5" />
-            <span>Create Your First Connection</span>
-          </button>
+          <div class="flex items-center space-x-2">
+            <button
+              @click="handleStartAdd"
+              class="px-3.5 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 btn-accent cursor-pointer"
+            >
+              <Plus class="w-3.5 h-3.5" />
+              <span>Create Your First Connection</span>
+            </button>
+            <button
+              type="button"
+              @click="handleImportSshConfig"
+              :disabled="isImportingSshConfig"
+              class="px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 btn-theme-card cursor-pointer"
+              title="Import concrete Host entries from ~/.ssh/config"
+            >
+              <Loader2 v-if="isImportingSshConfig" class="w-3.5 h-3.5 animate-spin" />
+              <FileDown v-else class="w-3.5 h-3.5" />
+              <span>Import ~/.ssh/config</span>
+            </button>
+          </div>
         </div>
 
         <!-- No search matches -->
@@ -1334,6 +1437,15 @@ const handleFormSubmit = () => {
                     >
                       <KeyRound class="w-3 h-3" />
                       <span>Key</span>
+                    </span>
+                    <span
+                      v-else-if="prof.auth_type === 'Agent'"
+                      class="px-1.5 py-0.5 rounded text-[10px] flex items-center space-x-1 border"
+                      :style="{ backgroundColor: 'var(--color-bg-pane)', color: 'var(--color-accent-secondary)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
+                      title="System SSH Agent"
+                    >
+                      <Terminal class="w-3 h-3" />
+                      <span>Agent</span>
                     </span>
                     <span
                       v-if="isProfileInVault(prof)"
@@ -1611,7 +1723,7 @@ const handleFormSubmit = () => {
         <!-- Auth Method Selector (Only for SFTP/SSH) -->
         <div v-if="form.protocol === 'sftp'">
           <label class="block text-[11px] font-medium uppercase tracking-wider mb-1" :style="{ color: 'var(--color-text-muted)' }">Auth Method</label>
-          <div class="grid grid-cols-2 gap-2">
+          <div class="grid grid-cols-3 gap-2">
             <button
               type="button"
               @click="form.authType = 'Password'"
@@ -1629,6 +1741,15 @@ const handleFormSubmit = () => {
             >
               <KeyRound class="w-3.5 h-3.5" :style="form.authType === 'KeyFile' ? { color: 'var(--color-accent)' } : undefined" />
               <span>Private Key</span>
+            </button>
+            <button
+              type="button"
+              @click="form.authType = 'Agent'"
+              class="py-1.5 text-xs rounded-lg font-medium flex items-center justify-center space-x-1.5 cursor-pointer btn-flat-choice"
+              :class="{ 'btn-flat-choice--active font-semibold': form.authType === 'Agent' }"
+            >
+              <Terminal class="w-3.5 h-3.5" :style="form.authType === 'Agent' ? { color: 'var(--color-accent)' } : undefined" />
+              <span>SSH Agent</span>
             </button>
           </div>
         </div>
@@ -1655,7 +1776,7 @@ const handleFormSubmit = () => {
         </div>
 
         <!-- Key File Auth Fields with Browse Button -->
-        <div v-else class="space-y-3">
+        <div v-else-if="form.authType === 'KeyFile'" class="space-y-3">
           <div>
             <label class="block text-[11px] font-medium uppercase tracking-wider mb-1" :style="{ color: 'var(--color-text-muted)' }">
               Private Key File
@@ -1701,6 +1822,15 @@ const handleFormSubmit = () => {
           </div>
         </div>
 
+        <!-- SSH Agent Info Block -->
+        <div
+          v-else
+          class="p-3 rounded-xl border text-[11px] leading-relaxed"
+          :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
+        >
+          Authenticates automatically using keys or OpenSSH certificates loaded in your running system SSH agent (<span class="font-mono" :style="{ color: 'var(--color-text-main)' }">ssh-agent</span>, 1Password, Bitwarden, GPG Agent, or Pageant).
+        </div>
+
         <!-- Default Remote Directory (Optional) -->
         <div>
           <label class="block text-[11px] font-medium uppercase tracking-wider mb-1" :style="{ color: 'var(--color-text-muted)' }">
@@ -1718,7 +1848,7 @@ const handleFormSubmit = () => {
         </div>
 
         <!-- Keychain Save Checkbox -->
-        <div class="space-y-2 pt-1">
+        <div v-if="form.protocol !== 'sftp' || form.authType !== 'Agent'" class="space-y-2 pt-1">
           <div class="flex items-center space-x-2">
             <input
               v-model="form.saveToKeychain"

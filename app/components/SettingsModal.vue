@@ -34,10 +34,13 @@ import {
   Info,
   ExternalLink,
   Mail,
+  Loader2,
+  CheckCircle2,
 } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 import { useSftpStore } from '../stores/sftp'
 import { useVaultStore } from '../stores/vault'
+import { useKeychainStore } from '../stores/keychain'
 import { useSettingsStore, TERMINAL_FONTS, BROWSER_FONTS } from '../stores/settings'
 import { useThemeStore, isLightTheme, type AppTheme } from '../stores/theme'
 import { useDirWatcherStore } from '../stores/dirWatcher'
@@ -67,6 +70,7 @@ const emit = defineEmits<{
 
 const sftpStore = useSftpStore()
 const vaultStore = useVaultStore()
+const keychainStore = useKeychainStore()
 const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
 const dirWatcherStore = useDirWatcherStore()
@@ -288,7 +292,7 @@ const handleRecordingKeyDown = (e: KeyboardEvent) => {
 }
 
 const handleGlobalModalKeyDown = (e: KeyboardEvent) => {
-  if (recordingAction.value) return // Don't close while recording shortcut
+  if (recordingAction.value || vaultStore.showModal) return // Don't close while recording shortcut or unlocking vault
 
   if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma'))) {
     e.preventDefault()
@@ -329,6 +333,115 @@ const showResetVaultConfirm = ref(false)
 const handleResetVault = async () => {
   await vaultStore.resetVault()
   showResetVaultConfirm.value = false
+}
+
+// Encrypted Backup Export / Import State
+const backupPanelMode = ref<'none' | 'export' | 'import'>('none')
+const backupPassword = ref('')
+const backupPasswordConfirm = ref('')
+const pendingImportRawJson = ref<string | null>(null)
+const backupImportReplace = ref(false)
+const isProcessingBackup = ref(false)
+const backupStatus = ref<{ message: string; isError: boolean } | null>(null)
+
+const resetBackupForm = () => {
+  backupPanelMode.value = 'none'
+  backupPassword.value = ''
+  backupPasswordConfirm.value = ''
+  pendingImportRawJson.value = null
+}
+
+const openExportBackupPanel = () => {
+  backupStatus.value = null
+  backupPassword.value = ''
+  backupPasswordConfirm.value = ''
+  pendingImportRawJson.value = null
+  backupPanelMode.value = backupPanelMode.value === 'export' ? 'none' : 'export'
+}
+
+const handlePickBackupFileForImport = async () => {
+  backupStatus.value = null
+  try {
+    const raw = await invoke<string | null>('pick_and_read_file', {
+      filterName: 'FlowSFTP Encrypted Backup (*.json)',
+      filterExt: 'json',
+    })
+    if (!raw) return
+    pendingImportRawJson.value = raw
+    backupPassword.value = ''
+    backupPasswordConfirm.value = ''
+    backupImportReplace.value = false
+    backupPanelMode.value = 'import'
+  } catch (err: any) {
+    backupStatus.value = {
+      message: err?.message || String(err) || 'Failed to read backup file.',
+      isError: true,
+    }
+  }
+}
+
+const handleExecuteExportBackup = async () => {
+  backupStatus.value = null
+  if (!backupPassword.value || backupPassword.value.length < 4) {
+    backupStatus.value = { message: 'Backup password must be at least 4 characters long.', isError: true }
+    return
+  }
+  if (backupPassword.value !== backupPasswordConfirm.value) {
+    backupStatus.value = { message: 'Backup passwords do not match.', isError: true }
+    return
+  }
+
+  isProcessingBackup.value = true
+  try {
+    const result = await vaultStore.exportEncryptedBackup(backupPassword.value)
+    if (!result.savedPath) {
+      backupStatus.value = null
+      return
+    }
+    resetBackupForm()
+    backupStatus.value = {
+      message: `Exported ${result.profileCount} profile${result.profileCount === 1 ? '' : 's'} and ${result.secretCount} vault credential${result.secretCount === 1 ? '' : 's'}.`,
+      isError: false,
+    }
+  } catch (err: any) {
+    backupStatus.value = {
+      message: err?.message || String(err) || 'Failed to export backup.',
+      isError: true,
+    }
+  } finally {
+    isProcessingBackup.value = false
+  }
+}
+
+const handleExecuteImportBackup = async () => {
+  if (!pendingImportRawJson.value) return
+  backupStatus.value = null
+  if (!backupPassword.value) {
+    backupStatus.value = { message: 'Please enter the backup password.', isError: true }
+    return
+  }
+
+  isProcessingBackup.value = true
+  try {
+    const result = await vaultStore.importEncryptedBackup(
+      pendingImportRawJson.value,
+      backupPassword.value,
+      backupImportReplace.value
+    )
+    await keychainStore.loadProfiles()
+    resetBackupForm()
+    backupStatus.value = {
+      message: `Restored ${result.profileCount} profile${result.profileCount === 1 ? '' : 's'} and ${result.secretCount} vault credential${result.secretCount === 1 ? '' : 's'}.`,
+      isError: false,
+    }
+  } catch (err: any) {
+    backupStatus.value = {
+      message: err?.message || String(err) || 'Failed to decrypt or restore backup.',
+      isError: true,
+    }
+  } finally {
+    isProcessingBackup.value = false
+  }
 }
 
 // System Fonts Management & Filtering
@@ -1994,6 +2107,172 @@ const browserOtherFonts = computed(() => {
                   Confirm Reset
                 </button>
               </div>
+            </div>
+          </div>
+
+          <!-- Encrypted Backup & Migration Card -->
+          <div
+            class="rounded-xl border p-4 space-y-3"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">Encrypted Profile &amp; Vault Backup</h4>
+                <p class="text-[11px] mt-0.5 leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
+                  Export or restore saved servers, folders, vault passwords, and bookmarks in a single <span class="font-mono" :style="{ color: 'var(--color-accent)' }">AES-256-GCM</span> encrypted file.
+                </p>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t flex flex-wrap items-center gap-2" :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }">
+              <button
+                type="button"
+                @click="openExportBackupPanel"
+                :disabled="isProcessingBackup"
+                class="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-accent"
+              >
+                <Download class="w-3.5 h-3.5" />
+                <span>Export Encrypted Backup</span>
+              </button>
+
+              <button
+                type="button"
+                @click="handlePickBackupFileForImport"
+                :disabled="isProcessingBackup"
+                class="px-3 py-1.5 rounded-lg border font-medium text-xs transition flex items-center space-x-1.5 cursor-pointer btn-theme-card"
+              >
+                <Upload class="w-3.5 h-3.5" />
+                <span>Import Backup...</span>
+              </button>
+            </div>
+
+            <!-- Inline Export Form -->
+            <form
+              v-if="backupPanelMode === 'export'"
+              @submit.prevent="handleExecuteExportBackup"
+              class="p-3 rounded-xl border space-y-2.5 text-xs"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
+            >
+              <div class="font-medium text-xs" :style="{ color: 'var(--color-text-main)' }">
+                Choose a password to encrypt this backup file
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <input
+                  v-model="backupPassword"
+                  type="password"
+                  placeholder="Backup password (min 4 chars)"
+                  autocomplete="new-password"
+                  class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
+                />
+                <input
+                  v-model="backupPasswordConfirm"
+                  type="password"
+                  placeholder="Confirm backup password"
+                  autocomplete="new-password"
+                  class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
+                />
+              </div>
+              <div class="flex items-center justify-end space-x-2 pt-0.5">
+                <button
+                  type="button"
+                  @click="resetBackupForm"
+                  :disabled="isProcessingBackup"
+                  class="px-2.5 py-1 rounded-lg text-[11px] border cursor-pointer btn-theme-card"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  :disabled="isProcessingBackup"
+                  class="px-3 py-1 rounded-lg text-[11px] font-medium flex items-center space-x-1.5 cursor-pointer btn-accent"
+                >
+                  <Loader2 v-if="isProcessingBackup" class="w-3 h-3 animate-spin" />
+                  <Download v-else class="w-3 h-3" />
+                  <span>{{ isProcessingBackup ? 'Encrypting...' : 'Save Backup File...' }}</span>
+                </button>
+              </div>
+            </form>
+
+            <!-- Inline Import Form -->
+            <form
+              v-else-if="backupPanelMode === 'import'"
+              @submit.prevent="handleExecuteImportBackup"
+              class="p-3 rounded-xl border space-y-2.5 text-xs"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
+            >
+              <div class="font-medium text-xs" :style="{ color: 'var(--color-text-main)' }">
+                Enter backup password to decrypt and restore
+              </div>
+              <input
+                v-model="backupPassword"
+                type="password"
+                placeholder="Enter backup file password"
+                autocomplete="current-password"
+                class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none input-theme"
+              />
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  @click="backupImportReplace = false"
+                  class="py-1.5 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer btn-flat-choice"
+                  :class="{ 'btn-flat-choice--active font-semibold': !backupImportReplace }"
+                >
+                  Merge with Existing
+                </button>
+                <button
+                  type="button"
+                  @click="backupImportReplace = true"
+                  class="py-1.5 px-2.5 rounded-lg text-[11px] font-medium cursor-pointer btn-flat-choice"
+                  :class="{ 'btn-flat-choice--active font-semibold': backupImportReplace }"
+                >
+                  Replace Existing
+                </button>
+              </div>
+              <div class="flex items-center justify-end space-x-2 pt-0.5">
+                <button
+                  type="button"
+                  @click="resetBackupForm"
+                  :disabled="isProcessingBackup"
+                  class="px-2.5 py-1 rounded-lg text-[11px] border cursor-pointer btn-theme-card"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  :disabled="isProcessingBackup"
+                  class="px-3 py-1 rounded-lg text-[11px] font-medium flex items-center space-x-1.5 cursor-pointer btn-accent"
+                >
+                  <Loader2 v-if="isProcessingBackup" class="w-3 h-3 animate-spin" />
+                  <Upload v-else class="w-3 h-3" />
+                  <span>{{ isProcessingBackup ? 'Restoring...' : 'Decrypt & Restore' }}</span>
+                </button>
+              </div>
+            </form>
+
+            <!-- Backup Status Toast -->
+            <div
+              v-if="backupStatus"
+              class="p-2.5 rounded-lg border text-[11px] flex items-center justify-between gap-2"
+              :style="backupStatus.isError
+                ? {
+                    backgroundColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 12%, var(--color-bg-card))',
+                    borderColor: 'color-mix(in srgb, var(--color-danger, #f38ba8) 38%, var(--color-border))',
+                    color: 'var(--color-danger, #f38ba8)',
+                  }
+                : {
+                    backgroundColor: 'color-mix(in srgb, var(--color-success, #a6e3a1) 12%, var(--color-bg-card))',
+                    borderColor: 'color-mix(in srgb, var(--color-success, #a6e3a1) 38%, var(--color-border))',
+                    color: 'var(--color-success, #a6e3a1)',
+                  }"
+            >
+              <div class="flex items-center space-x-2">
+                <AlertTriangle v-if="backupStatus.isError" class="w-3.5 h-3.5 shrink-0" />
+                <CheckCircle2 v-else class="w-3.5 h-3.5 shrink-0" />
+                <span>{{ backupStatus.message }}</span>
+              </div>
+              <button type="button" @click="backupStatus = null" class="p-0.5 opacity-70 hover:opacity-100 cursor-pointer">
+                <X class="w-3 h-3" />
+              </button>
             </div>
           </div>
 

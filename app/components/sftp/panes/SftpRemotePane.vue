@@ -27,6 +27,7 @@ import SftpBreadcrumbBar from './SftpBreadcrumbBar.vue'
 import SftpComparisonBadge from '../compare/SftpComparisonBadge.vue'
 import type { ComparisonResult } from '../compare/types'
 import type { FileSortField, FileSortOrder } from './sorting'
+import { useVirtualFileRows, estimateBrowserRowHeight } from './useVirtualFileRows'
 import {
   formatBytes,
   formatDate,
@@ -179,7 +180,20 @@ const sessionDisplayLabel = computed(() => {
 })
 
 const rootEl = ref<HTMLElement | null>(null)
+const tableScrollRef = ref<HTMLElement | null>(null)
 const filterInputRef = ref<HTMLInputElement | null>(null)
+
+const {
+  windowState: virtualWindow,
+  visibleRows,
+  handleTableScroll,
+  scrollToIndex,
+} = useVirtualFileRows({
+  items: () => props.filteredFiles,
+  scrollContainerRef: tableScrollRef,
+  estimatedRowHeight: () => estimateBrowserRowHeight(settingsStore.browserFontSize, settingsStore.browserRowDensity),
+  resetKey: () => props.currentPath,
+})
 
 // Address bar input path
 const inputPath = ref(props.currentPath)
@@ -213,6 +227,7 @@ defineExpose({
   closeAllDropdowns,
   startEditPath,
   focusFilterInput,
+  scrollToIndex,
 })
 </script>
 
@@ -621,7 +636,9 @@ defineExpose({
 
     <!-- Remote File List Table -->
     <div
+      ref="tableScrollRef"
       class="flex-1 overflow-auto"
+      @scroll.passive="handleTableScroll"
       @click="handleContainerClick"
       @dragover="emit('dragover', $event)"
       @drop="emit('drop', $event)"
@@ -817,7 +834,16 @@ defineExpose({
             </td>
           </tr>
           <tr
-            v-for="(file, index) in filteredFiles"
+            v-if="virtualWindow.topSpacerHeight > 0"
+            :style="{ height: `${virtualWindow.topSpacerHeight}px` }"
+            aria-hidden="true"
+            @dragover="emit('dragover', $event)"
+            @drop="emit('drop', $event)"
+          >
+            <td colspan="6" class="p-0 border-0" />
+          </tr>
+          <tr
+            v-for="{ item: file, index } in visibleRows"
             :key="file.path"
             :id="isLeftPane ? `local-row-${index}` : `remote-row-${index}`"
             draggable="true"
@@ -913,6 +939,15 @@ defineExpose({
             >
               {{ formatOwnerGroup(file) }}
             </td>
+          </tr>
+          <tr
+            v-if="virtualWindow.bottomSpacerHeight > 0"
+            :style="{ height: `${virtualWindow.bottomSpacerHeight}px` }"
+            aria-hidden="true"
+            @dragover="emit('dragover', $event)"
+            @drop="emit('drop', $event)"
+          >
+            <td colspan="6" class="p-0 border-0" />
           </tr>
         </tbody>
       </table>

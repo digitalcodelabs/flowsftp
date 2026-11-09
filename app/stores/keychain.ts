@@ -73,6 +73,15 @@ export const useKeychainStore = defineStore('keychain', () => {
     return updated
   }
 
+  async function importProfiles(incoming: SavedConnectionProfile[], replaceExisting = false): Promise<number> {
+    const importedCount = await invoke<number>('keychain_import_profiles', {
+      profiles: incoming,
+      replaceExisting,
+    })
+    await loadProfiles()
+    return importedCount
+  }
+
   return {
     profiles,
     isLoading,
@@ -81,6 +90,7 @@ export const useKeychainStore = defineStore('keychain', () => {
     deleteProfile,
     renameGroup,
     renameProfile,
+    importProfiles,
     getSecret,
   }
 })

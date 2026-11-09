@@ -10,11 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Release Highlights
 - **Transfer While Counting (Streaming Crawls & FTP Connection Pool)**: Uploading or downloading deep folders with thousands of files now begins transferring almost immediately instead of waiting for the entire directory tree to be counted first.
-- **Calm, Flat UI Redesign**: Every button, tab, input, and modal across the header, **Settings**, **Connection Manager**, and **Vault** dialogs now uses a flat, low-brightness, soft-bordered aesthetic that is easy on the eyes during long sessions.
-- **First-Class Tiling Window Manager Support (Hyprland / Omarchy / Wayland)**: Removed rigid minimum window constraints and added responsive vertical dual-pane stacking so FlowSFTP scales cleanly in narrow side-by-side or quarter-screen tiles on Linux tiling compositors.
+- **Virtualized File Panes (`10,000+` Files at 60–120fps)**: Local and remote file browsers automatically switch to virtualized row rendering for large directories while keeping full keyboard navigation (`Home`, `End`, `PageUp/Down`, `ArrowUp/Down`), multi-select, and drag-and-drop intact.
+- **System SSH Agent & `~/.ssh/config` Import**: Authenticate directly with keys and OpenSSH certificates from `ssh-agent`, 1Password, Bitwarden, GPG Agent, or Pageant, and import concrete hosts from `~/.ssh/config` in one click.
+- **Encrypted Profile & Vault Backup**: Export and restore saved connection profiles, folders, Master Password vault secrets, and bookmarks in a single `AES-256-GCM` encrypted `.flowsftp.json` bundle across Windows, Linux, and macOS.
+- **Calm, Flat UI & First-Class Tiling WM Support (Hyprland / Omarchy / Wayland)**: Every button, tab, input, and modal uses a flat, low-brightness, soft-bordered design, and narrow tiled windows stack panes cleanly without stretching controls.
 - **Terminal Zoom & Clipboard Shortcuts**: Zoom terminal text on the fly with `Ctrl + +` / `Ctrl + -` / `Ctrl + 0`, and copy/paste terminal selections effortlessly with `Ctrl + Shift + C` and `Ctrl + Shift + V`.
 
 ### Added
+- **System SSH Agent Authentication (`Agent`)**: Full SSH agent support across Linux/macOS (`SSH_AUTH_SOCK` Unix sockets) and Windows (OpenSSH Named Pipe, 1Password/Bitwarden SSH Agent, and Pageant), supporting Ed25519, ECDSA, RSA (`rsa-sha2-512` / `rsa-sha2-256` negotiation), and OpenSSH Certificates.
+- **One-Click `~/.ssh/config` Importer**: Parses `~/.ssh/config` (including `Include` directives, `~/` key expansion, and `Host *` inherited defaults while skipping wildcard-only blocks) into saved Connection Manager profiles.
+- **Encrypted Backup Export & Import**: Added **Encrypted Profile & Vault Backup** in **Settings -> Security** (`PBKDF2-HMAC-SHA256` + `AES-256-GCM`) supporting both **Merge** and **Replace** restore modes.
+- **Virtual Row Scrolling for Large Directories**: Added `useVirtualFileRows` to both Local and Remote SFTP panes so directories with tens of thousands of entries render smoothly without DOM lag.
+- **Multi-Platform GitHub Actions CI & Release Workflows**: Automated TypeScript typechecking, Vitest unit tests, SPA builds, and cross-platform Rust/Tauri builds across Linux, Windows, and macOS.
 - **Streaming Directory Crawls (`sftp` & `ftp`)**: Recursive local and remote folder crawls now emit discovered batches incrementally (every 50 items or 150ms) so the transfer queue begins uploading/downloading right away while counting continues in the background.
 - **Concurrent FTP/FTPS Worker Pool**: Dedicated pooled FTP transfer connections allow multiple files to transfer while directory crawling and interactive browsing remain responsive.
 - **Terminal Font Zoom Shortcuts**: Support `Ctrl + =` / `Ctrl + +` (zoom in), `Ctrl + -` (zoom out), and `Ctrl + 0` (reset to `13px`) directly inside the integrated SSH terminal.
@@ -34,6 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Windows Console Flash Prevention**: Applied `CREATE_NO_WINDOW` (`0x08000000`) to background `git`, `wsl`, `reg`, and `tar` subprocesses on Windows so terminal windows never flicker during Git status checks, WSL detection, or archive operations.
 - **macOS Bundle Configuration**: Resolved Tauri bundle naming collision on macOS builds.
 - **Security & Stability Hardening**:
+  - Enabled a strict WebView Content Security Policy (`CSP`) in `tauri.conf.json` restricting script execution, object embeds, and IPC/blob origins.
   - Guarded local archive extraction against path traversal (`Zip-Slip`) outside destination directories.
   - Switched Master Password vault verifier checks to constant-time comparison and stopped persisting plaintext session secrets in `sessionStorage`.
   - Preserved original remote POSIX file permissions when auto-uploading files via External Editor Live Sync.
@@ -51,3 +59,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Developer Workflow Suite**: Built-in **CodeMirror 6** editor with optional **Vim mode**, **Quick Look** media/code/PDF/Markdown preview (`Space`), **External Editor Live Sync** (VS Code, Cursor, Sublime Text, Notepad++), **Live Directory Watcher** folder pairing, and kernel-speed **Remote SSH Search & Grep** (`Ctrl + Shift + F`).
 - **FileZilla-Style 3-Tab Transfer Queue**: Resizable bottom transfer drawer with `Queued`, `Failed`, and `Successful` tabs, smart conflict resolution (**Overwrite**, **Resume**, **Auto-Rename**, **Skip**), configurable glob ignore rules, and queue completion actions.
 - **Modular Store Architecture & Test Suite**: Extracted transfer pipeline, queue pump, conflict resolution, directory browser, and file operations into dedicated composables covered by 149 automated Vitest unit tests.
+

@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::ssh::client::resolve_host_key_prompt;
 use crate::ssh::session::spawn_ssh_session;
+use crate::ssh::ssh_config::{load_user_ssh_config_hosts, SshConfigHostEntry};
 use crate::ssh::types::{SessionInfo, SshConnectConfig};
 use crate::state::AppState;
 
@@ -85,4 +86,11 @@ pub async fn ssh_get_history(
 
     let bytes = session.get_history().await;
     Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+#[tauri::command]
+pub async fn ssh_list_config_hosts() -> Result<Vec<SshConfigHostEntry>, String> {
+    tokio::task::spawn_blocking(load_user_ssh_config_hosts)
+        .await
+        .map_err(|e| format!("Failed to read SSH config task: {e}"))?
 }
