@@ -201,6 +201,9 @@ export const useVaultStore = defineStore('vault', () => {
       reEncryptedEntries[id] = await encryptText(plaintext, newKey)
     }
 
+    const previousVaultData = vaultData.value
+    const previousKey = cachedKey.value
+
     vaultData.value = {
       version: 1,
       salt: bufferToBase64(newSalt),
@@ -209,7 +212,13 @@ export const useVaultStore = defineStore('vault', () => {
       entries: reEncryptedEntries,
     }
 
-    await persistVault()
+    try {
+      await persistVault()
+    } catch (err) {
+      vaultData.value = previousVaultData
+      cachedKey.value = previousKey
+      throw err
+    }
     cachedKey.value = newKey
     isUnlocked.value = true
     return true
@@ -271,6 +280,9 @@ export const useVaultStore = defineStore('vault', () => {
   }
 
   async function deleteSecret(profileId: string) {
+    if (!isInitialized.value) {
+      await init()
+    }
     if (!vaultData.value?.entries?.[profileId]) return
     delete vaultData.value.entries[profileId]
     await persistVault()

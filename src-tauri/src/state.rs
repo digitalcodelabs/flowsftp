@@ -14,7 +14,7 @@ pub struct AppState {
     sessions: Arc<RwLock<HashMap<String, Arc<ActiveSession>>>>,
     ftp_sessions: Arc<RwLock<HashMap<String, Arc<ActiveFtpSession>>>>,
     cancelled_transfers: Arc<std::sync::RwLock<HashSet<String>>>,
-    cancel_all_transfers: Arc<AtomicBool>,
+    cancel_all_transfers: Arc<std::sync::RwLock<Arc<AtomicBool>>>,
     cancelled_searches: Arc<std::sync::RwLock<HashSet<String>>>,
     pub external_edits: Arc<std::sync::RwLock<HashMap<String, ExternalEditInfo>>>,
     pub external_watchers: Arc<std::sync::Mutex<HashMap<String, ActiveWatcherHandle>>>,
@@ -28,7 +28,7 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             ftp_sessions: Arc::new(RwLock::new(HashMap::new())),
             cancelled_transfers: Arc::new(std::sync::RwLock::new(HashSet::new())),
-            cancel_all_transfers: Arc::new(AtomicBool::new(false)),
+            cancel_all_transfers: Arc::new(std::sync::RwLock::new(Arc::new(AtomicBool::new(false)))),
             cancelled_searches: Arc::new(std::sync::RwLock::new(HashSet::new())),
             external_edits: Arc::new(std::sync::RwLock::new(HashMap::new())),
             external_watchers: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -64,27 +64,37 @@ impl AppState {
     }
 
     pub fn cancel_all_transfers(&self) {
-        self.cancel_all_transfers.store(true, Ordering::SeqCst);
+        if let Ok(guard) = self.cancel_all_transfers.read() {
+            guard.store(true, Ordering::SeqCst);
+        }
     }
 
     pub fn reset_cancel_all(&self) {
-        self.cancel_all_transfers.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.cancel_all_transfers.write() {
+            *guard = Arc::new(AtomicBool::new(false));
+        }
         if let Ok(mut set) = self.cancelled_transfers.write() {
             set.clear();
         }
     }
 
     pub fn cancel_token(&self) -> Arc<AtomicBool> {
-        self.cancel_all_transfers.clone()
+        self.cancel_all_transfers
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| Arc::new(AtomicBool::new(false)))
     }
 
     pub fn is_cancel_all(&self) -> bool {
-        self.cancel_all_transfers.load(Ordering::SeqCst)
+        self.cancel_all_transfers
+            .read()
+            .map(|g| g.load(Ordering::SeqCst))
+            .unwrap_or(false)
     }
 
     pub fn is_transfer_cancelled(&self, transfer_id: &str) -> bool {
         // Deletion operations use 'del-' prefix and must never be aborted by global transfer cancel-all
-        if !transfer_id.starts_with("del-") && self.cancel_all_transfers.load(Ordering::SeqCst) {
+        if !transfer_id.starts_with("del-") && self.is_cancel_all() {
             return true;
         }
         if let Ok(set) = self.cancelled_transfers.read() {
@@ -332,5 +342,44 @@ impl AppState {
         for id in ids_to_remove {
             self.stop_dir_watcher(&id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_token_survives_reset_cancel_all() {
+        let state = AppState::new();
+        let token_before = state.cancel_token();
+        assert!(!token_before.load(Ordering::SeqCst));
+
+        state.cancel_all_transfers();
+        assert!(token_before.load(Ordering::SeqCst));
+        assert!(state.is_cancel_all());
+
+        // Even after reset_cancel_all() is called (e.g. 350ms later by frontend),
+        // the previously captured token remains permanently true.
+        state.reset_cancel_all();
+        assert!(token_before.load(Ordering::SeqCst));
+        assert!(!state.is_cancel_all());
+
+        let token_after = state.cancel_token();
+        assert!(!token_after.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn deletion_ids_are_isolated_from_cancel_all_transfers() {
+        let state = AppState::new();
+        state.cancel_all_transfers();
+
+        assert!(state.is_transfer_cancelled("tx-123"));
+        assert!(!state.is_transfer_cancelled("del-456"));
+        assert!(!state.is_deletion_cancelled("del-456"));
+
+        state.cancel_transfer("del-456");
+        assert!(state.is_transfer_cancelled("del-456"));
+        assert!(state.is_deletion_cancelled("del-456"));
     }
 }

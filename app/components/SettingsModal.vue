@@ -2350,7 +2350,7 @@ const browserOtherFonts = computed(() => {
             <img :src="appIcon" alt="FlowSFTP" class="w-20 h-20 object-contain drop-shadow-md" />
             <div>
               <h3 class="text-lg font-bold tracking-tight" :style="{ color: 'var(--color-text-main)' }">FlowSFTP</h3>
-              <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">v0.9.0-beta.1 (Beta Release)</p>
+              <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">v0.9.1-beta.2 (Beta Release)</p>
             </div>
             <p class="text-xs max-w-md leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
               A modern, blazing-fast, and secure dual-pane SFTP / FTP / FTPS client with an integrated hardware-accelerated SSH terminal.

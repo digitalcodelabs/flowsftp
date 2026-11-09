@@ -170,6 +170,58 @@ describe('useDirectoryBrowser: local listing and cache', () => {
 
       expect(callsTo('sftp_list_local')).toHaveLength(2)
     })
+
+    it('navigating to a fresh cached directory invalidates an in-flight stale refresh', async () => {
+      let resolveStaleA!: (val: [string, ReturnType<typeof file>[]]) => void
+      invokeMock.mockImplementation(async (cmd: string, args: any) => {
+        if (cmd === 'sftp_list_local') {
+          if (args.dirPath === '/home/a') {
+            return ['/home/a', [file('/home/a/old-a.txt')]]
+          }
+          if (args.dirPath === '/home/b') {
+            return ['/home/b', [file('/home/b/b.txt')]]
+          }
+        }
+        throw 'not a repository'
+      })
+
+      const b = useDirectoryBrowser()
+      // 1. Prime /home/a at t=0
+      await b.fetchLocalDir('/home/a')
+      // 2. Advance 30s and prime /home/b
+      vi.advanceTimersByTime(30_000)
+      await b.fetchLocalDir('/home/b')
+      // 3. Advance another 35s -> /home/a is stale (65s old), /home/b is still fresh (35s old)
+      vi.advanceTimersByTime(35_000)
+
+      invokeMock.mockImplementation((cmd: string, args: any) => {
+        if (cmd === 'sftp_list_local' && args.dirPath === '/home/a') {
+          return new Promise<[string, ReturnType<typeof file>[]]>((resolve) => {
+            resolveStaleA = resolve
+          })
+        }
+        return Promise.reject('not a repository')
+      })
+
+      // 4. Visit stale /home/a -> starts background refresh
+      const staleRefreshPromise = b.fetchLocalDir('/home/a')
+      expect(b.localPath.value).toBe('/home/a')
+      expect(b.isBackgroundRefreshingLocal.value).toBe(true)
+
+      // 5. Immediately navigate to fresh cached /home/b before /home/a refresh finishes
+      await b.fetchLocalDir('/home/b')
+      expect(b.localPath.value).toBe('/home/b')
+      expect(b.localFiles.value.map((f) => f.name)).toEqual(['b.txt'])
+      expect(b.isBackgroundRefreshingLocal.value).toBe(false)
+
+      // 6. Now the slow background refresh for /home/a resolves
+      resolveStaleA(['/home/a', [file('/home/a/new-a.txt')]])
+      await staleRefreshPromise
+
+      // Active view must remain /home/b, not overwritten by /home/a!
+      expect(b.localPath.value).toBe('/home/b')
+      expect(b.localFiles.value.map((f) => f.name)).toEqual(['b.txt'])
+    })
   })
 })
 
@@ -289,5 +341,52 @@ describe('useDirectoryBrowser: remote sessions', () => {
     await b.fetchRemoteDir('')
 
     expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('navigating to a fresh cached remote directory invalidates an in-flight stale remote refresh', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveStaleOne!: (val: [string, ReturnType<typeof remoteFile>[]]) => void
+      invokeMock.mockImplementation(async (cmd: string, args: any) => {
+        if (cmd === 'sftp_list_remote') {
+          if (args.path === '/one') return ['/one', [remoteFile('/one/old.txt')]]
+          if (args.path === '/two') return ['/two', [remoteFile('/two/two.txt')]]
+        }
+        throw 'not a repository'
+      })
+
+      const b = useDirectoryBrowser()
+      await b.switchSession('s1', '/one')
+      vi.advanceTimersByTime(30_000)
+      await b.fetchRemoteDir('s1', '/two')
+      vi.advanceTimersByTime(35_000) // /one is stale (65s), /two is fresh (35s)
+
+      invokeMock.mockImplementation((cmd: string, args: any) => {
+        if (cmd === 'sftp_list_remote' && args.path === '/one') {
+          return new Promise<[string, ReturnType<typeof remoteFile>[]]>((resolve) => {
+            resolveStaleOne = resolve
+          })
+        }
+        return Promise.reject('not a repository')
+      })
+
+      const staleRefreshPromise = b.fetchRemoteDir('s1', '/one')
+      expect(b.remotePath.value).toBe('/one')
+      expect(b.isBackgroundRefreshingRemote.value).toBe(true)
+
+      await b.fetchRemoteDir('s1', '/two')
+      expect(b.remotePath.value).toBe('/two')
+      expect(b.remoteFiles.value.map((f) => f.name)).toEqual(['two.txt'])
+      expect(b.isBackgroundRefreshingRemote.value).toBe(false)
+
+      resolveStaleOne(['/one', [remoteFile('/one/new.txt')]])
+      await staleRefreshPromise
+
+      expect(b.remotePath.value).toBe('/two')
+      expect(b.remoteFiles.value.map((f) => f.name)).toEqual(['two.txt'])
+      expect(b.sessionRemotePaths.value['s1']).toBe('/two')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

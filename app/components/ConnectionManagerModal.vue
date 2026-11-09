@@ -442,7 +442,7 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
         addLog('Checking encrypted vault for saved credentials...', 'info')
         if (vaultStore.isConfigured && vaultStore.hasSecretInVault(profile.id)) {
           secret = await vaultStore.getSecret(profile.id)
-          if (secret === null) {
+          if (secret === null && !vaultStore.isUnlocked) {
             addLog('Master password unlock cancelled.', 'error')
             return
           }
@@ -474,7 +474,7 @@ const handleQuickConnect = async (profile: SavedConnectionProfile) => {
         addLog('Checking encrypted vault for key passphrase...', 'info')
         if (vaultStore.isConfigured && vaultStore.hasSecretInVault(profile.id)) {
           const vaultSecret = await vaultStore.getSecret(profile.id)
-          if (vaultSecret === null) {
+          if (vaultSecret === null && !vaultStore.isUnlocked) {
             addLog('Master password unlock cancelled.', 'error')
             return
           }

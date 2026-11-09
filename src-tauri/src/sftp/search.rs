@@ -50,19 +50,16 @@ pub async fn search_remote(
 
     // 1. Try SSH Exec (Ultra-fast kernel-level find / grep on remote Unix / Linux)
     let res = if let Some(session) = state.get_session(&req.session_id).await {
-        if let Ok(results) = search_via_ssh_exec(state, &session, &clean_path, &req, max_depth, max_results).await {
-            if !results.is_empty() {
-                Ok(results)
-            } else if let Ok(sftp) = session.get_sftp().await {
-                // If SSH exec returned 0 or couldn't run find/grep, fall back to SFTP crawl
-                search_via_sftp_crawl(state, &sftp, &clean_path, &req, max_depth, max_results).await
-            } else {
-                Ok(Vec::new())
+        match search_via_ssh_exec(state, &session, &clean_path, &req, max_depth, max_results).await {
+            Ok(results) => Ok(results),
+            Err(_) if req.search_type != "content" => {
+                if let Ok(sftp) = session.get_sftp().await {
+                    search_via_sftp_crawl(state, &sftp, &clean_path, &req, max_depth, max_results).await
+                } else {
+                    Err(format!("SFTP not available for session '{}'", req.session_id))
+                }
             }
-        } else if let Ok(sftp) = session.get_sftp().await {
-            search_via_sftp_crawl(state, &sftp, &clean_path, &req, max_depth, max_results).await
-        } else {
-            Err(format!("SFTP not available for session '{}'", req.session_id))
+            Err(_) => Ok(Vec::new()),
         }
     } else if let Some(ftp) = state.get_ftp_session(&req.session_id).await {
         // 2. FTP Session search (Breadth-first crawl)
@@ -308,6 +305,9 @@ async fn search_via_ftp_crawl(
     max_depth: usize,
     max_results: usize,
 ) -> Result<Vec<RemoteSearchResultItem>, String> {
+    if req.search_type == "content" {
+        return Ok(Vec::new());
+    }
     let mut queue = VecDeque::new();
     queue.push_back((base_path.to_string(), 0usize));
 

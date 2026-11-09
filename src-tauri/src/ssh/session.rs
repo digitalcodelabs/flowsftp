@@ -45,6 +45,7 @@ impl ActiveSession {
         self.is_closed.store(true, Ordering::SeqCst);
         *self.sftp.lock().await = None;
         let _ = self.cmd_tx.send(SessionCommand::Close).await;
+        let _ = self.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
         Ok(())
     }
 
@@ -144,6 +145,40 @@ fn resolve_private_key_path(raw_path: &str, app: &AppHandle) -> Result<std::path
     Ok(resolved)
 }
 
+pub fn parse_host_and_port(raw_host: &str, default_port: u16) -> (String, u16) {
+    let mut host_str = raw_host.trim().trim_end_matches('/').to_string();
+    if let Some(stripped) = host_str.strip_prefix("ssh://") {
+        host_str = stripped.trim_end_matches('/').to_string();
+    }
+    if let Some((_, h)) = host_str.rsplit_once('@') {
+        host_str = h.to_string();
+    }
+
+    // Bracketed IPv6: e.g. "[2001:db8::1]:2222" or "[::1]"
+    if let Some(rest) = host_str.strip_prefix('[')
+        && let Some((ipv6_host, after_bracket)) = rest.split_once(']')
+    {
+        let port = after_bracket
+            .strip_prefix(':')
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(default_port);
+        return (ipv6_host.to_string(), port);
+    }
+
+    // Unbracketed IPv6 literal (contains multiple colons, e.g. "::1", "2001:db8::1")
+    if host_str.matches(':').count() > 1 {
+        return (host_str, default_port);
+    }
+
+    // Hostname or IPv4 with optional ":port"
+    if let Some((h, p)) = host_str.split_once(':') {
+        let parsed_port = p.parse::<u16>().unwrap_or(default_port);
+        (h.to_string(), parsed_port)
+    } else {
+        (host_str, default_port)
+    }
+}
+
 pub async fn spawn_ssh_session(
     app: AppHandle,
     session_id: String,
@@ -156,21 +191,7 @@ pub async fn spawn_ssh_session(
         ..Default::default()
     });
 
-    // Clean up host string (strip ssh://, username@, and trailing slashes)
-    let mut host_str = config.host.trim().to_string();
-    if let Some(stripped) = host_str.strip_prefix("ssh://") {
-        host_str = stripped.to_string();
-    }
-    if let Some((_, h)) = host_str.split_once('@') {
-        host_str = h.to_string();
-    }
-    let port = if let Some((h, p)) = host_str.split_once(':') {
-        let parsed_port = p.parse::<u16>().unwrap_or(config.port);
-        host_str = h.to_string();
-        parsed_port
-    } else {
-        config.port
-    };
+    let (host_str, port) = parse_host_and_port(&config.host, config.port);
 
     let username = config.username.trim().to_string();
     log::info!("Connecting to SSH server at {}:{} as '{}'", host_str, port, username);
@@ -475,5 +496,15 @@ mod tests {
         assert!(err.contains("public key (.pub)"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn parse_host_and_port_handles_ipv4_hostnames_and_ipv6() {
+        assert_eq!(parse_host_and_port("example.com", 22), ("example.com".to_string(), 22));
+        assert_eq!(parse_host_and_port("ssh://root@example.com:2222/", 22), ("example.com".to_string(), 2222));
+        assert_eq!(parse_host_and_port("::1", 22), ("::1".to_string(), 22));
+        assert_eq!(parse_host_and_port("2001:db8::1", 22), ("2001:db8::1".to_string(), 22));
+        assert_eq!(parse_host_and_port("[2001:db8::1]:2222", 22), ("2001:db8::1".to_string(), 2222));
+        assert_eq!(parse_host_and_port("ssh://user@[::1]:2200", 22), ("::1".to_string(), 2200));
     }
 }

@@ -583,4 +583,97 @@ describe('transfer pipelines', () => {
       expect(row.error).toBeUndefined()
     })
   })
+
+  describe('cancellation and deduplication', () => {
+    it('cancelAllTransfers clears pending queued transfers and does not delete cut source files', async () => {
+      let finishCrawl!: (tasks: any[]) => void
+      let capturedCrawlId = ''
+
+      crawlRemoteImpl = (args: any) => {
+        capturedCrawlId = args.crawlId
+        return new Promise<any[]>((resolve) => {
+          finishCrawl = resolve
+        })
+      }
+
+      store.cutToClipboard('remote', [remoteDir('proj')], 's1')
+      const pastePromise = store.pasteFromClipboard('local', 'C:/dl')
+
+      await vi.waitFor(() => expect(capturedCrawlId).not.toBe(''))
+
+      // Emit a batch of 10 files so some are queued behind concurrency and in pendingNewTransfers (60ms timer)
+      const batch = Array.from({ length: 10 }, (_, i) => ({
+        remote_path: `/src/proj/file_${i}.txt`,
+        local_path: `C:/dl/proj/file_${i}.txt`,
+        file_name: `file_${i}.txt`,
+        size: 100,
+      }))
+      emitTauriEvent('sftp:crawl:remote_batch', {
+        crawl_id: capturedCrawlId,
+        files: batch,
+        total_files: 10,
+        total_directories: 1,
+      })
+
+      // Immediately cancel all transfers before the 60ms pendingNewTransfers timer fires
+      await store.cancelAllTransfers()
+
+      // Wait past the 60ms flush window to verify pendingNewTransfers was cleared and never flushed
+      await new Promise((r) => setTimeout(r, 80))
+      expect(store.activeTransfers).toHaveLength(0)
+
+      // Finish crawl and let pasteFromClipboard unwind
+      finishCrawl(batch)
+      await pastePromise
+
+      expect(store.activeTransfers).toHaveLength(0)
+      // Cut source folder must NOT be deleted when transfers were cancelled
+      expect(callsTo('sftp_remove_remote_file')).toHaveLength(0)
+      expect(callsTo('sftp_remove_remote_dir')).toHaveLength(0)
+      expect(store.clipboard?.files.map((f) => f.path)).toEqual(['/src/proj'])
+    })
+
+    it('deduplicates files reported by both streaming crawl events and the final crawl result', async () => {
+      let finishCrawl!: (tasks: any[]) => void
+      let capturedCrawlId = ''
+
+      crawlRemoteImpl = (args: any) => {
+        capturedCrawlId = args.crawlId
+        return new Promise<any[]>((resolve) => {
+          finishCrawl = resolve
+        })
+      }
+
+      const batchPromise = store.startBatchDownload('s1', [remoteDir('proj')], 'C:/dl')
+      await vi.waitFor(() => expect(capturedCrawlId).not.toBe(''))
+
+      const files = [
+        { remote_path: '/src/proj/a.txt', local_path: 'C:/dl/proj/a.txt', file_name: 'a.txt', size: 10 },
+        { remote_path: '/src/proj/b.txt', local_path: 'C:/dl/proj/b.txt', file_name: 'b.txt', size: 20 },
+      ]
+
+      // Emit the same batch twice via streaming events, then return it again from invoke
+      emitTauriEvent('sftp:crawl:remote_batch', {
+        crawl_id: capturedCrawlId,
+        files,
+        total_files: 2,
+        total_directories: 1,
+      })
+      emitTauriEvent('sftp:crawl:remote_batch', {
+        crawl_id: capturedCrawlId,
+        files,
+        total_files: 2,
+        total_directories: 1,
+      })
+
+      finishCrawl(files)
+      await batchPromise
+
+      expect(callsTo('sftp_download').map((d) => d.localPath).sort()).toEqual([
+        'C:/dl/proj/a.txt',
+        'C:/dl/proj/b.txt',
+      ])
+      expect(store.completedTransfers).toHaveLength(2)
+    })
+  })
 })

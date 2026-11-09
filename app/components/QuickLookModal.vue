@@ -358,7 +358,7 @@ const loadContent = async () => {
 
 // Watch file changes
 watch(
-  () => [props.show, props.file?.path],
+  () => [props.show, props.file?.path, props.target, props.sessionId],
   ([show, path]) => {
     if (show && path) {
       loadContent()

@@ -286,7 +286,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
       activeDragging.value = null
       inMemoryDragPayload = null
       if (files.length > 0) {
-        if (srcSid !== sid || dragPayload.fromPane === 'left') {
+        if (srcSid !== sid) {
           await sftpStore.startBatchRemoteToRemoteTransfer(srcSid, sid, files, destDir)
         } else {
           const paths = files.map((f) => f.path)
@@ -322,7 +322,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
           data.files.length > 0
         ) {
           const srcSid = normalizeSessionId(data.sessionId) || sid
-          if (srcSid !== sid || data.fromPane === 'left') {
+          if (srcSid !== sid) {
             await sftpStore.startBatchRemoteToRemoteTransfer(srcSid, sid, data.files, destDir)
           } else {
             const paths = data.files.map((f: any) => f.path).filter(Boolean)
@@ -620,7 +620,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
         const srcSid = normalizeSessionId(dragPayload.sessionId) || sid
         activeDragging.value = null
         inMemoryDragPayload = null
-        if (srcSid !== sid || dragPayload.fromPane === 'left') {
+        if (srcSid !== sid) {
           await sftpStore.startBatchRemoteToRemoteTransfer(srcSid, sid, files, entry.path)
           return
         }
@@ -663,7 +663,7 @@ export function useSftpDragDrop(options: UseSftpDragDropOptions) {
             Array.isArray(data.files)
           ) {
             const srcSid = normalizeSessionId(data.sessionId) || sid
-            if (srcSid !== sid || data.fromPane === 'left') {
+            if (srcSid !== sid) {
               await sftpStore.startBatchRemoteToRemoteTransfer(srcSid, sid, data.files, entry.path)
               return
             }

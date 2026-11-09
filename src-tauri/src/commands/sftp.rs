@@ -869,6 +869,13 @@ pub async fn sftp_crawl_local_paths(
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "file".to_string());
 
+            if native_path.is_symlink() {
+                match std::fs::metadata(&native_path) {
+                    Ok(meta) if !meta.is_dir() => {}
+                    _ => continue,
+                }
+            }
+
             if native_path.is_file() || native_path.is_symlink() {
                 let remote_path = if clean_remote.is_empty() {
                     file_name.clone()
@@ -1197,7 +1204,14 @@ fn crawl_local_dir_recursive(
                 ignored,
             )?;
         } else if file_type.is_file() || file_type.is_symlink() {
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let size = if file_type.is_symlink() {
+                match std::fs::metadata(&path) {
+                    Ok(meta) if !meta.is_dir() => meta.len(),
+                    _ => continue,
+                }
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
 
             files.push(LocalCrawlTask {
                 local_path: path.to_string_lossy().to_string(),
@@ -1290,7 +1304,7 @@ pub async fn sftp_crawl_remote_paths(
         }
 
         match sftp.read_dir(&clean_p).await {
-            Ok(_) => {
+            Ok(initial_entries) => {
                 dirs_count += 1;
                 let folder_name = clean_p.split('/').next_back().unwrap_or("folder");
                 let local_base = if clean_local.is_empty() {
@@ -1313,14 +1327,27 @@ pub async fn sftp_crawl_remote_paths(
                     &patterns,
                     &mut results,
                     &mut dirs_count,
+                    Some(initial_entries),
                 ).await?;
             }
-            Err(_) => {
+            Err(read_err) => {
+                let meta = sftp.metadata(&clean_p).await.map_err(|meta_err| {
+                    format!(
+                        "Failed to access remote path '{}' (read_dir: {}, stat: {})",
+                        clean_p, read_err, meta_err
+                    )
+                })?;
+                if meta.is_dir() {
+                    return Err(format!(
+                        "Failed to read remote directory '{}': {}",
+                        clean_p, read_err
+                    ));
+                }
                 let file_name = clean_p.split('/').next_back().unwrap_or("file").to_string();
                 if is_path_ignored(&file_name, &file_name, &patterns) {
                     continue;
                 }
-                let size = sftp.metadata(&clean_p).await.ok().and_then(|m| m.size).unwrap_or(0);
+                let size = meta.size.unwrap_or(0);
                 let local_path = if clean_local.is_empty() {
                     file_name.clone()
                 } else {
@@ -1405,18 +1432,22 @@ fn crawl_remote_dir_recursive<'a>(
     patterns: &'a [String],
     results: &'a mut Vec<RemoteCrawlTask>,
     dirs_count: &'a mut usize,
+    prefetched_entries: Option<russh_sftp::client::fs::ReadDir>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
         if cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("Download crawl cancelled by user".to_string());
         }
 
-        let entries = match sftp.read_dir(current).await {
-            Ok(e) => e,
-            Err(err) => {
-                log::warn!("Failed to read remote directory '{}': {}", current, err);
-                return Ok(());
-            }
+        let entries = match prefetched_entries {
+            Some(e) => e,
+            None => match sftp.read_dir(current).await {
+                Ok(e) => e,
+                Err(err) => {
+                    log::warn!("Failed to read remote directory '{}': {}", current, err);
+                    return Ok(());
+                }
+            },
         };
 
         for entry in entries {
@@ -1486,6 +1517,7 @@ fn crawl_remote_dir_recursive<'a>(
                     patterns,
                     results,
                     dirs_count,
+                    None,
                 ).await?;
             } else {
                 let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
@@ -1563,6 +1595,14 @@ pub async fn sftp_move_remote_paths(
             continue;
         }
 
+        let clean_src_trimmed = clean_path.trim_end_matches('/');
+        if !clean_src_trimmed.is_empty() && new_path.starts_with(&format!("{}/", clean_src_trimmed)) {
+            return Err(format!(
+                "Cannot move '{}' into its own subdirectory '{}'",
+                clean_path, new_path
+            ));
+        }
+
         if let Some(ftp) = state.get_ftp_session(&session_id).await {
             ftp.rename(&clean_path, &new_path).await?;
         } else {
@@ -1591,6 +1631,29 @@ pub async fn sftp_copy_remote_paths(
 
     let clean_target = target_dir.trim().replace('\\', "/");
     let dest_dir = clean_target.trim_end_matches('/');
+
+    for p in &paths {
+        let clean_path = p.trim().replace('\\', "/");
+        let clean_src_trimmed = clean_path.trim_end_matches('/');
+        if clean_src_trimmed.is_empty() {
+            continue;
+        }
+        let file_name = clean_src_trimmed.split('/').rfind(|s| !s.is_empty()).unwrap_or("");
+        if file_name.is_empty() || file_name == "." || file_name == ".." {
+            continue;
+        }
+        let new_path = if dest_dir.is_empty() {
+            format!("/{}", file_name)
+        } else {
+            format!("{}/{}", dest_dir, file_name)
+        };
+        if new_path.starts_with(&format!("{}/", clean_src_trimmed)) {
+            return Err(format!(
+                "Cannot copy '{}' into its own subdirectory '{}'",
+                clean_path, new_path
+            ));
+        }
+    }
 
     if let Some(session) = state.get_session(&session_id).await {
         let escaped_dest = crate::shell::escape_single_quotes(dest_dir);

@@ -184,6 +184,21 @@ describe('useFileOperations (by-pane API)', () => {
       expect(ops.clipboard.value?.files.map((f) => f.path)).toEqual(['/srv/a.txt'])
     })
 
+    it('preserves all cut source files even if isCancellingAll resets to false before paste finishes unwinding', async () => {
+      const { ops, pipeline, isCancellingAll } = await setup()
+      pipeline.startBatchRemoteToRemoteTransfer.mockImplementationOnce(async () => {
+        isCancellingAll.value = true
+        // Simulate the 350ms timer resetting isCancellingAll before the batch promise resolves
+        isCancellingAll.value = false
+      })
+
+      ops.cutToClipboard('remote', [entry('/srv/a.txt')], 's1')
+      await ops.byPane.paste(remotePane('s2'), '/dst')
+
+      expect(calls('sftp_remove_remote_file')).toHaveLength(0)
+      expect(ops.clipboard.value?.files.map((f) => f.path)).toEqual(['/srv/a.txt'])
+    })
+
     it('invalidates the source directory cache after a same-endpoint cut and paste', async () => {
       const { browser, ops } = await setup()
       await browser.fetchRemoteDir('s1', '/srv/from')

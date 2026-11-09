@@ -470,9 +470,10 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
       flushNewTransfersNow()
       activeWorkersNotifiers.delete(pump.notify)
       if (folder.value && !folder.value.isStopping && !isCancellingAll.value) {
+        const finishedFolderId = folder.value.id
         folder.value.isComplete = true
         setTimeout(() => {
-          if (folder.value?.isComplete) {
+          if (folder.value?.id === finishedFolderId && folder.value?.isComplete) {
             folder.value = null
           }
         }, opts.lingerMs)
@@ -603,10 +604,13 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           )
 
           const crawlId = newTransferId('crawl-dl')
-          let streamedCount = 0
+          const enqueuedPaths = new Set<string>()
 
           const enqueueRemoteFile = (c: RemoteCrawlTask) => {
             if (isCancellingAll.value) return
+            const key = c.remote_path || c.local_path
+            if (enqueuedPaths.has(key)) return
+            enqueuedPaths.add(key)
             pump.push({
               transferId: newTransferId('dl'),
               file: crawledRemoteEntry(c),
@@ -621,13 +625,12 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             for (const c of payload.files) {
               if (isCancellingAll.value) break
               enqueueRemoteFile(c)
-              streamedCount++
             }
             if (activeFolderDownload.value) {
               activeFolderDownload.value.totalFiles = Math.max(
                 activeFolderDownload.value.totalFiles,
                 payload.total_files,
-                streamedCount
+                enqueuedPaths.size
               )
               activeFolderDownload.value.totalFolders = Math.max(
                 activeFolderDownload.value.totalFolders,
@@ -646,12 +649,12 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           })
 
           // Enqueue any remaining files not delivered via streaming batch events
-          for (let i = streamedCount; i < crawled.length; i++) {
+          for (const c of crawled) {
             if (isCancellingAll.value) break
-            enqueueRemoteFile(crawled[i]!)
+            enqueueRemoteFile(c)
           }
 
-          endFolderScan(activeFolderDownload, Math.max(crawled.length, streamedCount))
+          endFolderScan(activeFolderDownload, Math.max(crawled.length, enqueuedPaths.size))
         } catch (crawlErr: any) {
           console.error('Native Rust remote crawl error:', crawlErr)
           for (const d of dirItems) {
@@ -786,10 +789,13 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           )
 
           const crawlId = newTransferId('crawl-ul')
-          let streamedCount = 0
+          const enqueuedPaths = new Set<string>()
 
           const enqueueLocalFile = (c: LocalCrawlTask) => {
             if (isCancellingAll.value) return
+            const key = c.local_path || c.remote_path
+            if (enqueuedPaths.has(key)) return
+            enqueuedPaths.add(key)
             pump.push({
               transferId: newTransferId('ul'),
               file: crawledLocalEntry(c),
@@ -804,13 +810,12 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             for (const c of payload.files) {
               if (isCancellingAll.value) break
               enqueueLocalFile(c)
-              streamedCount++
             }
             if (activeFolderUpload.value) {
               activeFolderUpload.value.totalFiles = Math.max(
                 activeFolderUpload.value.totalFiles,
                 payload.total_files,
-                streamedCount
+                enqueuedPaths.size
               )
               activeFolderUpload.value.totalFolders = Math.max(
                 activeFolderUpload.value.totalFolders,
@@ -834,12 +839,12 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
 
           // Enqueue any remaining crawled files not delivered via streaming batch events.
-          for (let i = streamedCount; i < filesList.length; i++) {
+          for (const c of filesList) {
             if (isCancellingAll.value) break
-            enqueueLocalFile(filesList[i]!)
+            enqueueLocalFile(c)
           }
 
-          endFolderScan(activeFolderUpload, Math.max(filesList.length, streamedCount))
+          endFolderScan(activeFolderUpload, Math.max(filesList.length, enqueuedPaths.size))
           if (activeFolderUpload.value) {
             activeFolderUpload.value.totalFolders = Math.max(
               activeFolderUpload.value.totalFolders,
@@ -881,7 +886,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
 
           // Create remote directories (including empty ones) in native Rust, in the background,
           // so it never blocks active file uploads.
-          if (dirsList.length > 0) {
+          if (dirsList.length > 0 && !isCancellingAll.value) {
             invoke('sftp_batch_create_remote_dirs', {
               sessionId,
               paths: dirsList.map((d) => d.remote_path),
@@ -1036,10 +1041,13 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           )
 
           const crawlId = newTransferId('crawl-r2r')
-          let streamedCount = 0
+          const enqueuedPaths = new Set<string>()
 
           const enqueueR2RFile = (c: RemoteCrawlTask) => {
             if (isCancellingAll.value) return
+            const key = c.remote_path || c.local_path
+            if (enqueuedPaths.has(key)) return
+            enqueuedPaths.add(key)
             // The crawler reports the destination path in `local_path`.
             pump.push({
               transferId: newTransferId('r2r'),
@@ -1055,13 +1063,12 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             for (const c of payload.files) {
               if (isCancellingAll.value) break
               enqueueR2RFile(c)
-              streamedCount++
             }
             if (activeFolderUpload.value) {
               activeFolderUpload.value.totalFiles = Math.max(
                 activeFolderUpload.value.totalFiles,
                 payload.total_files,
-                streamedCount
+                enqueuedPaths.size
               )
               activeFolderUpload.value.totalFolders = Math.max(
                 activeFolderUpload.value.totalFolders,
@@ -1079,12 +1086,12 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             crawlId,
           })
 
-          for (let i = streamedCount; i < crawled.length; i++) {
+          for (const c of crawled) {
             if (isCancellingAll.value) break
-            enqueueR2RFile(crawled[i]!)
+            enqueueR2RFile(c)
           }
 
-          endFolderScan(activeFolderUpload, Math.max(crawled.length, streamedCount))
+          endFolderScan(activeFolderUpload, Math.max(crawled.length, enqueuedPaths.size))
         } catch (crawlErr: any) {
           console.error('Remote-to-remote crawl error:', crawlErr)
           for (const d of dirItems) {

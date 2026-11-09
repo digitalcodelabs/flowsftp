@@ -31,10 +31,12 @@ export interface DirWatcherSyncEvent {
 export const useDirWatcherStore = defineStore('dirWatcher', () => {
   const pairings = ref<DirWatcherPairing[]>([])
   const lastSyncEvent = ref<DirWatcherSyncEvent | null>(null)
+  const isInitialized = ref(false)
   let unlistenEvents: UnlistenFn | null = null
 
   async function init() {
-    if (unlistenEvents) return
+    if (isInitialized.value || unlistenEvents) return
+    isInitialized.value = true
 
     try {
       unlistenEvents = await listen<DirWatcherSyncEvent>('dir-watcher:event', (event) => {
@@ -61,6 +63,7 @@ export const useDirWatcherStore = defineStore('dirWatcher', () => {
         }
       })
     } catch (err) {
+      isInitialized.value = false
       console.warn('Failed to listen to dir-watcher:event', err)
     }
 

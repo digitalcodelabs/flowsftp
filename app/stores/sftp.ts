@@ -107,6 +107,9 @@ export const useSftpStore = defineStore('sftp', () => {
     activeTransfers,
     completedTransfers,
     failedTransfers,
+    cancelledTransfers,
+    cancelledTransferIds,
+    lastCancelAt,
     transferMap,
     activeRunningIds,
     transfers,
@@ -194,7 +197,7 @@ export const useSftpStore = defineStore('sftp', () => {
   } = useFileOperations({
     browser,
     pipeline: { startBatchDownload, startBatchUpload, startBatchRemoteToRemoteTransfer },
-    queue: { failedTransfers, isCancellingAll },
+    queue: { failedTransfers, cancelledTransfers, isCancellingAll, lastCancelAt },
   })
 
   // Synchronized Browsing
@@ -219,6 +222,9 @@ export const useSftpStore = defineStore('sftp', () => {
     activeTransfers,
     completedTransfers,
     failedTransfers,
+    cancelledTransfers,
+    cancelledTransferIds,
+    lastCancelAt,
     totalTransferSpeed,
     totalActiveBytes,
     totalTransferredBytes,

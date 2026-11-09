@@ -18,10 +18,12 @@ export const useExternalEditStore = defineStore('externalEdit', () => {
   const activeEdits = ref<ExternalEditInfo[]>([])
   const isOpening = ref<string | null>(null) // remote_path currently downloading/opening
   const lastSyncNotification = ref<{ filename: string; remotePath: string; time: string } | null>(null)
+  const isInitialized = ref(false)
   let unlistenStatus: UnlistenFn | null = null
 
   async function init() {
-    if (unlistenStatus) return
+    if (isInitialized.value || unlistenStatus) return
+    isInitialized.value = true
 
     try {
       unlistenStatus = await listen<ExternalEditInfo>('external-edit:status', (event) => {
@@ -53,6 +55,7 @@ export const useExternalEditStore = defineStore('externalEdit', () => {
         }
       })
     } catch (err) {
+      isInitialized.value = false
       console.warn('Failed to listen to external-edit:status', err)
     }
 

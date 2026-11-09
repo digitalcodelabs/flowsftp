@@ -138,7 +138,12 @@ export function useDirectoryBrowser() {
     localDirCache.value = {}
   }
 
+  let localFetchSeq = 0
+  let remoteFetchSeq = 0
+  const remoteSessionFetchSeq: Record<string, number> = {}
+
   async function fetchLocalDir(path?: string, options: FetchDirOptions = {}): Promise<boolean> {
+    const seq = ++localFetchSeq
     const targetPath = path !== undefined ? path : (localPath.value || null)
     const cacheKey = targetPath ? getLocalCacheKey(targetPath) : null
     const cached = cacheKey ? localDirCache.value[cacheKey] : null
@@ -152,6 +157,8 @@ export function useDirectoryBrowser() {
       selectedLocalPath.value = null
 
       if (isCacheFresh) {
+        isLoadingLocal.value = false
+        isBackgroundRefreshingLocal.value = false
         return true
       }
       isBackgroundRefreshingLocal.value = true
@@ -167,15 +174,6 @@ export function useDirectoryBrowser() {
         'sftp_list_local',
         { dirPath: targetPath }
       )
-      localPath.value = canonical
-      localFiles.value = entries
-      selectedLocalPath.value = null
-
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('flowsftp_last_local_path', canonical)
-      }
-      fetchLocalGitStatus(canonical)
-
       const cacheItem: CacheEntry<LocalFileEntry> = {
         timestamp: Date.now(),
         canonical,
@@ -185,16 +183,31 @@ export function useDirectoryBrowser() {
         localDirCache.value[cacheKey] = cacheItem
       }
       localDirCache.value[getLocalCacheKey(canonical)] = cacheItem
+
+      if (seq !== localFetchSeq) {
+        return true
+      }
+
+      localPath.value = canonical
+      localFiles.value = entries
+      selectedLocalPath.value = null
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('flowsftp_last_local_path', canonical)
+      }
+      fetchLocalGitStatus(canonical)
       return true
     } catch (err: any) {
       console.error('Failed to list local directory:', err)
-      if (!cached) {
+      if (seq === localFetchSeq && !cached) {
         localError.value = typeof err === 'string' ? err : err?.message || String(err)
       }
       return false
     } finally {
-      isLoadingLocal.value = false
-      isBackgroundRefreshingLocal.value = false
+      if (seq === localFetchSeq) {
+        isLoadingLocal.value = false
+        isBackgroundRefreshingLocal.value = false
+      }
     }
   }
 
@@ -204,6 +217,7 @@ export function useDirectoryBrowser() {
 
   async function switchSession(sessionId: string, defaultPath?: string) {
     if (!sessionId) {
+      ++remoteFetchSeq
       currentSessionId.value = null
       remoteFiles.value = []
       remotePath.value = '.'
@@ -234,8 +248,10 @@ export function useDirectoryBrowser() {
   function clearSession(sessionId: string) {
     delete sessionRemotePaths.value[sessionId]
     delete sessionRemoteFiles.value[sessionId]
+    delete remoteSessionFetchSeq[sessionId]
     invalidateRemoteCache(sessionId)
     if (currentSessionId.value === sessionId) {
+      ++remoteFetchSeq
       currentSessionId.value = null
       remoteFiles.value = []
       remotePath.value = '.'
@@ -247,6 +263,8 @@ export function useDirectoryBrowser() {
 
   async function fetchRemoteDir(sessionId: string, path?: string, options: FetchDirOptions = {}) {
     if (!sessionId) return
+    const seq = ++remoteFetchSeq
+    const sessionSeq = (remoteSessionFetchSeq[sessionId] = (remoteSessionFetchSeq[sessionId] || 0) + 1)
     const targetPath = path !== undefined ? path : (remotePath.value || '.')
     const cacheKey = getRemoteCacheKey(sessionId, targetPath)
     const cached = remoteDirCache.value[cacheKey]
@@ -264,6 +282,10 @@ export function useDirectoryBrowser() {
       sessionRemoteFiles.value[sessionId] = cached.entries
 
       if (isCacheFresh) {
+        if (currentSessionId.value === sessionId) {
+          isLoadingRemote.value = false
+          isBackgroundRefreshingRemote.value = false
+        }
         return
       }
       if (currentSessionId.value === sessionId) {
@@ -286,13 +308,6 @@ export function useDirectoryBrowser() {
         path: targetPath,
       })
 
-      sessionRemotePaths.value[sessionId] = canonical
-      sessionRemoteFiles.value[sessionId] = entries
-
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(`flowsftp_last_remote_path_${sessionId}`, canonical)
-      }
-
       const cacheItem: CacheEntry<SftpFileEntry> = {
         timestamp: Date.now(),
         canonical,
@@ -301,8 +316,19 @@ export function useDirectoryBrowser() {
       remoteDirCache.value[cacheKey] = cacheItem
       remoteDirCache.value[getRemoteCacheKey(sessionId, canonical)] = cacheItem
 
-      // Guard: only apply to current active display if this is still the active session!
-      if (currentSessionId.value === sessionId) {
+      if (sessionSeq !== remoteSessionFetchSeq[sessionId]) {
+        return
+      }
+
+      sessionRemotePaths.value[sessionId] = canonical
+      sessionRemoteFiles.value[sessionId] = entries
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`flowsftp_last_remote_path_${sessionId}`, canonical)
+      }
+
+      // Guard: only apply to current active display if this is still the active session and latest fetch!
+      if (currentSessionId.value === sessionId && sessionSeq === remoteSessionFetchSeq[sessionId]) {
         remotePath.value = canonical
         remoteFiles.value = entries
         selectedRemotePath.value = null
@@ -310,11 +336,11 @@ export function useDirectoryBrowser() {
       }
     } catch (err: any) {
       console.error('Failed to list remote directory:', err)
-      if (currentSessionId.value === sessionId && !cached) {
+      if (currentSessionId.value === sessionId && sessionSeq === remoteSessionFetchSeq[sessionId] && !cached) {
         remoteError.value = typeof err === 'string' ? err : err?.message || String(err)
       }
     } finally {
-      if (currentSessionId.value === sessionId) {
+      if (currentSessionId.value === sessionId && sessionSeq === remoteSessionFetchSeq[sessionId]) {
         isLoadingRemote.value = false
         isBackgroundRefreshingRemote.value = false
       }

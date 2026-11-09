@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { FileClipboardItem, LocalFileEntry, SftpFileEntry, TransferItem } from './types'
 import { LOCAL_PANE, isRemotePane, paneFrom, remotePane, type PaneRef } from './pane'
@@ -15,7 +15,9 @@ export interface FileOperationsDeps {
   >
   queue?: {
     failedTransfers: Ref<TransferItem[]>
+    cancelledTransfers?: Ref<TransferItem[]>
     isCancellingAll?: Ref<boolean>
+    lastCancelAt?: Ref<number>
   }
 }
 
@@ -317,21 +319,34 @@ export function useFileOperations(deps: FileOperationsDeps) {
     return false
   }
 
+  function snapshotPriorFailedIds(): Set<string> {
+    const ids = new Set<string>()
+    for (const t of deps.queue?.failedTransfers.value ?? []) {
+      ids.add(t.transfer_id)
+    }
+    for (const t of deps.queue?.cancelledTransfers?.value ?? []) {
+      ids.add(t.transfer_id)
+    }
+    return ids
+  }
+
   async function finalizeCrossEndpointCut(
     sourcePaneRef: PaneRef,
     clip: FileClipboardItem,
     batchResult: any,
-    priorFailedIds: Set<string>
+    priorFailedIds: Set<string>,
+    wasBatchCancelled: () => boolean
   ) {
-    if (deps.queue?.isCancellingAll?.value) {
+    if (wasBatchCancelled()) {
       return
     }
-    const newFailedItems = (deps.queue?.failedTransfers.value ?? []).filter(
-      (t) => !priorFailedIds.has(t.transfer_id)
-    )
+    const newFailedItems = [
+      ...(deps.queue?.failedTransfers.value ?? []).filter((t) => !priorFailedIds.has(t.transfer_id)),
+      ...(deps.queue?.cancelledTransfers?.value ?? []).filter((t) => !priorFailedIds.has(t.transfer_id)),
+    ]
     const remaining: AnyEntry[] = []
     for (const f of clip.files) {
-      if (didRootItemFail(f, batchResult, newFailedItems)) {
+      if (wasBatchCancelled() || didRootItemFail(f, batchResult, newFailedItems)) {
         remaining.push(f)
         continue
       }
@@ -362,6 +377,18 @@ export function useFileOperations(deps: FileOperationsDeps) {
     const dest = targetDir || (isRemotePane(target) ? remoteDirOf(target.sessionId) : localPath.value)
     if (!dest) return
 
+    let cancelledDuringPaste = Boolean(deps.queue?.isCancellingAll?.value)
+    const stopWatchCancel = deps.queue?.isCancellingAll
+      ? watch(
+          deps.queue.isCancellingAll,
+          (val) => {
+            if (val) cancelledDuringPaste = true
+          },
+          { flush: 'sync' }
+        )
+      : null
+    const wasBatchCancelled = () => Boolean(deps.queue?.isCancellingAll?.value) || cancelledDuringPaste
+
     try {
       if (clip.sourcePane === 'local' && !isRemotePane(target)) {
         const paths = clip.files.map((f) => f.path)
@@ -391,7 +418,7 @@ export function useFileOperations(deps: FileOperationsDeps) {
           await fetchRemoteDir(destSessionId, dest, { force: true })
         } else {
           // Cross-session remote transfer or same-server copy with conflict resolution!
-          const priorFailedIds = new Set((deps.queue?.failedTransfers.value ?? []).map((t) => t.transfer_id))
+          const priorFailedIds = snapshotPriorFailedIds()
           const batchResult = await startBatchRemoteToRemoteTransfer(
             srcSessionId,
             destSessionId,
@@ -399,28 +426,30 @@ export function useFileOperations(deps: FileOperationsDeps) {
             dest
           )
           if (clip.mode === 'cut') {
-            await finalizeCrossEndpointCut(remotePane(srcSessionId), clip, batchResult, priorFailedIds)
+            await finalizeCrossEndpointCut(remotePane(srcSessionId), clip, batchResult, priorFailedIds, wasBatchCancelled)
           }
         }
       } else if (clip.sourcePane === 'local' && isRemotePane(target)) {
-        const priorFailedIds = new Set((deps.queue?.failedTransfers.value ?? []).map((t) => t.transfer_id))
+        const priorFailedIds = snapshotPriorFailedIds()
         const batchResult = await startBatchUpload(target.sessionId, clip.files as LocalFileEntry[], dest)
         if (clip.mode === 'cut') {
-          await finalizeCrossEndpointCut(LOCAL_PANE, clip, batchResult, priorFailedIds)
+          await finalizeCrossEndpointCut(LOCAL_PANE, clip, batchResult, priorFailedIds, wasBatchCancelled)
         }
       } else if (clip.sourcePane === 'remote' && !isRemotePane(target)) {
         const srcSessionId = clip.sessionId || currentSessionId.value
         if (srcSessionId) {
-          const priorFailedIds = new Set((deps.queue?.failedTransfers.value ?? []).map((t) => t.transfer_id))
+          const priorFailedIds = snapshotPriorFailedIds()
           const batchResult = await startBatchDownload(srcSessionId, clip.files as SftpFileEntry[], dest)
           if (clip.mode === 'cut') {
-            await finalizeCrossEndpointCut(remotePane(srcSessionId), clip, batchResult, priorFailedIds)
+            await finalizeCrossEndpointCut(remotePane(srcSessionId), clip, batchResult, priorFailedIds, wasBatchCancelled)
           }
         }
       }
     } catch (err) {
       console.error('Failed to paste from clipboard:', err)
       throw err
+    } finally {
+      stopWatchCancel?.()
     }
   }
 

@@ -76,6 +76,9 @@ export function useTransferQueue(deps: TransferQueueDeps) {
   }
 
   const isCancellingAll = ref(false)
+  const cancelledTransferIds = new Set<string>()
+  const cancelledTransfers = shallowRef<TransferItem[]>([])
+  const lastCancelAt = ref<number>(0)
   const activeWorkersNotifiers = new Set<() => void>()
 
   async function runWithConcurrency<T>(
@@ -157,10 +160,16 @@ export function useTransferQueue(deps: TransferQueueDeps) {
       clearTimeout(newTransfersTimer)
       newTransfersTimer = null
     }
+    if (isCancellingAll.value) {
+      pendingNewTransfers = []
+      return
+    }
     if (pendingNewTransfers.length > 0) {
       // A row can finish (or be skipped) before this debounced flush runs; it has already been
       // moved to the completed/failed list by then and must not be re-added as active.
-      const stillActive = pendingNewTransfers.filter((t) => !t.is_complete)
+      const stillActive = pendingNewTransfers.filter(
+        (t) => !t.is_complete && !cancelledTransferIds.has(t.transfer_id)
+      )
       pendingNewTransfers = []
       if (stillActive.length > 0) {
         activeTransfers.value = [...activeTransfers.value, ...stillActive]
@@ -169,6 +178,7 @@ export function useTransferQueue(deps: TransferQueueDeps) {
   }
 
   function scheduleNewTransfersFlush(item: TransferItem) {
+    if (isCancellingAll.value) return
     transferMap.set(item.transfer_id, item)
     pendingNewTransfers.push(item)
     if (!newTransfersTimer) {
@@ -194,6 +204,7 @@ export function useTransferQueue(deps: TransferQueueDeps) {
 
   function completeTransferItem(transferId: string, fileSize?: number) {
     activeRunningIds.delete(transferId)
+    if (cancelledTransferIds.has(transferId)) return
     const item = transferMap.get(transferId)
     if (item) {
       if (!item.error) {
@@ -313,12 +324,10 @@ export function useTransferQueue(deps: TransferQueueDeps) {
   }
 
   async function cancelTransfer(transferId: string) {
+    cancelledTransferIds.add(transferId)
+    lastCancelAt.value = Date.now()
     activeRunningIds.delete(transferId)
-    try {
-      await invoke('sftp_cancel_transfer', { transferId })
-    } catch (e) {
-      console.warn('Failed to invoke sftp_cancel_transfer:', e)
-    }
+    pendingNewTransfers = pendingNewTransfers.filter((t) => t.transfer_id !== transferId)
     const item = transferMap.get(transferId)
     if (item) {
       item.is_complete = true
@@ -327,8 +336,18 @@ export function useTransferQueue(deps: TransferQueueDeps) {
       item.speed_bytes_per_sec = 0
       item.status = 'failed'
       activeTransfers.value = activeTransfers.value.filter((t) => t.transfer_id !== transferId)
-      failedTransfers.value = [item, ...failedTransfers.value]
+      if (!failedTransfers.value.some((t) => t.transfer_id === transferId)) {
+        failedTransfers.value = [item, ...failedTransfers.value]
+      }
+      if (!cancelledTransfers.value.some((t) => t.transfer_id === transferId)) {
+        cancelledTransfers.value = [item, ...cancelledTransfers.value]
+      }
       scheduleProgressFlush()
+    }
+    try {
+      await invoke('sftp_cancel_transfer', { transferId })
+    } catch (e) {
+      console.warn('Failed to invoke sftp_cancel_transfer:', e)
     }
   }
 
@@ -336,6 +355,14 @@ export function useTransferQueue(deps: TransferQueueDeps) {
 
   async function cancelAllTransfers() {
     isCancellingAll.value = true
+    lastCancelAt.value = Date.now()
+    if (newTransfersTimer) {
+      clearTimeout(newTransfersTimer)
+      newTransfersTimer = null
+    }
+    const pendingToCancel = [...pendingNewTransfers]
+    pendingNewTransfers = []
+
     for (const notify of activeWorkersNotifiers) {
       try {
         notify()
@@ -346,11 +373,23 @@ export function useTransferQueue(deps: TransferQueueDeps) {
     } catch (e) {
       console.warn('Failed to invoke sftp_cancel_all_transfers:', e)
     }
+    if (newTransfersTimer) {
+      clearTimeout(newTransfersTimer)
+      newTransfersTimer = null
+    }
+    if (pendingNewTransfers.length > 0) {
+      pendingToCancel.push(...pendingNewTransfers)
+      pendingNewTransfers = []
+    }
     activeRunningIds.clear()
     deps.clearFolderProgress()
     const now = Date.now()
     const cancelledItems: TransferItem[] = []
-    for (const t of activeTransfers.value) {
+    const seenIds = new Set<string>()
+    for (const t of [...activeTransfers.value, ...pendingToCancel]) {
+      if (seenIds.has(t.transfer_id)) continue
+      seenIds.add(t.transfer_id)
+      cancelledTransferIds.add(t.transfer_id)
       t.is_complete = true
       t.completed_at = now
       t.error = 'Cancelled by user'
@@ -360,6 +399,9 @@ export function useTransferQueue(deps: TransferQueueDeps) {
     }
     activeTransfers.value = []
     failedTransfers.value = [...cancelledItems, ...failedTransfers.value]
+    if (cancelledItems.length > 0) {
+      cancelledTransfers.value = [...cancelledItems, ...cancelledTransfers.value]
+    }
     scheduleProgressFlush()
 
     // Automatically reset the cancel-all transfer state after active workers had time to abort
@@ -403,7 +445,17 @@ export function useTransferQueue(deps: TransferQueueDeps) {
 
   async function stopAndRemoveAllQueued() {
     isQueueProcessing.value = false
+    if (newTransfersTimer) {
+      clearTimeout(newTransfersTimer)
+      newTransfersTimer = null
+    }
+    pendingNewTransfers = []
     await cancelAllTransfers()
+    if (newTransfersTimer) {
+      clearTimeout(newTransfersTimer)
+      newTransfersTimer = null
+    }
+    pendingNewTransfers = []
     failedTransfers.value = failedTransfers.value.filter((t) => t.error !== 'Cancelled by user')
     activeTransfers.value = []
     activeRunningIds.clear()
@@ -421,6 +473,9 @@ export function useTransferQueue(deps: TransferQueueDeps) {
     activeTransfers,
     completedTransfers,
     failedTransfers,
+    cancelledTransfers,
+    cancelledTransferIds,
+    lastCancelAt,
     transferMap,
     activeRunningIds,
     transfers,

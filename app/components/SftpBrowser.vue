@@ -547,6 +547,9 @@ const performAutoReconnect = async () => {
   try {
     const newSessionId = await sshStore.reconnect(oldSessionId)
     isConnectionDropped.value = false
+    if (newSessionId && newSessionId !== oldSessionId) {
+      sftpStore.clearSession(oldSessionId)
+    }
     await sftpStore.switchSession(newSessionId)
     if (savedRemotePath && savedRemotePath !== '.') {
       await sftpStore.fetchRemoteDir(newSessionId, savedRemotePath)
@@ -1035,7 +1038,7 @@ const handleBatchDeleteLeftRemote = async (files?: SftpFileEntry[]) => {
   if (leftPaneSource.value === 'local') return
   const targetFiles = (Array.isArray(files) && files.length > 0) ? files : selectedLeftRemoteFiles.value
   if (targetFiles.length === 0) return
-  openDeleteConfirm('remote', targetFiles)
+  openDeleteConfirm('remote', targetFiles, leftPaneSource.value)
 }
 
 // -------------------------------------------------------------
@@ -1430,6 +1433,10 @@ watch(
       remoteSearchQuery.value = ''
       showRemoteFilter.value = false
       isConnectionDropped.value = false
+      if (reconnectTimer) {
+        clearInterval(reconnectTimer)
+        reconnectTimer = null
+      }
       closeContextMenu()
 
       if (newSessionId) {
@@ -2276,34 +2283,51 @@ const handleTransferCopy = async () => {
 const handleTransferMove = async () => {
   if (!props.sessionId) return
   const prevFailedCount = sftpStore.failedTransfers.length
-  if (activePane.value === 'local') {
-    if (leftPaneSource.value === 'local') {
-      if (selectedLocalFiles.value.length === 0) return
-      const filesToMove = [...selectedLocalFiles.value]
-      await handleBatchUpload(filesToMove)
-      if (!sftpStore.isCancellingAll && sftpStore.failedTransfers.length === prevFailedCount) {
-        openDeleteConfirm('local', filesToMove)
+  const moveStartedAt = Date.now()
+  let cancelledDuringMove = false
+  const stopWatchCancel = watch(
+    () => sftpStore.isCancellingAll,
+    (val) => {
+      if (val) cancelledDuringMove = true
+    }
+  )
+  const wasMoveCancelled = () =>
+    cancelledDuringMove ||
+    sftpStore.isCancellingAll ||
+    (sftpStore.lastCancelAt ?? 0) >= moveStartedAt
+
+  try {
+    if (activePane.value === 'local') {
+      if (leftPaneSource.value === 'local') {
+        if (selectedLocalFiles.value.length === 0) return
+        const filesToMove = [...selectedLocalFiles.value]
+        await handleBatchUpload(filesToMove)
+        if (!wasMoveCancelled() && sftpStore.failedTransfers.length === prevFailedCount) {
+          openDeleteConfirm('local', filesToMove)
+        }
+      } else {
+        if (selectedLeftRemoteFiles.value.length === 0) return
+        const filesToMove = [...selectedLeftRemoteFiles.value]
+        await sftpStore.startBatchRemoteToRemoteTransfer(
+          leftPaneSource.value,
+          props.sessionId,
+          filesToMove,
+          sftpStore.remotePath
+        )
+        if (!wasMoveCancelled() && sftpStore.failedTransfers.length === prevFailedCount) {
+          openDeleteConfirm('remote', filesToMove, leftPaneSource.value)
+        }
       }
     } else {
-      if (selectedLeftRemoteFiles.value.length === 0) return
-      const filesToMove = [...selectedLeftRemoteFiles.value]
-      await sftpStore.startBatchRemoteToRemoteTransfer(
-        leftPaneSource.value,
-        props.sessionId,
-        filesToMove,
-        sftpStore.remotePath
-      )
-      if (!sftpStore.isCancellingAll && sftpStore.failedTransfers.length === prevFailedCount) {
-        openDeleteConfirm('remote', filesToMove, leftPaneSource.value)
+      if (selectedRemoteFiles.value.length === 0) return
+      const filesToMove = [...selectedRemoteFiles.value]
+      await handleBatchDownload(filesToMove)
+      if (!wasMoveCancelled() && sftpStore.failedTransfers.length === prevFailedCount) {
+        openDeleteConfirm('remote', filesToMove, props.sessionId)
       }
     }
-  } else {
-    if (selectedRemoteFiles.value.length === 0) return
-    const filesToMove = [...selectedRemoteFiles.value]
-    await handleBatchDownload(filesToMove)
-    if (!sftpStore.isCancellingAll && sftpStore.failedTransfers.length === prevFailedCount) {
-      openDeleteConfirm('remote', filesToMove, props.sessionId)
-    }
+  } finally {
+    stopWatchCancel()
   }
 }
 

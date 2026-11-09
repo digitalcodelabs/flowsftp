@@ -46,6 +46,7 @@ pub async fn sftp_start_external_edit(
     tokio::fs::create_dir_all(&staging_dir)
         .await
         .map_err(|e| format!("Failed to create staging directory: {}", e))?;
+    let staging_dir = std::fs::canonicalize(&staging_dir).unwrap_or(staging_dir);
 
     let local_file_path = staging_dir.join(&filename);
 
@@ -76,7 +77,10 @@ pub async fn sftp_start_external_edit(
                 return;
             }
             if let Ok(event) = res {
-                let matches = event.paths.iter().any(|p| p == &target_file_buf);
+                let matches = event
+                    .paths
+                    .iter()
+                    .any(|p| p == &target_file_buf || p.file_name() == target_file_buf.file_name());
                 if matches {
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) => {

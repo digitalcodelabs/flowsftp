@@ -501,15 +501,22 @@ pub async fn set_remote_permissions(
     }
 
     // Recursive chmod
-    let mut stack = vec![path.to_string()];
+    let mut stack: Vec<(String, Option<bool>)> = vec![(path.to_string(), None)];
     let target = target_type.unwrap_or("all");
 
-    while let Some(current_path) = stack.pop() {
-        let meta = sftp.metadata(&current_path).await.ok();
-        let is_dir = meta.as_ref().map(|m| {
-            // Check if POSIX directory bit (0o040000) or check read_dir
-            m.permissions.map(|p| (p & 0o170000) == 0o040000).unwrap_or(false)
-        }).unwrap_or(false);
+    while let Some((current_path, known_is_dir)) = stack.pop() {
+        let is_dir = match known_is_dir {
+            Some(d) => d,
+            None => {
+                let meta = sftp.metadata(&current_path).await.ok();
+                meta.as_ref()
+                    .map(|m| {
+                        // Check if POSIX directory bit (0o040000) or check read_dir
+                        m.permissions.map(|p| (p & 0o170000) == 0o040000).unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            }
+        };
 
         let should_apply = match target {
             "dirs" => is_dir,
@@ -540,7 +547,7 @@ pub async fn set_remote_permissions(
                     } else {
                         format!("{}/{}", current_path, name)
                     };
-                    stack.push(sub_path);
+                    stack.push((sub_path, Some(entry.file_type().is_dir())));
                 }
             }
         }
@@ -957,6 +964,11 @@ pub async fn download_file(
         remote_path, local_path, transfer_id, conflict_action, file_size
     );
 
+    let state = app.state::<crate::state::AppState>();
+    if state.is_transfer_cancelled(&transfer_id) {
+        return Err("Transfer cancelled by user".to_string());
+    }
+
     let file_name = Path::new(&remote_path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -988,6 +1000,10 @@ pub async fn download_file(
             },
         );
         return Ok(());
+    }
+
+    if state.is_transfer_cancelled(&transfer_id) {
+        return Err("Transfer cancelled by user".to_string());
     }
 
     // 2. Open remote file
@@ -1094,7 +1110,6 @@ pub async fn download_file(
         );
     }
 
-    let state = app.state::<crate::state::AppState>();
     loop {
         if state.is_transfer_cancelled(&transfer_id) {
             let err_msg = "Transfer cancelled by user".to_string();
@@ -1166,8 +1181,9 @@ pub async fn download_file(
         // Emit progress every ~100ms
         if last_emit.elapsed().as_millis() >= 100 {
             let elapsed_secs = start_time.elapsed().as_secs_f64();
+            let session_bytes = transferred.saturating_sub(resume_offset);
             let speed = if elapsed_secs > 0.0 {
-                (transferred as f64 / elapsed_secs) as u64
+                (session_bytes as f64 / elapsed_secs) as u64
             } else {
                 0
             };
@@ -1237,6 +1253,11 @@ pub async fn upload_file(
         local_path, remote_path, transfer_id, conflict_action, file_size
     );
 
+    let state = app.state::<crate::state::AppState>();
+    if state.is_transfer_cancelled(&transfer_id) {
+        return Err("Transfer cancelled by user".to_string());
+    }
+
     let (native_local, _) = normalize_to_native_path(&local_path);
     let file_name = native_local
         .file_name()
@@ -1274,6 +1295,10 @@ pub async fn upload_file(
             },
         );
         return Ok(());
+    }
+
+    if state.is_transfer_cancelled(&transfer_id) {
+        return Err("Transfer cancelled by user".to_string());
     }
 
     let mut resume_offset: u64 = 0;
@@ -1393,7 +1418,6 @@ pub async fn upload_file(
         );
     }
 
-    let state = app.state::<crate::state::AppState>();
     loop {
         if state.is_transfer_cancelled(&transfer_id) {
             let err_msg = "Transfer cancelled by user".to_string();
@@ -1460,8 +1484,9 @@ pub async fn upload_file(
 
         if last_emit.elapsed().as_millis() >= 100 {
             let elapsed_secs = start_time.elapsed().as_secs_f64();
+            let session_bytes = transferred.saturating_sub(resume_offset);
             let speed = if elapsed_secs > 0.0 {
-                (transferred as f64 / elapsed_secs) as u64
+                (session_bytes as f64 / elapsed_secs) as u64
             } else {
                 0
             };
@@ -1843,6 +1868,23 @@ pub async fn rename_local(old_path: &str, new_path: &str) -> Result<(), String> 
         .map_err(|e| format!("Failed to rename local file from '{}' to '{}': {}", old_path, new_path, e))
 }
 
+fn is_local_dest_inside_src_dir(src_dir: &Path, target_dir: &Path, dest_path: &Path) -> bool {
+    if dest_path.starts_with(src_dir) || target_dir.starts_with(src_dir) {
+        return true;
+    }
+    if let (Ok(canon_src), Ok(canon_target)) = (std::fs::canonicalize(src_dir), std::fs::canonicalize(target_dir)) {
+        if canon_target.starts_with(&canon_src) {
+            return true;
+        }
+        if let Some(fname) = dest_path.file_name()
+            && canon_target.join(fname).starts_with(&canon_src)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 pub async fn copy_local_paths(paths: Vec<String>, target_dir: &str) -> Result<(), String> {
     let (target_native, _) = normalize_to_native_path(target_dir);
     if !target_native.exists() {
@@ -1872,6 +1914,13 @@ pub async fn copy_local_paths(paths: Vec<String>, target_dir: &str) -> Result<()
             .map_err(|e| format!("Failed to read metadata for '{}': {}", path_str, e))?;
 
         if meta.is_dir() {
+            if is_local_dest_inside_src_dir(&src_native, &target_native, &dest_native) {
+                return Err(format!(
+                    "Cannot copy directory '{}' into its own subdirectory '{}'",
+                    src_native.display(),
+                    dest_native.display()
+                ));
+            }
             copy_dir_recursive(&src_native, &dest_native).await?;
         } else {
             fs::copy(&src_native, &dest_native)
@@ -1939,6 +1988,14 @@ pub async fn move_local_paths(paths: Vec<String>, target_dir: &str) -> Result<()
         let dest_native = target_native.join(file_name);
         if src_native == dest_native {
             continue;
+        }
+
+        if src_native.is_dir() && is_local_dest_inside_src_dir(&src_native, &target_native, &dest_native) {
+            return Err(format!(
+                "Cannot move directory '{}' into its own subdirectory '{}'",
+                src_native.display(),
+                dest_native.display()
+            ));
         }
 
         if fs::rename(&src_native, &dest_native).await.is_err() {
