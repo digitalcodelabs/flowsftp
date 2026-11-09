@@ -9,8 +9,9 @@ use crate::sftp::{
     set_remote_permissions, upload_file, write_local_file_text, write_remote_file_text,
     compress_local_archive, compress_remote_archive, extract_local_archive, extract_remote_archive,
     ensure_remote_dir_recursive, get_matching_ignore_pattern,
-    CrawlProgressPayload, FileConflictInfo, GitRepoStatus, LocalCrawlDirectory, LocalCrawlIgnored, LocalCrawlResult,
-    LocalCrawlTask, LocalFileEntry, RemoteCrawlTask, SftpFileEntry, batch_create_remote_dirs,
+    CrawlProgressPayload, FileConflictInfo, GitRepoStatus, LocalCrawlBatchPayload, LocalCrawlDirectory, LocalCrawlIgnored,
+    LocalCrawlResult, LocalCrawlTask, LocalFileEntry, RemoteCrawlBatchPayload, RemoteCrawlTask, SftpFileEntry,
+    batch_create_remote_dirs, CRAWL_STREAM_BATCH_INTERVAL_MS, CRAWL_STREAM_BATCH_SIZE,
 };
 use crate::state::AppState;
 
@@ -82,10 +83,7 @@ pub async fn sftp_batch_create_remote_dirs(
     }
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        for path in paths {
-            let _ = ftp.ensure_dir_recursive(&path).await;
-        }
-        return Ok(());
+        return ftp.batch_create_dirs(paths).await;
     }
 
     let session = state
@@ -371,7 +369,7 @@ pub async fn sftp_download(
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
         return ftp
-            .download_file(&app, &remote_path, &local_path, &transfer_id, conflict_action)
+            .download_file(&app, &remote_path, &local_path, &transfer_id, conflict_action, file_size)
             .await;
     }
 
@@ -829,6 +827,7 @@ pub async fn sftp_crawl_local_paths(
     paths: Vec<String>,
     target_remote_dir: String,
     ignore_patterns: Option<Vec<String>>,
+    crawl_id: Option<String>,
 ) -> Result<LocalCrawlResult, String> {
     let cancel_token = state.cancel_token();
     let app_handle = app.clone();
@@ -842,6 +841,8 @@ pub async fn sftp_crawl_local_paths(
 
         let mut last_emit = std::time::Instant::now();
         let mut last_count = 0usize;
+        let mut emitted_files_idx = 0usize;
+        let mut last_batch_emit = std::time::Instant::now();
 
         // Emit initial 0 count
         let _ = app_handle.emit(
@@ -907,6 +908,16 @@ pub async fn sftp_crawl_local_paths(
                         },
                     );
                 }
+
+                maybe_emit_local_crawl_batch(
+                    &app_handle,
+                    crawl_id.as_deref(),
+                    &files,
+                    directories.len(),
+                    &mut emitted_files_idx,
+                    &mut last_batch_emit,
+                    false,
+                );
             } else if native_path.is_dir() {
                 let root_folder_name = native_path
                     .file_name()
@@ -956,6 +967,9 @@ pub async fn sftp_crawl_local_paths(
                     &cancel_token,
                     &mut last_emit,
                     &mut last_count,
+                    crawl_id.as_deref(),
+                    &mut emitted_files_idx,
+                    &mut last_batch_emit,
                     &native_path,
                     &native_path,
                     &remote_base,
@@ -965,6 +979,18 @@ pub async fn sftp_crawl_local_paths(
                     &mut ignored,
                 )?;
             }
+        }
+
+        if !cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+            maybe_emit_local_crawl_batch(
+                &app_handle,
+                crawl_id.as_deref(),
+                &files,
+                directories.len(),
+                &mut emitted_files_idx,
+                &mut last_batch_emit,
+                true,
+            );
         }
 
         // Final progress emit
@@ -991,12 +1017,79 @@ pub async fn sftp_crawl_local_paths(
     .map_err(|e| format!("Local crawler failed: {}", e))?
 }
 
+fn maybe_emit_local_crawl_batch(
+    app: &AppHandle,
+    crawl_id: Option<&str>,
+    files: &[LocalCrawlTask],
+    total_directories: usize,
+    emitted_files_idx: &mut usize,
+    last_batch_emit: &mut std::time::Instant,
+    force: bool,
+) {
+    if let Some(cid) = crawl_id {
+        let pending = files.len().saturating_sub(*emitted_files_idx);
+        if pending > 0
+            && (force
+                || pending >= CRAWL_STREAM_BATCH_SIZE
+                || last_batch_emit.elapsed() >= std::time::Duration::from_millis(CRAWL_STREAM_BATCH_INTERVAL_MS))
+        {
+            let batch_files = files[*emitted_files_idx..].to_vec();
+            *emitted_files_idx = files.len();
+            *last_batch_emit = std::time::Instant::now();
+            let _ = app.emit(
+                "sftp:crawl:local_batch",
+                LocalCrawlBatchPayload {
+                    crawl_id: cid.to_string(),
+                    files: batch_files,
+                    total_files: files.len(),
+                    total_directories,
+                },
+            );
+        }
+    }
+}
+
+fn maybe_emit_remote_crawl_batch(
+    app: &AppHandle,
+    crawl_id: Option<&str>,
+    results: &[RemoteCrawlTask],
+    total_directories: usize,
+    emitted_files_idx: &mut usize,
+    last_batch_emit: &mut std::time::Instant,
+    force: bool,
+) {
+    if let Some(cid) = crawl_id {
+        let pending = results.len().saturating_sub(*emitted_files_idx);
+        if pending > 0
+            && (force
+                || pending >= CRAWL_STREAM_BATCH_SIZE
+                || last_batch_emit.elapsed() >= std::time::Duration::from_millis(CRAWL_STREAM_BATCH_INTERVAL_MS))
+        {
+            let batch_files = results[*emitted_files_idx..].to_vec();
+            *emitted_files_idx = results.len();
+            *last_batch_emit = std::time::Instant::now();
+            let _ = app.emit(
+                "sftp:crawl:remote_batch",
+                RemoteCrawlBatchPayload {
+                    crawl_id: cid.to_string(),
+                    files: batch_files,
+                    total_files: results.len(),
+                    total_directories,
+                },
+            );
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn crawl_local_dir_recursive(
     app: &AppHandle,
     cancel_token: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     last_emit: &mut std::time::Instant,
     last_count: &mut usize,
+    crawl_id: Option<&str>,
+    emitted_files_idx: &mut usize,
+    last_batch_emit: &mut std::time::Instant,
     root: &std::path::Path,
     current: &std::path::Path,
     remote_base: &str,
@@ -1077,11 +1170,24 @@ fn crawl_local_dir_recursive(
                 );
             }
 
+            maybe_emit_local_crawl_batch(
+                app,
+                crawl_id,
+                files,
+                directories.len(),
+                emitted_files_idx,
+                last_batch_emit,
+                false,
+            );
+
             crawl_local_dir_recursive(
                 app,
                 cancel_token,
                 last_emit,
                 last_count,
+                crawl_id,
+                emitted_files_idx,
+                last_batch_emit,
                 root,
                 &path,
                 remote_base,
@@ -1113,6 +1219,16 @@ fn crawl_local_dir_recursive(
                     },
                 );
             }
+
+            maybe_emit_local_crawl_batch(
+                app,
+                crawl_id,
+                files,
+                directories.len(),
+                emitted_files_idx,
+                last_batch_emit,
+                false,
+            );
         }
     }
 
@@ -1127,12 +1243,15 @@ pub async fn sftp_crawl_remote_paths(
     paths: Vec<String>,
     target_local_dir: String,
     ignore_patterns: Option<Vec<String>>,
+    crawl_id: Option<String>,
 ) -> Result<Vec<RemoteCrawlTask>, String> {
     let patterns = ignore_patterns.unwrap_or_default();
     let cancel_token = state.cancel_token();
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        return ftp.crawl_remote_paths(app, cancel_token, paths, target_local_dir, Some(patterns)).await;
+        return ftp
+            .crawl_remote_paths(app, cancel_token, paths, target_local_dir, Some(patterns), crawl_id)
+            .await;
     }
 
     let session = state
@@ -1147,6 +1266,8 @@ pub async fn sftp_crawl_remote_paths(
 
     let mut last_emit = std::time::Instant::now();
     let mut last_count = 0usize;
+    let mut emitted_files_idx = 0usize;
+    let mut last_batch_emit = std::time::Instant::now();
 
     // Initial 0 emit
     let _ = app.emit(
@@ -1182,6 +1303,9 @@ pub async fn sftp_crawl_remote_paths(
                     &cancel_token,
                     &mut last_emit,
                     &mut last_count,
+                    crawl_id.as_deref(),
+                    &mut emitted_files_idx,
+                    &mut last_batch_emit,
                     &sftp,
                     &clean_p,
                     &clean_p,
@@ -1222,8 +1346,30 @@ pub async fn sftp_crawl_remote_paths(
                         },
                     );
                 }
+
+                maybe_emit_remote_crawl_batch(
+                    &app,
+                    crawl_id.as_deref(),
+                    &results,
+                    dirs_count,
+                    &mut emitted_files_idx,
+                    &mut last_batch_emit,
+                    false,
+                );
             }
         }
+    }
+
+    if !cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
+        maybe_emit_remote_crawl_batch(
+            &app,
+            crawl_id.as_deref(),
+            &results,
+            dirs_count,
+            &mut emitted_files_idx,
+            &mut last_batch_emit,
+            true,
+        );
     }
 
     // Final progress emit
@@ -1249,6 +1395,9 @@ fn crawl_remote_dir_recursive<'a>(
     cancel_token: &'a std::sync::Arc<std::sync::atomic::AtomicBool>,
     last_emit: &'a mut std::time::Instant,
     last_count: &'a mut usize,
+    crawl_id: Option<&'a str>,
+    emitted_files_idx: &'a mut usize,
+    last_batch_emit: &'a mut std::time::Instant,
     sftp: &'a russh_sftp::client::SftpSession,
     root: &'a str,
     current: &'a str,
@@ -1312,11 +1461,24 @@ fn crawl_remote_dir_recursive<'a>(
                     );
                 }
 
+                maybe_emit_remote_crawl_batch(
+                    app,
+                    crawl_id,
+                    results,
+                    *dirs_count,
+                    emitted_files_idx,
+                    last_batch_emit,
+                    false,
+                );
+
                 crawl_remote_dir_recursive(
                     app,
                     cancel_token,
                     last_emit,
                     last_count,
+                    crawl_id,
+                    emitted_files_idx,
+                    last_batch_emit,
                     sftp,
                     root,
                     &child_remote,
@@ -1349,6 +1511,16 @@ fn crawl_remote_dir_recursive<'a>(
                         },
                     );
                 }
+
+                maybe_emit_remote_crawl_batch(
+                    app,
+                    crawl_id,
+                    results,
+                    *dirs_count,
+                    emitted_files_idx,
+                    last_batch_emit,
+                    false,
+                );
             }
         }
 

@@ -3088,7 +3088,7 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
             <span v-if="sftpStore.activeFolderUpload.isScanning" class="italic opacity-85 font-medium animate-pulse text-amber-500/90 dark:text-amber-400/90">
               (Counting...)
             </span>
-            <span v-else-if="sftpStore.activeFolderUpload.totalFiles > 0 && !sftpStore.activeFolderUpload.isComplete" class="opacity-80">
+            <span v-if="sftpStore.activeFolderUpload.totalFiles > 0 && !sftpStore.activeFolderUpload.isComplete && (!sftpStore.activeFolderUpload.isScanning || sftpStore.activeFolderUpload.completedFiles > 0)" class="opacity-80">
               • {{ sftpStore.activeFolderUpload.completedFiles }}/{{ sftpStore.activeFolderUpload.totalFiles }} uploaded
             </span>
           </div>
@@ -3225,7 +3225,7 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
             <span v-if="sftpStore.activeFolderDownload.isScanning" class="italic opacity-85 font-medium animate-pulse text-amber-500/90 dark:text-amber-400/90">
               (Counting...)
             </span>
-            <span v-else-if="sftpStore.activeFolderDownload.totalFiles > 0 && !sftpStore.activeFolderDownload.isComplete" class="opacity-80">
+            <span v-if="sftpStore.activeFolderDownload.totalFiles > 0 && !sftpStore.activeFolderDownload.isComplete && (!sftpStore.activeFolderDownload.isScanning || sftpStore.activeFolderDownload.completedFiles > 0)" class="opacity-80">
               • {{ sftpStore.activeFolderDownload.completedFiles }}/{{ sftpStore.activeFolderDownload.totalFiles }} downloaded
             </span>
           </div>

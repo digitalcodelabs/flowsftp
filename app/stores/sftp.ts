@@ -84,10 +84,10 @@ export const useSftpStore = defineStore('sftp', () => {
     listen<CrawlProgressPayload>('sftp:crawl:progress', (event) => {
       const { scan_type, files, directories } = event.payload
       if (scan_type === 'upload' && activeFolderUpload.value && activeFolderUpload.value.isScanning) {
-        activeFolderUpload.value.totalFiles = files
+        activeFolderUpload.value.totalFiles = Math.max(activeFolderUpload.value.totalFiles, files)
         activeFolderUpload.value.totalFolders = Math.max(activeFolderUpload.value.totalFolders, directories)
       } else if (scan_type === 'download' && activeFolderDownload.value && activeFolderDownload.value.isScanning) {
-        activeFolderDownload.value.totalFiles = files
+        activeFolderDownload.value.totalFiles = Math.max(activeFolderDownload.value.totalFiles, files)
         activeFolderDownload.value.totalFolders = Math.max(activeFolderDownload.value.totalFolders, directories)
       }
     }).catch((err) => {

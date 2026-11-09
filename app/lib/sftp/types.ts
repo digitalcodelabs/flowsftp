@@ -79,6 +79,20 @@ export interface CrawlProgressPayload {
   directories: number
 }
 
+export interface RemoteCrawlBatchPayload {
+  crawl_id: string
+  files: RemoteCrawlTask[]
+  total_files: number
+  total_directories: number
+}
+
+export interface LocalCrawlBatchPayload {
+  crawl_id: string
+  files: LocalCrawlTask[]
+  total_files: number
+  total_directories: number
+}
+
 export interface RemoteCrawlTask {
   remote_path: string
   local_path: string

@@ -13,7 +13,17 @@ const calls: Call[] = []
 let existingPaths = new Set<string>()
 let failTransfersFor = new Set<string>()
 let crawlRemote: any[] = []
+let crawlRemoteImpl: ((args: any) => Promise<any[]>) | null = null
 let crawlLocal: any = { files: [], directories: [], ignored: [] }
+const eventListeners = new Map<string, Set<(event: { payload: any }) => void>>()
+
+function emitTauriEvent(eventName: string, payload: any) {
+  const listeners = eventListeners.get(eventName)
+  if (!listeners) return
+  for (const cb of listeners) {
+    cb({ payload })
+  }
+}
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (cmd: string, args: any) => {
@@ -31,7 +41,7 @@ vi.mock('@tauri-apps/api/core', () => ({
         if (failTransfersFor.has(args.destPath)) throw new Error(`r2r failed: ${args.destPath}`)
         return undefined
       case 'sftp_crawl_remote_paths':
-        return crawlRemote
+        return crawlRemoteImpl ? await crawlRemoteImpl(args) : crawlRemote
       case 'sftp_crawl_local_paths':
         return crawlLocal
       case 'sftp_list_local':
@@ -47,7 +57,15 @@ vi.mock('@tauri-apps/api/core', () => ({
   },
 }))
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (eventName: string, cb: (event: { payload: any }) => void) => {
+    if (!eventListeners.has(eventName)) {
+      eventListeners.set(eventName, new Set())
+    }
+    eventListeners.get(eventName)!.add(cb)
+    return () => {
+      eventListeners.get(eventName)?.delete(cb)
+    }
+  }),
 }))
 
 import { useSftpStore, type SftpFileEntry, type LocalFileEntry } from '../../app/stores/sftp'
@@ -74,7 +92,9 @@ describe('transfer pipelines', () => {
     existingPaths = new Set()
     failTransfersFor = new Set()
     crawlRemote = []
+    crawlRemoteImpl = null
     crawlLocal = { files: [], directories: [], ignored: [] }
+    eventListeners.clear()
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
 
@@ -316,6 +336,64 @@ describe('transfer pipelines', () => {
       // Brand-new local folder: only the root was checked.
       expect(checkedPaths()).toEqual(['C:/dl/proj'])
       expect(store.activeFolderDownload).toMatchObject({ completedFiles: 2, isComplete: true })
+    })
+
+    it('starts downloading streamed crawl batches immediately while the folder scan is still counting', async () => {
+      let finishCrawl!: (tasks: any[]) => void
+      let capturedCrawlId = ''
+
+      crawlRemoteImpl = (args: any) => {
+        capturedCrawlId = args.crawlId
+        return new Promise<any[]>((resolve) => {
+          finishCrawl = resolve
+        })
+      }
+
+      const batchPromise = store.startBatchDownload('s1', [remoteDir('proj')], 'C:/dl')
+
+      await vi.waitFor(() => expect(capturedCrawlId).not.toBe(''))
+
+      const firstBatch = [
+        { remote_path: '/src/proj/first.txt', local_path: 'C:/dl/proj/first.txt', file_name: 'first.txt', size: 12 },
+        { remote_path: '/src/proj/second.txt', local_path: 'C:/dl/proj/second.txt', file_name: 'second.txt', size: 24 },
+      ]
+
+      emitTauriEvent('sftp:crawl:remote_batch', {
+        crawl_id: capturedCrawlId,
+        files: firstBatch,
+        total_files: 2,
+        total_directories: 1,
+      })
+
+      // Before `sftp_crawl_remote_paths` resolves, the first 2 files are already downloaded!
+      await vi.waitFor(() => {
+        expect(callsTo('sftp_download').map((d) => d.localPath).sort()).toEqual([
+          'C:/dl/proj/first.txt',
+          'C:/dl/proj/second.txt',
+        ])
+      })
+      expect(store.activeFolderDownload).toMatchObject({
+        isScanning: true,
+        completedFiles: 2,
+        totalFiles: 2,
+      })
+
+      const thirdFile = {
+        remote_path: '/src/proj/third.txt',
+        local_path: 'C:/dl/proj/third.txt',
+        file_name: 'third.txt',
+        size: 36,
+      }
+      finishCrawl([...firstBatch, thirdFile])
+      await batchPromise
+
+      expect(callsTo('sftp_download')).toHaveLength(3)
+      expect(store.activeFolderDownload).toMatchObject({
+        isScanning: false,
+        completedFiles: 3,
+        totalFiles: 3,
+        isComplete: true,
+      })
     })
 
     it('a failing download is reported and does not stop the batch', async () => {

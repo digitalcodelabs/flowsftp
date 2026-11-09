@@ -24,11 +24,13 @@ import type {
   ActiveFolderTransferInfo,
   ActiveFolderUploadInfo,
   FileConflictInfo,
+  LocalCrawlBatchPayload,
   LocalCrawlDirectory,
   LocalCrawlIgnored,
   LocalCrawlResult,
   LocalCrawlTask,
   LocalFileEntry,
+  RemoteCrawlBatchPayload,
   RemoteCrawlTask,
   SftpFileEntry,
   TransferItem,
@@ -592,23 +594,19 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
       label: 'Download',
       scan: async () => {
         if (dirItems.length === 0) return
+        let unlistenBatch: (() => void) | null = null
         try {
-          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
-            sessionId,
-            paths: dirItems.map((d) => d.path),
-            targetLocalDir: targetDir,
-            ignorePatterns: currentIgnorePatterns(),
-          })
-          endFolderScan(activeFolderDownload, crawled.length)
-
           // Local folders that don't exist yet can't contain conflicts.
           const brandNew = await findBrandNewRoots(
             dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
             { isRemote: false }
           )
 
-          for (const c of crawled) {
-            if (isCancellingAll.value) break
+          const crawlId = newTransferId('crawl-dl')
+          let streamedCount = 0
+
+          const enqueueRemoteFile = (c: RemoteCrawlTask) => {
+            if (isCancellingAll.value) return
             pump.push({
               transferId: newTransferId('dl'),
               file: crawledRemoteEntry(c),
@@ -616,6 +614,44 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
               skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.local_path, brandNew)),
             })
           }
+
+          unlistenBatch = await listen<RemoteCrawlBatchPayload>('sftp:crawl:remote_batch', (event) => {
+            const payload = event.payload
+            if (!payload || payload.crawl_id !== crawlId) return
+            for (const c of payload.files) {
+              if (isCancellingAll.value) break
+              enqueueRemoteFile(c)
+              streamedCount++
+            }
+            if (activeFolderDownload.value) {
+              activeFolderDownload.value.totalFiles = Math.max(
+                activeFolderDownload.value.totalFiles,
+                payload.total_files,
+                streamedCount
+              )
+              activeFolderDownload.value.totalFolders = Math.max(
+                activeFolderDownload.value.totalFolders,
+                payload.total_directories
+              )
+            }
+            flushNewTransfersNow()
+          })
+
+          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+            sessionId,
+            paths: dirItems.map((d) => d.path),
+            targetLocalDir: targetDir,
+            ignorePatterns: currentIgnorePatterns(),
+            crawlId,
+          })
+
+          // Enqueue any remaining files not delivered via streaming batch events
+          for (let i = streamedCount; i < crawled.length; i++) {
+            if (isCancellingAll.value) break
+            enqueueRemoteFile(crawled[i]!)
+          }
+
+          endFolderScan(activeFolderDownload, Math.max(crawled.length, streamedCount))
         } catch (crawlErr: any) {
           console.error('Native Rust remote crawl error:', crawlErr)
           for (const d of dirItems) {
@@ -625,6 +661,8 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             failedTransfers.value = [item, ...failedTransfers.value]
           }
           endFolderScan(activeFolderDownload, 0)
+        } finally {
+          unlistenBatch?.()
         }
       },
       process: (task) =>
@@ -738,23 +776,8 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
       label: 'Upload',
       scan: async () => {
         if (dirItems.length === 0) return
+        let unlistenBatch: (() => void) | null = null
         try {
-          // Fast native crawler: scans 10k+ files in ~20ms in parallel on local disk
-          const crawled = await invoke<LocalCrawlResult | LocalCrawlTask[]>('sftp_crawl_local_paths', {
-            paths: dirItems.map((d) => d.path),
-            targetRemoteDir: targetDir,
-            ignorePatterns: currentIgnorePatterns(),
-          })
-
-          const filesList: LocalCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
-          const dirsList: LocalCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
-          const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
-
-          endFolderScan(activeFolderUpload, filesList.length)
-          if (activeFolderUpload.value) {
-            activeFolderUpload.value.totalFolders = Math.max(dirsList.length, dirItems.length)
-          }
-
           // If a remote folder didn't exist before this upload, 100% of its files are new,
           // so the per-file conflict check can be skipped.
           const brandNew = await findBrandNewRoots(
@@ -762,15 +785,67 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             { sessionId, isRemote: true }
           )
 
-          // Enqueue all crawled files so workers start transferring right away.
-          for (const c of filesList) {
-            if (isCancellingAll.value) break
+          const crawlId = newTransferId('crawl-ul')
+          let streamedCount = 0
+
+          const enqueueLocalFile = (c: LocalCrawlTask) => {
+            if (isCancellingAll.value) return
             pump.push({
               transferId: newTransferId('ul'),
               file: crawledLocalEntry(c),
               destination: c.remote_path,
               skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.remote_path, brandNew)),
             })
+          }
+
+          unlistenBatch = await listen<LocalCrawlBatchPayload>('sftp:crawl:local_batch', (event) => {
+            const payload = event.payload
+            if (!payload || payload.crawl_id !== crawlId) return
+            for (const c of payload.files) {
+              if (isCancellingAll.value) break
+              enqueueLocalFile(c)
+              streamedCount++
+            }
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.totalFiles = Math.max(
+                activeFolderUpload.value.totalFiles,
+                payload.total_files,
+                streamedCount
+              )
+              activeFolderUpload.value.totalFolders = Math.max(
+                activeFolderUpload.value.totalFolders,
+                payload.total_directories,
+                dirItems.length
+              )
+            }
+            flushNewTransfersNow()
+          })
+
+          // Fast native crawler: scans 10k+ files in ~20ms in parallel on local disk
+          const crawled = await invoke<LocalCrawlResult | LocalCrawlTask[]>('sftp_crawl_local_paths', {
+            paths: dirItems.map((d) => d.path),
+            targetRemoteDir: targetDir,
+            ignorePatterns: currentIgnorePatterns(),
+            crawlId,
+          })
+
+          const filesList: LocalCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
+          const dirsList: LocalCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
+          const ignoredList: LocalCrawlIgnored[] = Array.isArray(crawled) ? [] : (crawled.ignored || [])
+
+          // Enqueue any remaining crawled files not delivered via streaming batch events.
+          for (let i = streamedCount; i < filesList.length; i++) {
+            if (isCancellingAll.value) break
+            enqueueLocalFile(filesList[i]!)
+          }
+
+          endFolderScan(activeFolderUpload, Math.max(filesList.length, streamedCount))
+          if (activeFolderUpload.value) {
+            activeFolderUpload.value.totalFolders = Math.max(
+              activeFolderUpload.value.totalFolders,
+              dirsList.length,
+              dirItems.length
+            )
           }
 
           // Record ignored subfolders/files so users can see why they were not uploaded.
@@ -823,6 +898,8 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             failedTransfers.value = [item, ...failedTransfers.value]
           }
           endFolderScan(activeFolderUpload, 0)
+        } finally {
+          unlistenBatch?.()
         }
       },
       process: (task) =>
@@ -950,23 +1027,19 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
       label: 'Remote-to-remote',
       scan: async () => {
         if (dirItems.length === 0) return
+        let unlistenBatch: (() => void) | null = null
         try {
-          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
-            sessionId: srcSessionId,
-            paths: dirItems.map((d) => d.path),
-            targetLocalDir: targetDir,
-            ignorePatterns: currentIgnorePatterns(),
-          })
-          endFolderScan(activeFolderUpload, crawled.length)
-
           // Destination folders that don't exist yet can't contain conflicts.
           const brandNew = await findBrandNewRoots(
             dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
             { sessionId: destSessionId, isRemote: true }
           )
 
-          for (const c of crawled) {
-            if (isCancellingAll.value) break
+          const crawlId = newTransferId('crawl-r2r')
+          let streamedCount = 0
+
+          const enqueueR2RFile = (c: RemoteCrawlTask) => {
+            if (isCancellingAll.value) return
             // The crawler reports the destination path in `local_path`.
             pump.push({
               transferId: newTransferId('r2r'),
@@ -975,6 +1048,43 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
               skipConflictCheck: skipCheckFor(batch, isPathUnderRoots(c.local_path, brandNew)),
             })
           }
+
+          unlistenBatch = await listen<RemoteCrawlBatchPayload>('sftp:crawl:remote_batch', (event) => {
+            const payload = event.payload
+            if (!payload || payload.crawl_id !== crawlId) return
+            for (const c of payload.files) {
+              if (isCancellingAll.value) break
+              enqueueR2RFile(c)
+              streamedCount++
+            }
+            if (activeFolderUpload.value) {
+              activeFolderUpload.value.totalFiles = Math.max(
+                activeFolderUpload.value.totalFiles,
+                payload.total_files,
+                streamedCount
+              )
+              activeFolderUpload.value.totalFolders = Math.max(
+                activeFolderUpload.value.totalFolders,
+                payload.total_directories
+              )
+            }
+            flushNewTransfersNow()
+          })
+
+          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+            sessionId: srcSessionId,
+            paths: dirItems.map((d) => d.path),
+            targetLocalDir: targetDir,
+            ignorePatterns: currentIgnorePatterns(),
+            crawlId,
+          })
+
+          for (let i = streamedCount; i < crawled.length; i++) {
+            if (isCancellingAll.value) break
+            enqueueR2RFile(crawled[i]!)
+          }
+
+          endFolderScan(activeFolderUpload, Math.max(crawled.length, streamedCount))
         } catch (crawlErr: any) {
           console.error('Remote-to-remote crawl error:', crawlErr)
           for (const d of dirItems) {
@@ -984,6 +1094,8 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             failedTransfers.value = [item, ...failedTransfers.value]
           }
           endFolderScan(activeFolderUpload, 0)
+        } finally {
+          unlistenBatch?.()
         }
       },
       process: (task) =>

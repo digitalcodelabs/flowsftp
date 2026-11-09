@@ -109,6 +109,25 @@ pub struct CrawlProgressPayload {
     pub directories: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCrawlBatchPayload {
+    pub crawl_id: String,
+    pub files: Vec<RemoteCrawlTask>,
+    pub total_files: usize,
+    pub total_directories: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalCrawlBatchPayload {
+    pub crawl_id: String,
+    pub files: Vec<LocalCrawlTask>,
+    pub total_files: usize,
+    pub total_directories: usize,
+}
+
+pub const CRAWL_STREAM_BATCH_SIZE: usize = 25;
+pub const CRAWL_STREAM_BATCH_INTERVAL_MS: u64 = 120;
+
 pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns: &[String]) -> Option<String> {
     if patterns.is_empty() {
         return None;

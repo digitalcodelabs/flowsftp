@@ -74,6 +74,82 @@ fn is_connection_error(err: &str) -> bool {
         || lower.contains("timeout")
 }
 
+const MAX_FTP_TRANSFER_POOL_SIZE: usize = 6;
+
+fn connect_ftp_stream(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+    secure: bool,
+) -> Result<(FtpClientStream, String), String> {
+    let addr = format!("{}:{}", host, port);
+    if secure {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let root_store = rustls::RootCertStore::empty();
+        let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(AllowAnyCertVerifier));
+
+        let connector = RustlsConnector::from(Arc::new(config));
+
+        let stream = RustlsFtpStream::connect(&addr)
+            .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+        let mut secure_stream = stream
+            .into_secure(connector, host)
+            .map_err(|e| {
+                format!(
+                    "Failed to establish TLS encryption (FTPS): {}. If this server does not support TLS/FTPS, try connecting with 'FTP (Plain)' protocol.",
+                    e
+                )
+            })?;
+
+        secure_stream.set_passive_nat_workaround(true);
+
+        secure_stream
+            .login(username, password)
+            .map_err(|e| format!("FTP authentication failed for user '{}': {}", username, e))?;
+
+        let pwd = secure_stream.pwd().unwrap_or_else(|_| "/".to_string());
+
+        Ok((FtpClientStream::Secure(secure_stream), pwd))
+    } else {
+        let mut stream = FtpStream::connect(&addr)
+            .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
+
+        stream.set_passive_nat_workaround(true);
+
+        stream
+            .login(username, password)
+            .map_err(|e| format!("FTP authentication failed for user '{}': {}", username, e))?;
+
+        let pwd = stream.pwd().unwrap_or_else(|_| "/".to_string());
+
+        Ok((FtpClientStream::Plain(stream), pwd))
+    }
+}
+
+fn return_transfer_stream(pool_arc: &Arc<Mutex<Vec<FtpClientStream>>>, mut stream: FtpClientStream) {
+    let mut pool = pool_arc.blocking_lock();
+    if pool.len() < MAX_FTP_TRANSFER_POOL_SIZE {
+        pool.push(stream);
+    } else {
+        match &mut stream {
+            FtpClientStream::Plain(s) => {
+                let _ = s.quit();
+            }
+            FtpClientStream::Secure(s) => {
+                let _ = s.quit();
+            }
+        }
+    }
+}
+
 pub struct ActiveFtpSession {
     pub session_id: String,
     pub host: String,
@@ -83,10 +159,11 @@ pub struct ActiveFtpSession {
     pub is_secure: bool,
     pub current_dir: Arc<RwLock<String>>,
     client: Arc<Mutex<FtpClientStream>>,
+    transfer_pool: Arc<Mutex<Vec<FtpClientStream>>>,
 }
 
 macro_rules! run_ftp_download {
-    ($stream:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr) => {{
+    ($stream:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr, $known_size:expr) => {{
         let stream = $stream;
         let (native_local, _) = normalize_to_native_path($local_path);
         let file_name = Path::new($remote_path)
@@ -94,7 +171,10 @@ macro_rules! run_ftp_download {
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_else(|| "file".to_string());
 
-        let total_size = stream.size($remote_path).unwrap_or(0) as u64;
+        let total_size = match $known_size {
+            Some(sz) if sz > 0 => sz,
+            _ => stream.size($remote_path).unwrap_or(0) as u64,
+        };
         let event_name = format!("sftp:progress:{}", $transfer_id);
 
         let conflict = $conflict_action.as_deref().unwrap_or("overwrite");
@@ -250,99 +330,6 @@ macro_rules! ensure_ftp_dir_recursive {
                     }
                     let _ = $stream.mkdir(&current);
                 }
-            }
-        }
-    }};
-}
-
-macro_rules! crawl_ftp_single_path {
-    ($stream:expr, $clean_p:expr, $target_local:expr, $patterns:expr, $results:expr, $dirs_count:expr, $app:expr, $cancel_token:expr, $last_emit:expr, $last_count:expr) => {{
-        let stream = $stream;
-        let p_str = $clean_p;
-        let patterns = $patterns;
-
-        if stream.cwd(p_str).is_ok() {
-            let folder_name = p_str.split('/').next_back().unwrap_or("folder");
-            let local_base = if $target_local.is_empty() {
-                folder_name.to_string()
-            } else {
-                format!("{}/{}", $target_local, folder_name)
-            };
-
-            let mut dirs_to_visit = vec![p_str.to_string()];
-            $dirs_count += 1;
-            while let Some(dir) = dirs_to_visit.pop() {
-                if $cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
-                }
-                if stream.cwd(&dir).is_err() {
-                    continue;
-                }
-                let canonical_dir = stream.pwd().unwrap_or_else(|_| dir.clone());
-                let lines = match stream.list(None) {
-                    Ok(l) => l,
-                    Err(_) => continue,
-                };
-
-                for line in lines {
-                    if $cancel_token.load(std::sync::atomic::Ordering::SeqCst) {
-                        break;
-                    }
-                    if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
-                        if entry.name == "." || entry.name == ".." {
-                            continue;
-                        }
-                        if crate::sftp::is_path_ignored(&entry.name, &entry.path, patterns) {
-                            continue;
-                        }
-                        if entry.is_dir {
-                            $dirs_count += 1;
-                            dirs_to_visit.push(entry.path);
-                        } else {
-                            let rel = entry.path
-                                .strip_prefix(p_str)
-                                .unwrap_or(&entry.path)
-                                .trim_start_matches('/');
-                            let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
-                            $results.push(RemoteCrawlTask {
-                                remote_path: entry.path,
-                                local_path,
-                                file_name: entry.name,
-                                size: entry.size,
-                            });
-                        }
-
-                        let total = $results.len() + $dirs_count;
-                        if total.saturating_sub($last_count) >= 20 || $last_emit.elapsed() >= std::time::Duration::from_millis(35) {
-                            $last_count = total;
-                            $last_emit = std::time::Instant::now();
-                            let _ = $app.emit(
-                                "sftp:crawl:progress",
-                                crate::sftp::CrawlProgressPayload {
-                                    scan_type: "download".to_string(),
-                                    files: $results.len(),
-                                    directories: $dirs_count,
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-        } else {
-            let file_name = p_str.split('/').next_back().unwrap_or("file").to_string();
-            if !crate::sftp::is_path_ignored(&file_name, &file_name, patterns) {
-                let size = stream.size(p_str).unwrap_or(0) as u64;
-                let local_path = if $target_local.is_empty() {
-                    file_name.clone()
-                } else {
-                    format!("{}/{}", $target_local, file_name)
-                };
-                $results.push(RemoteCrawlTask {
-                    remote_path: p_str.to_string(),
-                    local_path,
-                    file_name,
-                    size,
-                });
             }
         }
     }};
@@ -573,61 +560,13 @@ impl ActiveFtpSession {
         password: Option<String>,
         secure: bool,
     ) -> Result<Self, String> {
-        let addr = format!("{}:{}", host, port);
         let user = username.clone();
         let pass = password.clone().unwrap_or_default();
         let pass_stored = password.clone();
         let h = host.clone();
 
         let (client, initial_pwd) = tokio::task::spawn_blocking(move || -> Result<(FtpClientStream, String), String> {
-            if secure {
-                let _ = rustls::crypto::ring::default_provider().install_default();
-                let root_store = rustls::RootCertStore::empty();
-                let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth();
-
-                config
-                    .dangerous()
-                    .set_certificate_verifier(Arc::new(AllowAnyCertVerifier));
-
-                let connector = RustlsConnector::from(Arc::new(config));
-
-                let stream = RustlsFtpStream::connect(&addr)
-                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
-
-                let mut secure_stream = stream
-                    .into_secure(connector, &h)
-                    .map_err(|e| {
-                        format!(
-                            "Failed to establish TLS encryption (FTPS): {}. If this server does not support TLS/FTPS, try connecting with 'FTP (Plain)' protocol.",
-                            e
-                        )
-                    })?;
-
-                secure_stream.set_passive_nat_workaround(true);
-
-                secure_stream
-                    .login(&user, &pass)
-                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
-
-                let pwd = secure_stream.pwd().unwrap_or_else(|_| "/".to_string());
-
-                Ok((FtpClientStream::Secure(secure_stream), pwd))
-            } else {
-                let mut stream = FtpStream::connect(&addr)
-                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
-
-                stream.set_passive_nat_workaround(true);
-
-                stream
-                    .login(&user, &pass)
-                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
-
-                let pwd = stream.pwd().unwrap_or_else(|_| "/".to_string());
-
-                Ok((FtpClientStream::Plain(stream), pwd))
-            }
+            connect_ftp_stream(&h, port, &user, &pass, secure)
         })
         .await
         .map_err(|e| format!("FTP worker thread failed: {}", e))??;
@@ -647,14 +586,15 @@ impl ActiveFtpSession {
             is_secure: secure,
             current_dir: Arc::new(RwLock::new(clean_pwd)),
             client: Arc::new(Mutex::new(client)),
+            transfer_pool: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
     pub async fn reconnect(&self) -> Result<(), String> {
-        let addr = format!("{}:{}", self.host, self.port);
         let user = self.username.clone();
         let pass = self.password.clone().unwrap_or_default();
         let h = self.host.clone();
+        let port = self.port;
         let secure = self.is_secure;
         let client_arc = self.client.clone();
         let current_dir_arc = self.current_dir.clone();
@@ -662,43 +602,7 @@ impl ActiveFtpSession {
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut guard = client_arc.blocking_lock();
 
-            let new_stream = if secure {
-                let _ = rustls::crypto::ring::default_provider().install_default();
-                let root_store = rustls::RootCertStore::empty();
-                let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth();
-
-                config
-                    .dangerous()
-                    .set_certificate_verifier(Arc::new(AllowAnyCertVerifier));
-
-                let connector = RustlsConnector::from(Arc::new(config));
-
-                let stream = RustlsFtpStream::connect(&addr)
-                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
-
-                let mut secure_stream = stream
-                    .into_secure(connector, &h)
-                    .map_err(|e| format!("Failed to establish TLS encryption (FTPS): {}", e))?;
-
-                secure_stream.set_passive_nat_workaround(true);
-                secure_stream
-                    .login(&user, &pass)
-                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
-
-                FtpClientStream::Secure(secure_stream)
-            } else {
-                let mut stream = FtpStream::connect(&addr)
-                    .map_err(|e| format!("Failed to connect to FTP server {}: {}", addr, e))?;
-
-                stream.set_passive_nat_workaround(true);
-                stream
-                    .login(&user, &pass)
-                    .map_err(|e| format!("FTP authentication failed for user '{}': {}", user, e))?;
-
-                FtpClientStream::Plain(stream)
-            };
+            let (new_stream, _) = connect_ftp_stream(&h, port, &user, &pass, secure)?;
 
             let cached_dir = {
                 let dir_guard = current_dir_arc.blocking_read();
@@ -892,6 +796,84 @@ impl ActiveFtpSession {
         .map_err(|e| format!("Worker thread error: {}", e))?
     }
 
+    pub async fn batch_create_dirs(&self, paths: Vec<String>) -> Result<(), String> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+
+        let client_arc = self.client.clone();
+        let pool_arc = self.transfer_pool.clone();
+        let host = self.host.clone();
+        let port = self.port;
+        let user = self.username.clone();
+        let pass = self.password.clone().unwrap_or_default();
+        let secure = self.is_secure;
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut sorted_paths = paths;
+            sorted_paths.sort_by_key(|p| p.len());
+            let mut created: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            let pooled = {
+                let mut pool = pool_arc.blocking_lock();
+                pool.pop()
+            };
+            let dedicated = pooled.or_else(|| {
+                connect_ftp_stream(&host, port, &user, &pass, secure)
+                    .ok()
+                    .map(|(st, _)| st)
+            });
+
+            macro_rules! create_dirs_on_stream {
+                ($stream:expr) => {{
+                    for raw_path in &sorted_paths {
+                        let clean = raw_path.trim().replace('\\', "/");
+                        let clean_path = clean.trim_end_matches('/').to_string();
+                        if clean_path.is_empty() || clean_path == "/" || created.contains(&clean_path) {
+                            continue;
+                        }
+                        if $stream.mkdir(&clean_path).is_ok() {
+                            created.insert(clean_path);
+                            continue;
+                        }
+                        let segments: Vec<&str> = clean_path.split('/').filter(|s| !s.is_empty()).collect();
+                        let is_absolute = clean_path.starts_with('/');
+                        let mut current = if is_absolute { String::from("/") } else { String::new() };
+                        for seg in segments {
+                            if !current.is_empty() && !current.ends_with('/') {
+                                current.push('/');
+                            }
+                            current.push_str(seg);
+                            if current == "/" || created.contains(&current) {
+                                continue;
+                            }
+                            let _ = $stream.mkdir(&current);
+                            created.insert(current.clone());
+                        }
+                    }
+                }};
+            }
+
+            if let Some(mut stream) = dedicated {
+                match &mut stream {
+                    FtpClientStream::Plain(s) => create_dirs_on_stream!(s),
+                    FtpClientStream::Secure(s) => create_dirs_on_stream!(s),
+                }
+                return_transfer_stream(&pool_arc, stream);
+            } else {
+                let mut guard = client_arc.blocking_lock();
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => create_dirs_on_stream!(s),
+                    FtpClientStream::Secure(s) => create_dirs_on_stream!(s),
+                }
+            }
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
     pub async fn crawl_remote_paths(
         &self,
         app: AppHandle,
@@ -899,17 +881,19 @@ impl ActiveFtpSession {
         paths: Vec<String>,
         target_local_dir: String,
         ignore_patterns: Option<Vec<String>>,
+        crawl_id: Option<String>,
     ) -> Result<Vec<RemoteCrawlTask>, String> {
         let client_arc = self.client.clone();
         let target_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
         let patterns = ignore_patterns.unwrap_or_default();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RemoteCrawlTask>, String> {
-            let mut guard = client_arc.blocking_lock();
-            let mut results = Vec::new();
+            let mut results: Vec<RemoteCrawlTask> = Vec::new();
             let mut dirs_count = 0usize;
             let mut last_emit = std::time::Instant::now();
             let mut last_count = 0usize;
+            let mut emitted_files_idx = 0usize;
+            let mut last_batch_emit = std::time::Instant::now();
 
             // Emit initial 0 count
             let _ = app.emit(
@@ -921,9 +905,43 @@ impl ActiveFtpSession {
                 },
             );
 
-            let initial_pwd = match &mut *guard {
-                FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
-                FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+            let initial_pwd = {
+                let mut guard = client_arc.blocking_lock();
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+                    FtpClientStream::Secure(s) => s.pwd().unwrap_or_else(|_| "/".to_string()),
+                }
+            };
+
+            let flush_crawl_batch = |results: &[RemoteCrawlTask],
+                                     emitted_idx: &mut usize,
+                                     last_batch: &mut std::time::Instant,
+                                     dirs: usize,
+                                     force: bool| {
+                if let Some(ref cid) = crawl_id {
+                    let pending = results.len().saturating_sub(*emitted_idx);
+                    if pending > 0
+                        && (force
+                            || pending >= crate::sftp::CRAWL_STREAM_BATCH_SIZE
+                            || last_batch.elapsed()
+                                >= std::time::Duration::from_millis(
+                                    crate::sftp::CRAWL_STREAM_BATCH_INTERVAL_MS,
+                                ))
+                    {
+                        let batch_files = results[*emitted_idx..].to_vec();
+                        *emitted_idx = results.len();
+                        *last_batch = std::time::Instant::now();
+                        let _ = app.emit(
+                            "sftp:crawl:remote_batch",
+                            crate::sftp::RemoteCrawlBatchPayload {
+                                crawl_id: cid.clone(),
+                                files: batch_files,
+                                total_files: results.len(),
+                                total_directories: dirs,
+                            },
+                        );
+                    }
+                }
             };
 
             for p in paths {
@@ -935,20 +953,175 @@ impl ActiveFtpSession {
                     continue;
                 }
 
-                match &mut *guard {
-                    FtpClientStream::Plain(s) => {
-                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results, dirs_count, app, cancel_token, last_emit, last_count);
+                // Check if root path is a directory (locking only for this check)
+                let is_dir_or_size = {
+                    let mut guard = client_arc.blocking_lock();
+                    match &mut *guard {
+                        FtpClientStream::Plain(s) => {
+                            if s.cwd(&clean_p).is_ok() {
+                                Ok(())
+                            } else {
+                                Err(s.size(&clean_p).unwrap_or(0) as u64)
+                            }
+                        }
+                        FtpClientStream::Secure(s) => {
+                            if s.cwd(&clean_p).is_ok() {
+                                Ok(())
+                            } else {
+                                Err(s.size(&clean_p).unwrap_or(0) as u64)
+                            }
+                        }
                     }
-                    FtpClientStream::Secure(s) => {
-                        crawl_ftp_single_path!(s, &clean_p, &target_local, &patterns, &mut results, dirs_count, app, cancel_token, last_emit, last_count);
+                };
+
+                match is_dir_or_size {
+                    Ok(()) => {
+                        let folder_name = clean_p.split('/').next_back().unwrap_or("folder");
+                        let local_base = if target_local.is_empty() {
+                            folder_name.to_string()
+                        } else {
+                            format!("{}/{}", target_local, folder_name)
+                        };
+
+                        let mut dirs_to_visit = vec![clean_p.clone()];
+                        dirs_count += 1;
+
+                        while let Some(dir) = dirs_to_visit.pop() {
+                            if cancel_token.load(Ordering::SeqCst) {
+                                break;
+                            }
+
+                            // Lock client ONLY for this single directory's CWD + PWD + LIST
+                            let dir_listing = {
+                                let mut guard = client_arc.blocking_lock();
+                                match &mut *guard {
+                                    FtpClientStream::Plain(s) => {
+                                        if s.cwd(&dir).is_ok() {
+                                            let canonical = s.pwd().unwrap_or_else(|_| dir.clone());
+                                            s.list(None).ok().map(|lines| (canonical, lines))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    FtpClientStream::Secure(s) => {
+                                        if s.cwd(&dir).is_ok() {
+                                            let canonical = s.pwd().unwrap_or_else(|_| dir.clone());
+                                            s.list(None).ok().map(|lines| (canonical, lines))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                }
+                            };
+
+                            let (canonical_dir, lines) = match dir_listing {
+                                Some(pair) => pair,
+                                None => continue,
+                            };
+
+                            for line in lines {
+                                if cancel_token.load(Ordering::SeqCst) {
+                                    break;
+                                }
+                                if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                                    if entry.name == "." || entry.name == ".." {
+                                        continue;
+                                    }
+                                    if crate::sftp::is_path_ignored(&entry.name, &entry.path, &patterns) {
+                                        continue;
+                                    }
+                                    if entry.is_dir {
+                                        dirs_count += 1;
+                                        dirs_to_visit.push(entry.path);
+                                    } else {
+                                        let rel = entry
+                                            .path
+                                            .strip_prefix(&clean_p)
+                                            .unwrap_or(&entry.path)
+                                            .trim_start_matches('/');
+                                        let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
+                                        results.push(RemoteCrawlTask {
+                                            remote_path: entry.path,
+                                            local_path,
+                                            file_name: entry.name,
+                                            size: entry.size,
+                                        });
+                                    }
+
+                                    let total = results.len() + dirs_count;
+                                    if total.saturating_sub(last_count) >= 20
+                                        || last_emit.elapsed() >= std::time::Duration::from_millis(35)
+                                    {
+                                        last_count = total;
+                                        last_emit = std::time::Instant::now();
+                                        let _ = app.emit(
+                                            "sftp:crawl:progress",
+                                            crate::sftp::CrawlProgressPayload {
+                                                scan_type: "download".to_string(),
+                                                files: results.len(),
+                                                directories: dirs_count,
+                                            },
+                                        );
+                                    }
+
+                                    flush_crawl_batch(
+                                        &results,
+                                        &mut emitted_files_idx,
+                                        &mut last_batch_emit,
+                                        dirs_count,
+                                        false,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(size) => {
+                        let file_name = clean_p.split('/').next_back().unwrap_or("file").to_string();
+                        if !crate::sftp::is_path_ignored(&file_name, &file_name, &patterns) {
+                            let local_path = if target_local.is_empty() {
+                                file_name.clone()
+                            } else {
+                                format!("{}/{}", target_local, file_name)
+                            };
+                            results.push(RemoteCrawlTask {
+                                remote_path: clean_p,
+                                local_path,
+                                file_name,
+                                size,
+                            });
+                            flush_crawl_batch(
+                                &results,
+                                &mut emitted_files_idx,
+                                &mut last_batch_emit,
+                                dirs_count,
+                                false,
+                            );
+                        }
                     }
                 }
             }
 
             // Restore initial PWD
-            match &mut *guard {
-                FtpClientStream::Plain(s) => { let _ = s.cwd(&initial_pwd); }
-                FtpClientStream::Secure(s) => { let _ = s.cwd(&initial_pwd); }
+            {
+                let mut guard = client_arc.blocking_lock();
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        let _ = s.cwd(&initial_pwd);
+                    }
+                    FtpClientStream::Secure(s) => {
+                        let _ = s.cwd(&initial_pwd);
+                    }
+                }
+            }
+
+            if !cancel_token.load(Ordering::SeqCst) {
+                flush_crawl_batch(
+                    &results,
+                    &mut emitted_files_idx,
+                    &mut last_batch_emit,
+                    dirs_count,
+                    true,
+                );
             }
 
             // Emit final progress
@@ -1488,19 +1661,80 @@ impl ActiveFtpSession {
         local_path: &str,
         transfer_id: &str,
         conflict_action: Option<String>,
+        file_size: Option<u64>,
     ) -> Result<(), String> {
         let client_arc = self.client.clone();
+        let pool_arc = self.transfer_pool.clone();
+        let host = self.host.clone();
+        let port = self.port;
+        let user = self.username.clone();
+        let pass = self.password.clone().unwrap_or_default();
+        let secure = self.is_secure;
         let r_path = remote_path.to_string();
         let l_path = local_path.to_string();
         let t_id = transfer_id.to_string();
         let app_handle = app.clone();
 
-        let res = tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let mut guard = client_arc.blocking_lock();
-            match &mut *guard {
-                FtpClientStream::Plain(s) => run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action),
-                FtpClientStream::Secure(s) => run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action),
+        let (res, used_shared_client) = tokio::task::spawn_blocking(move || -> (Result<(), String>, bool) {
+            let pooled = {
+                let mut pool = pool_arc.blocking_lock();
+                pool.pop()
+            };
+
+            if let Some(mut stream) = pooled {
+                let first_try = (|| -> Result<(), String> {
+                    match &mut stream {
+                        FtpClientStream::Plain(s) => {
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                        }
+                        FtpClientStream::Secure(s) => {
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                        }
+                    }
+                })();
+                match first_try {
+                    Ok(()) => {
+                        return_transfer_stream(&pool_arc, stream);
+                        return (Ok(()), false);
+                    }
+                    Err(ref e) if !is_connection_error(e) => {
+                        return (first_try, false);
+                    }
+                    Err(_) => {
+                        // Pooled connection went stale; fall through to open a fresh stream
+                    }
+                }
             }
+
+            if let Ok((mut stream, _)) = connect_ftp_stream(&host, port, &user, &pass, secure) {
+                let transfer_res = (|| -> Result<(), String> {
+                    match &mut stream {
+                        FtpClientStream::Plain(s) => {
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                        }
+                        FtpClientStream::Secure(s) => {
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                        }
+                    }
+                })();
+                if transfer_res.is_ok() {
+                    return_transfer_stream(&pool_arc, stream);
+                }
+                return (transfer_res, false);
+            }
+
+            let mut guard = client_arc.blocking_lock();
+            let shared_res = (|| -> Result<(), String> {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                    }
+                    FtpClientStream::Secure(s) => {
+                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                    }
+                }
+            })();
+            (shared_res, true)
         })
         .await
         .map_err(|e| format!("Worker thread error: {}", e))?;
@@ -1508,7 +1742,9 @@ impl ActiveFtpSession {
         if res.is_err() {
             let (native_local, _) = normalize_to_native_path(local_path);
             let _ = tokio::fs::remove_file(&native_local).await;
-            let _ = self.reconnect().await;
+            if used_shared_client {
+                let _ = self.reconnect().await;
+            }
         }
 
         res
@@ -1523,22 +1759,82 @@ impl ActiveFtpSession {
         conflict_action: Option<String>,
     ) -> Result<(), String> {
         let client_arc = self.client.clone();
+        let pool_arc = self.transfer_pool.clone();
+        let host = self.host.clone();
+        let port = self.port;
+        let user = self.username.clone();
+        let pass = self.password.clone().unwrap_or_default();
+        let secure = self.is_secure;
         let r_path = remote_path.to_string();
         let l_path = local_path.to_string();
         let t_id = transfer_id.to_string();
         let app_handle = app.clone();
 
-        let res = tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let mut guard = client_arc.blocking_lock();
-            match &mut *guard {
-                FtpClientStream::Plain(s) => run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action),
-                FtpClientStream::Secure(s) => run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action),
+        let (res, used_shared_client) = tokio::task::spawn_blocking(move || -> (Result<(), String>, bool) {
+            let pooled = {
+                let mut pool = pool_arc.blocking_lock();
+                pool.pop()
+            };
+
+            if let Some(mut stream) = pooled {
+                let first_try = (|| -> Result<(), String> {
+                    match &mut stream {
+                        FtpClientStream::Plain(s) => {
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                        }
+                        FtpClientStream::Secure(s) => {
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                        }
+                    }
+                })();
+                match first_try {
+                    Ok(()) => {
+                        return_transfer_stream(&pool_arc, stream);
+                        return (Ok(()), false);
+                    }
+                    Err(ref e) if !is_connection_error(e) => {
+                        return (first_try, false);
+                    }
+                    Err(_) => {
+                        // Pooled connection went stale; fall through to open a fresh stream
+                    }
+                }
             }
+
+            if let Ok((mut stream, _)) = connect_ftp_stream(&host, port, &user, &pass, secure) {
+                let transfer_res = (|| -> Result<(), String> {
+                    match &mut stream {
+                        FtpClientStream::Plain(s) => {
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                        }
+                        FtpClientStream::Secure(s) => {
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                        }
+                    }
+                })();
+                if transfer_res.is_ok() {
+                    return_transfer_stream(&pool_arc, stream);
+                }
+                return (transfer_res, false);
+            }
+
+            let mut guard = client_arc.blocking_lock();
+            let shared_res = (|| -> Result<(), String> {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                    }
+                    FtpClientStream::Secure(s) => {
+                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                    }
+                }
+            })();
+            (shared_res, true)
         })
         .await
         .map_err(|e| format!("Worker thread error: {}", e))?;
 
-        if res.is_err() {
+        if res.is_err() && used_shared_client {
             let _ = self.reconnect().await;
         }
 
@@ -1547,7 +1843,23 @@ impl ActiveFtpSession {
 
     pub async fn close(&self) -> Result<(), String> {
         let client_arc = self.client.clone();
+        let pool_arc = self.transfer_pool.clone();
         tokio::task::spawn_blocking(move || {
+            let pooled_streams: Vec<FtpClientStream> = {
+                let mut pool = pool_arc.blocking_lock();
+                std::mem::take(&mut *pool)
+            };
+            for mut stream in pooled_streams {
+                match &mut stream {
+                    FtpClientStream::Plain(s) => {
+                        let _ = s.quit();
+                    }
+                    FtpClientStream::Secure(s) => {
+                        let _ = s.quit();
+                    }
+                }
+            }
+
             let mut guard = client_arc.blocking_lock();
             match &mut *guard {
                 FtpClientStream::Plain(s) => {
