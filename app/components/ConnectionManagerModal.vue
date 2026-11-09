@@ -960,6 +960,15 @@ const profilesInUngroupingCount = computed(() => {
   return keychainStore.profiles.filter((p) => p.group === groupToUngroup.value).length
 })
 
+const handleHorizontalWheel = (e: WheelEvent) => {
+  const el = e.currentTarget as HTMLElement | null
+  if (!el || el.scrollWidth <= el.clientWidth) return
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+    e.preventDefault()
+    el.scrollLeft += e.deltaY
+  }
+}
+
 const handleFormSubmit = () => {
   if (currentMode.value === 'edit') {
     // In edit mode, submitting the form (e.g. Enter key) saves changes without forcing connection
@@ -974,7 +983,7 @@ const handleFormSubmit = () => {
 <template>
   <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
     <div
-      class="w-full max-w-xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95 duration-150 transition-colors duration-150"
+      class="w-full max-w-[720px] rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95 duration-150 transition-colors duration-150"
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
     >
       <!-- Modal Header -->
@@ -1009,21 +1018,22 @@ const handleFormSubmit = () => {
 
       <!-- Mode Switcher Tabs -->
       <div
-        class="flex items-center justify-between border-b px-5 pt-2 shrink-0 transition-colors duration-150"
+        @wheel="handleHorizontalWheel"
+        class="flex items-center justify-between gap-4 border-b px-5 pt-2 shrink-0 overflow-x-auto conn-top-scroll transition-colors duration-150"
         :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
       >
-        <div class="flex space-x-4">
+        <div class="flex items-center space-x-4 shrink-0">
           <button
             @click="currentMode = 'list'"
-            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5 cursor-pointer hover:text-[var(--color-text-main)]"
+            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5 whitespace-nowrap shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
             :style="currentMode === 'list'
               ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, transparent)', color: 'var(--color-accent)', fontWeight: '600' }
               : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
           >
-            <Server class="w-3.5 h-3.5" />
+            <Server class="w-3.5 h-3.5 shrink-0" />
             <span>Saved Profiles</span>
             <span
-              class="px-1.5 py-0.5 rounded-full text-[10px]"
+              class="px-1.5 py-0.5 rounded-full text-[10px] shrink-0"
               :style="{ backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-text-main)' }"
             >
               {{ totalProfilesCount }}
@@ -1032,32 +1042,32 @@ const handleFormSubmit = () => {
 
           <button
             v-if="currentMode === 'edit'"
-            class="pb-2 text-xs font-semibold border-b-2 border-amber-400/70 text-amber-300 flex items-center space-x-1.5"
+            class="pb-2 text-xs font-semibold border-b-2 border-amber-400/70 text-amber-300 flex items-center space-x-1.5 whitespace-nowrap shrink-0"
           >
-            <Pencil class="w-3.5 h-3.5" />
+            <Pencil class="w-3.5 h-3.5 shrink-0" />
             <span>Edit Profile</span>
           </button>
 
           <button
             @click="handleStartAdd"
-            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5 cursor-pointer hover:text-[var(--color-text-main)]"
+            class="pb-2 text-xs font-medium border-b-2 transition-colors flex items-center space-x-1.5 whitespace-nowrap shrink-0 cursor-pointer hover:text-[var(--color-text-main)]"
             :style="currentMode === 'add'
               ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, transparent)', color: 'var(--color-accent)', fontWeight: '600' }
               : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
           >
-            <Plus class="w-3.5 h-3.5" />
+            <Plus class="w-3.5 h-3.5 shrink-0" />
             <span>Add Connection</span>
           </button>
         </div>
 
-        <div class="pb-2 flex items-center space-x-2">
+        <div class="pb-2 flex items-center space-x-2 shrink-0">
           <!-- Vault Status Button -->
           <button
             v-if="!vaultStore.isInitialized"
             type="button"
             @click="handleSetupOrUnlockVault"
             :disabled="isConnecting"
-            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 btn-warning cursor-pointer"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 whitespace-nowrap shrink-0 btn-warning cursor-pointer"
             title="Master Password Vault is not set up. Click to create your Master Password."
           >
             <AlertTriangle class="w-3 h-3 shrink-0" />
@@ -1068,7 +1078,7 @@ const handleFormSubmit = () => {
             type="button"
             @click="handleSetupOrUnlockVault"
             :disabled="isConnecting"
-            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 btn-warning cursor-pointer"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 whitespace-nowrap shrink-0 btn-warning cursor-pointer"
             title="Master Password Vault is locked. Click to unlock saved passwords."
           >
             <Lock class="w-3 h-3 shrink-0" />
@@ -1079,7 +1089,7 @@ const handleFormSubmit = () => {
             type="button"
             @click="vaultStore.lock()"
             :disabled="isConnecting"
-            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 btn-success cursor-pointer"
+            class="px-2.5 py-1 text-[11px] rounded-lg font-medium flex items-center space-x-1.5 whitespace-nowrap shrink-0 btn-success cursor-pointer"
             title="Vault is unlocked for this session. Click to lock."
           >
             <Unlock class="w-3 h-3 shrink-0" />
@@ -1092,13 +1102,13 @@ const handleFormSubmit = () => {
             @click="handleImportSshConfig"
             :disabled="isConnecting || isImportingSshConfig"
             :class="[
-              'px-2.5 py-1 text-xs rounded-lg border font-medium flex items-center space-x-1.5 btn-theme-card cursor-pointer',
+              'px-2.5 py-1 text-xs rounded-lg border font-medium flex items-center space-x-1.5 whitespace-nowrap shrink-0 btn-theme-card cursor-pointer',
               (isConnecting || isImportingSshConfig) ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''
             ]"
             title="Import servers from ~/.ssh/config"
           >
-            <Loader2 v-if="isImportingSshConfig" class="w-3.5 h-3.5 animate-spin" />
-            <FileDown v-else class="w-3.5 h-3.5" />
+            <Loader2 v-if="isImportingSshConfig" class="w-3.5 h-3.5 shrink-0 animate-spin" />
+            <FileDown v-else class="w-3.5 h-3.5 shrink-0" />
             <span>Import SSH Config</span>
           </button>
 
@@ -1107,11 +1117,11 @@ const handleFormSubmit = () => {
             @click="handleStartAdd"
             :disabled="isConnecting"
             :class="[
-              'px-2.5 py-1 text-xs rounded-lg font-medium flex items-center space-x-1 btn-accent cursor-pointer',
+              'px-2.5 py-1 text-xs rounded-lg font-medium flex items-center space-x-1 whitespace-nowrap shrink-0 btn-accent cursor-pointer',
               isConnecting ? 'opacity-40 cursor-not-allowed pointer-events-none' : ''
             ]"
           >
-            <Plus class="w-3.5 h-3.5" />
+            <Plus class="w-3.5 h-3.5 shrink-0" />
             <span>New Profile</span>
           </button>
         </div>
@@ -1196,7 +1206,11 @@ const handleFormSubmit = () => {
           </div>
 
           <!-- Group Filter Pills -->
-          <div v-if="availableGroups.length > 0" class="flex items-center space-x-1.5 overflow-x-auto pb-1 text-xs">
+          <div
+            v-if="availableGroups.length > 0"
+            @wheel="handleHorizontalWheel"
+            class="flex items-center space-x-1.5 overflow-x-auto conn-top-scroll pb-1 text-xs"
+          >
             <span class="text-[11px] font-medium mr-0.5 shrink-0" :style="{ color: 'var(--color-text-muted)' }">Folder:</span>
             <button
               @click="selectedGroupFilter = 'all'"
@@ -1475,12 +1489,12 @@ const handleFormSubmit = () => {
                 </div>
 
                 <!-- Actions -->
-                <div class="flex items-center space-x-1">
+                <div class="flex items-center space-x-1 shrink-0">
                   <button
                     @click="handleQuickConnect(prof)"
                     :disabled="isConnecting"
                     :class="[
-                      'px-3 py-1 rounded-md text-xs font-medium flex items-center space-x-1.5 select-none',
+                      'px-3 py-1 rounded-md text-xs font-medium flex items-center space-x-1.5 whitespace-nowrap shrink-0 select-none',
                       connectingProfileId === prof.id
                         ? 'cursor-wait opacity-90 btn-accent'
                         : isConnecting
@@ -1488,8 +1502,8 @@ const handleFormSubmit = () => {
                         : 'btn-accent cursor-pointer'
                     ]"
                   >
-                    <Loader2 v-if="connectingProfileId === prof.id" class="w-3 h-3 animate-spin" />
-                    <Terminal v-else class="w-3 h-3" />
+                    <Loader2 v-if="connectingProfileId === prof.id" class="w-3 h-3 shrink-0 animate-spin" />
+                    <Terminal v-else class="w-3 h-3 shrink-0" />
                     <span>{{ connectingProfileId === prof.id ? 'Connecting...' : 'Connect' }}</span>
                   </button>
                   <button
@@ -2400,3 +2414,19 @@ const handleFormSubmit = () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.conn-top-scroll {
+  scrollbar-width: thin;
+}
+.conn-top-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+.conn-top-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.conn-top-scroll::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: 9999px;
+}
+</style>
