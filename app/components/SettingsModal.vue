@@ -874,7 +874,6 @@ const browserOtherFonts = computed(() => {
                     type="text"
                     placeholder='e.g. "JetBrainsMono NF", monospace'
                     class="w-full px-3 py-1.5 rounded-lg border text-xs font-mono input-theme"
-                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                   />
                 </div>
 
@@ -888,7 +887,6 @@ const browserOtherFonts = computed(() => {
                       type="text"
                       placeholder="Search installed fonts..."
                       class="w-full pl-7 pr-6 py-1 rounded-md border text-[11px] input-theme"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                     />
                     <button
                       v-if="terminalFontSearch"
@@ -904,7 +902,6 @@ const browserOtherFonts = computed(() => {
                   <select
                     v-model="selectedTerminalFontName"
                     class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
-                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                   >
                     <!-- Current custom selection if not matched -->
                     <option v-if="!isCurrentTerminalFontInList && selectedTerminalFontName" :value="selectedTerminalFontName">
@@ -1061,7 +1058,6 @@ const browserOtherFonts = computed(() => {
                     type="text"
                     placeholder='e.g. "Segoe UI", sans-serif'
                     class="w-full px-3 py-1.5 rounded-lg border text-xs font-mono input-theme"
-                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                   />
                 </div>
 
@@ -1075,7 +1071,6 @@ const browserOtherFonts = computed(() => {
                       type="text"
                       placeholder="Search installed fonts..."
                       class="w-full pl-7 pr-6 py-1 rounded-md border text-[11px] input-theme"
-                      :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                     />
                     <button
                       v-if="browserFontSearch"
@@ -1091,7 +1086,6 @@ const browserOtherFonts = computed(() => {
                   <select
                     v-model="selectedBrowserFontName"
                     class="w-full px-3 py-1.5 rounded-lg border text-xs focus:outline-none cursor-pointer input-theme"
-                    :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }"
                   >
                     <!-- Current custom selection if not matched -->
                     <option v-if="!isCurrentBrowserFontInList && selectedBrowserFontName" :value="selectedBrowserFontName">
@@ -1154,20 +1148,22 @@ const browserOtherFonts = computed(() => {
                 </div>
               </div>
 
-              <!-- Browser Font Size (Quick Segmented Picker) -->
+              <!-- Browser Font Size Slider -->
               <div>
-                <label class="block text-[11px] font-medium mb-1" :style="{ color: 'var(--color-text-muted)' }">Font Size</label>
-                <div class="grid grid-cols-4 gap-1">
-                  <button
-                    v-for="sz in [11, 12, 13, 14]"
-                    :key="sz"
-                    type="button"
-                    @click="settingsStore.browserFontSize = sz"
-                    class="btn-flat-choice py-1 text-center rounded-md text-xs font-mono font-medium cursor-pointer"
-                    :class="{ 'btn-flat-choice--active font-semibold': settingsStore.browserFontSize === sz }"
-                  >
-                    {{ sz }}px
-                  </button>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-[11px] font-medium" :style="{ color: 'var(--color-text-muted)' }">Font Size</label>
+                  <span class="text-[11px] font-mono font-semibold" :style="{ color: 'var(--color-accent)' }">{{ settingsStore.browserFontSize }}px</span>
+                </div>
+                <div class="flex items-center space-x-2 pt-0.5">
+                  <input
+                    type="range"
+                    v-model.number="settingsStore.browserFontSize"
+                    min="10"
+                    max="20"
+                    step="1"
+                    class="flex-1 cursor-pointer"
+                    :style="{ accentColor: 'var(--color-accent)' }"
+                  />
                 </div>
               </div>
             </div>
@@ -1225,11 +1221,11 @@ const browserOtherFonts = computed(() => {
                   ]"
                 >
                   <span class="flex items-center space-x-1.5 leading-none">
-                    <FileIcon name="public_html" :is-dir="true" :size="14" />
+                    <FileIcon name="public_html" :is-dir="true" :size="Math.max(13, Math.round(settingsStore.browserFontSize * 1.2))" />
                     <span class="font-medium truncate" :style="{ color: 'var(--color-text-main)' }">public_html</span>
                   </span>
-                  <span class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">Folder</span>
-                  <span class="font-mono text-[11px]" :style="{ color: 'var(--color-text-muted)' }">-</span>
+                  <span class="text-[0.92em]" :style="{ color: 'var(--color-text-muted)' }">Folder</span>
+                  <span class="font-mono text-[0.92em]" :style="{ color: 'var(--color-text-muted)' }">-</span>
                 </div>
                 <div
                   :class="[
@@ -1238,11 +1234,11 @@ const browserOtherFonts = computed(() => {
                   ]"
                 >
                   <span class="flex items-center space-x-1.5 leading-none">
-                    <FileIcon name="config.production.json" :is-dir="false" :size="14" />
+                    <FileIcon name="config.production.json" :is-dir="false" :size="Math.max(13, Math.round(settingsStore.browserFontSize * 1.2))" />
                     <span :style="{ color: 'var(--color-text-main)' }">config.production.json</span>
                   </span>
-                  <span class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">JSON</span>
-                  <span class="font-mono text-[11px]" :style="{ color: 'var(--color-text-muted)' }">4.2 KB</span>
+                  <span class="text-[0.92em]" :style="{ color: 'var(--color-text-muted)' }">JSON</span>
+                  <span class="font-mono text-[0.92em]" :style="{ color: 'var(--color-text-muted)' }">4.2 KB</span>
                 </div>
               </div>
             </div>

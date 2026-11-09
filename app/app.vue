@@ -684,13 +684,22 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             <p class="text-xs max-w-sm mb-5" :style="{ color: 'var(--color-text-muted)' }">
               Connect to a remote server using Keychain credentials or private keys to begin interactive terminal and file transfer operations.
             </p>
-            <button
-              @click="showConnectModal = true"
-              class="px-4 py-2 rounded-lg text-xs font-medium btn-accent flex items-center space-x-2 cursor-pointer"
-            >
-              <Server class="w-3.5 h-3.5 shrink-0" />
-              <span>Open Connection Manager</span>
-            </button>
+            <div class="flex flex-wrap items-center justify-center gap-2.5">
+              <button
+                @click="showConnectModal = true"
+                class="px-4 py-2 rounded-lg text-xs font-medium btn-accent flex items-center space-x-2 cursor-pointer"
+              >
+                <Server class="w-3.5 h-3.5 shrink-0" />
+                <span>Connection Manager</span>
+              </button>
+              <button
+                @click="settingsStore.openSettings()"
+                class="px-4 py-2 rounded-lg text-xs font-medium btn-theme-card flex items-center space-x-2 cursor-pointer"
+              >
+                <Settings class="w-3.5 h-3.5 shrink-0" />
+                <span>Settings</span>
+              </button>
+            </div>
           </div>
         </template>
       </div>

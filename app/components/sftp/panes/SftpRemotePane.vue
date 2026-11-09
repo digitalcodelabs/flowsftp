@@ -776,8 +776,8 @@ defineExpose({
           >
             <td :class="[rowPaddingClass, 'whitespace-nowrap']">
               <div class="flex items-center space-x-1.5 leading-none">
-                <FileIcon name=".." :is-dir="true" :is-open="activeDropFolder?.pane === (isLeftPane ? 'local' : 'remote') && activeDropFolder?.path === parentPath" :size="15" />
-                <span class="font-bold text-sm tracking-wide leading-tight" :style="{ color: 'var(--color-text-main)' }">..</span>
+                <FileIcon name=".." :is-dir="true" :is-open="activeDropFolder?.pane === (isLeftPane ? 'local' : 'remote') && activeDropFolder?.path === parentPath" :size="Math.max(13, Math.round(settingsStore.browserFontSize * 1.25))" />
+                <span class="font-bold text-[1.08em] tracking-wide leading-tight" :style="{ color: 'var(--color-text-main)' }">..</span>
               </div>
             </td>
             <td :class="[cellPaddingClass, 'text-[0.92em] whitespace-nowrap']" :style="{ color: 'var(--color-text-muted)' }">
@@ -834,7 +834,7 @@ defineExpose({
           >
             <td :class="[rowPaddingClass, 'whitespace-nowrap']" :title="file.name">
               <div class="flex items-center space-x-1.5 leading-none">
-                <FileIcon :name="file.name" :is-dir="file.is_dir" :is-open="activeDropFolder?.path === file.path" :size="15" />
+                <FileIcon :name="file.name" :is-dir="file.is_dir" :is-open="activeDropFolder?.path === file.path" :size="Math.max(13, Math.round(settingsStore.browserFontSize * 1.25))" />
                 <span v-if="searchQuery && highlightMatch(file.name, searchQuery)" class="font-normal truncate leading-tight" :style="{ color: 'var(--color-text-main)' }">
                   <span>{{ highlightMatch(file.name, searchQuery)!.before }}</span>
                   <span class="bg-amber-400/30 text-amber-300 font-semibold rounded px-0.5">{{ highlightMatch(file.name, searchQuery)!.match }}</span>
