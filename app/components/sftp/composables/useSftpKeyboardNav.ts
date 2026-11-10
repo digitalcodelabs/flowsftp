@@ -84,9 +84,66 @@ export function isTypingInInput(e: KeyboardEvent | EventTarget | null): boolean 
   )
 }
 
+export function findTypeAheadMatchIndex(
+  files: ReadonlyArray<{ name: string }>,
+  query: string,
+  currentIndex: number | null,
+  cycleNext: boolean
+): number {
+  const len = files.length
+  const q = query.toLowerCase()
+  if (len === 0 || !q) return -1
+
+  const startIndex =
+    currentIndex !== null && currentIndex >= 0 && currentIndex < len
+      ? cycleNext
+        ? (currentIndex + 1) % len
+        : currentIndex
+      : 0
+
+  // 1. Primary pass: match item name prefix directly
+  for (let offset = 0; offset < len; offset++) {
+    const idx = (startIndex + offset) % len
+    const item = files[idx]
+    if (item && item.name.toLowerCase().startsWith(q)) {
+      return idx
+    }
+  }
+
+  // 2. Fallback pass: match hidden files/folders after leading dot(s) when query doesn't start with '.'
+  if (!q.startsWith('.')) {
+    for (let offset = 0; offset < len; offset++) {
+      const idx = (startIndex + offset) % len
+      const item = files[idx]
+      if (item) {
+        const cleanName = item.name.replace(/^\.+/, '').toLowerCase()
+        if (cleanName && cleanName.startsWith(q)) {
+          return idx
+        }
+      }
+    }
+  }
+
+  return -1
+}
+
 export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
   const sftpStore = useSftpStore()
   const settingsStore = useSettingsStore()
+
+  const TYPE_AHEAD_RESET_MS = 700
+  let typeAheadBuffer = ''
+  let typeAheadPane: 'local' | 'remote' | null = null
+  let typeAheadTimer: ReturnType<typeof setTimeout> | null = null
+
+  const clearTypeAhead = () => {
+    typeAheadBuffer = ''
+    typeAheadPane = null
+    if (typeAheadTimer) {
+      clearTimeout(typeAheadTimer)
+      typeAheadTimer = null
+    }
+  }
 
   const isActive = (): boolean => {
     if (typeof options.active === 'function') {
@@ -221,6 +278,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
 
     // ArrowDown
     if (e.key === 'ArrowDown') {
+      clearTypeAhead()
       e.preventDefault()
       let nextIndex: number
       if (curr === null) {
@@ -238,6 +296,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
 
     // ArrowUp
     if (e.key === 'ArrowUp') {
+      clearTypeAhead()
       e.preventDefault()
       let nextIndex: number
       if (curr === null) {
@@ -255,6 +314,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
 
     // Home
     if (e.key === 'Home') {
+      clearTypeAhead()
       e.preventDefault()
       applySelection(isLocal, minIndex, curr, false)
       return
@@ -262,6 +322,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
 
     // End
     if (e.key === 'End') {
+      clearTypeAhead()
       e.preventDefault()
       applySelection(isLocal, maxIndex, curr, false)
       return
@@ -269,6 +330,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
 
     // Enter: enter folder or open file
     if (e.key === 'Enter') {
+      clearTypeAhead()
       e.preventDefault()
       if (curr === -1) {
         if (isLocal) {
@@ -282,6 +344,60 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
           options.onLocalRowDoubleClick(entry as LocalFileEntry)
         } else {
           options.onRemoteRowDoubleClick(entry as SftpFileEntry)
+        }
+      }
+      return
+    }
+
+    // Printable character: Type-ahead jump to matching folder or file
+    if (
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      e.key.length === 1 &&
+      e.key !== ' ' &&
+      files.length > 0
+    ) {
+      e.preventDefault()
+      const currentPane = options.activePane.value
+      const charLower = e.key.toLowerCase()
+
+      if (typeAheadPane !== currentPane) {
+        typeAheadBuffer = ''
+        typeAheadPane = currentPane
+      }
+
+      if (typeAheadTimer) {
+        clearTimeout(typeAheadTimer)
+      }
+      typeAheadTimer = setTimeout(() => {
+        typeAheadBuffer = ''
+        typeAheadTimer = null
+      }, TYPE_AHEAD_RESET_MS)
+
+      typeAheadBuffer += charLower
+
+      const isSingleOrRepeatedSameChar =
+        typeAheadBuffer.length === 1 ||
+        typeAheadBuffer.split('').every((c) => c === charLower)
+
+      let matchedIndex = -1
+      if (isSingleOrRepeatedSameChar) {
+        matchedIndex = findTypeAheadMatchIndex(files, charLower, curr, true)
+      } else {
+        matchedIndex = findTypeAheadMatchIndex(files, typeAheadBuffer, curr, false)
+        // If multi-char buffer didn't match anything, fall back to jumping to the newly pressed letter
+        if (matchedIndex === -1) {
+          typeAheadBuffer = charLower
+          matchedIndex = findTypeAheadMatchIndex(files, charLower, curr, true)
+        }
+      }
+
+      if (matchedIndex !== -1) {
+        applySelection(isLocal, matchedIndex, curr, false)
+        const matchedFile = files[matchedIndex]
+        if (options.showQuickLook.value && matchedFile && !matchedFile.is_dir) {
+          options.quickLookFile.value = matchedFile
         }
       }
       return
@@ -654,6 +770,7 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
   })
 
   onUnmounted(() => {
+    clearTypeAhead()
     window.removeEventListener('keydown', handleGlobalKeyDown)
   })
 
