@@ -34,3 +34,4 @@ describe('findTypeAheadMatchIndex (File Pane Type-Ahead Jump)', () => {
     expect(findTypeAheadMatchIndex([{ name: '.config' }, { name: 'README.md' }], 'c', null, true)).toBe(0)
   })
 })
+
