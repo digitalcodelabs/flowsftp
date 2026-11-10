@@ -960,6 +960,56 @@ const browserOtherFonts = computed(() => {
 
         <!-- 2. FONTS & APPEARANCE TAB -->
         <div v-if="activeTab === 'appearance'" class="space-y-4">
+          <!-- Interface & Dialogs Font Size (Settings, Connection Manager, Menus & Descriptions) -->
+          <div
+            class="rounded-xl border p-4 space-y-3"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
+          >
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <Type class="w-4 h-4" :style="{ color: 'var(--color-accent)' }" />
+                <div>
+                  <h4 class="font-semibold text-xs" :style="{ color: 'var(--color-text-main)' }">
+                    Interface & Dialogs Text Size
+                  </h4>
+                  <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+                    Scales text across Settings, Connection Manager, buttons, labels, and helper descriptions.
+                  </p>
+                </div>
+              </div>
+              <button
+                @click="settingsStore.resetUiFontDefaults()"
+                class="btn-flat-ghost px-2 py-0.5 rounded text-[11px] flex items-center space-x-1 cursor-pointer shrink-0"
+                title="Reset Interface Text Size to Default (13px)"
+              >
+                <RotateCcw class="w-3 h-3" />
+                <span>Reset</span>
+              </button>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[11px] font-medium" :style="{ color: 'var(--color-text-muted)' }">
+                  UI & Modal Text Scale
+                </label>
+                <span class="text-[11px] font-mono font-semibold" :style="{ color: 'var(--color-accent)' }">
+                  {{ settingsStore.uiFontSize }}px ({{ Math.round((settingsStore.uiFontSize / 12) * 100) }}%)
+                </span>
+              </div>
+              <div class="flex items-center space-x-2 pt-0.5">
+                <input
+                  type="range"
+                  v-model.number="settingsStore.uiFontSize"
+                  min="11"
+                  max="18"
+                  step="1"
+                  class="flex-1 cursor-pointer"
+                  :style="{ accentColor: 'var(--color-accent)' }"
+                />
+              </div>
+            </div>
+          </div>
+
           <!-- Terminal Font & Size Settings -->
           <div
             class="rounded-xl border p-4 space-y-3.5"

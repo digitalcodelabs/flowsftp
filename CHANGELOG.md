@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Terminal Keyboard Copy & Paste**: Support `Ctrl + Shift + C` to copy active mouse selections to the clipboard and `Ctrl + Shift + V` to paste into the active SSH session.
 - **Empty-State Quick Settings Button**: Added a `Settings` button alongside `Connection Manager` on the initial no-session welcome screen for immediate access to themes, fonts, and keymaps on first launch.
 - **File Browser Font Size Slider**: Replaced the fixed 4-preset font size buttons in **Settings -> Fonts & Sizing** with a smooth `10px`–`20px` range slider and proportional file/folder icon scaling.
+- **Interface & Dialogs Text Size Slider**: Added a global UI & Modal Text Scale slider (`11px`–`18px`) in **Settings -> Fonts & Sizing** that scales text across Settings, Connection Manager, buttons, labels, and helper descriptions.
 - **Quick Settings Shortcut (`Ctrl + Shift + P`)**: Bound `Ctrl + Shift + P` to open Settings from anywhere in the app while suppressing the default WebView print dialog.
 - **Master Password Vault Onboarding**: Saving connection credentials when the vault is uninitialized now guides users directly through Master Password setup, with live vault status controls (`Set Up Vault`, `Vault Locked`, `Vault Unlocked`) in the Connection Manager header.
 

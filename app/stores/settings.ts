@@ -192,6 +192,24 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const keymaps = ref<KeymapSettings>(loadSavedKeymaps())
 
+  // Interface / Modals (Settings, Connection Manager, Buttons, Labels) Font Size
+  const uiFontSize = ref<number>(
+    typeof window !== 'undefined'
+      ? Number(localStorage.getItem('flowsftp_ui_font_size')) || 13
+      : 13
+  )
+
+  function applyUiFontScale(size: number) {
+    if (typeof document === 'undefined') return
+    const clamped = Math.min(18, Math.max(11, Number(size) || 13))
+    const scale = Number((clamped / 12).toFixed(4))
+    document.documentElement.style.setProperty('--ui-font-scale', String(scale))
+  }
+
+  if (typeof window !== 'undefined') {
+    applyUiFontScale(uiFontSize.value)
+  }
+
   // Code Editor Settings (CodeMirror 6)
   const editorVimMode = ref<boolean>(
     typeof window !== 'undefined'
@@ -248,6 +266,10 @@ export const useSettingsStore = defineStore('settings', () => {
     })
     watch(editorFontSize, (val) => {
       localStorage.setItem('flowsftp_editor_font_size', String(val))
+    })
+    watch(uiFontSize, (val) => {
+      localStorage.setItem('flowsftp_ui_font_size', String(val))
+      applyUiFontScale(val)
     })
     watch(
       keymaps,
@@ -407,6 +429,11 @@ export const useSettingsStore = defineStore('settings', () => {
     browserRowDensity.value = 'normal'
   }
 
+  function resetUiFontDefaults() {
+    uiFontSize.value = 13
+    applyUiFontScale(13)
+  }
+
   function updateKeymap(action: KeymapAction, shortcut: string) {
     keymaps.value = {
       ...keymaps.value,
@@ -456,6 +483,9 @@ export const useSettingsStore = defineStore('settings', () => {
     browserRowDensity,
     editorVimMode,
     editorFontSize,
+    uiFontSize,
+    applyUiFontScale,
+    resetUiFontDefaults,
     preferredExternalEditor,
     customExternalEditorCommand,
     keymaps,

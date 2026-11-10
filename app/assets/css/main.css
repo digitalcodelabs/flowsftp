@@ -26,6 +26,30 @@
   --color-success: #a6e3a1;
   --color-warning: #f9e2af;
   --color-info: #89b4fa;
+  --ui-font-scale: 1.0833;
+}
+
+/* Dynamic UI text scaling for Settings, Connection Manager, modals, buttons & helper labels */
+.text-\[9px\] {
+  font-size: calc(9.5px * var(--ui-font-scale, 1.0833)) !important;
+}
+.text-\[10px\] {
+  font-size: calc(10.5px * var(--ui-font-scale, 1.0833)) !important;
+}
+.text-\[11px\] {
+  font-size: calc(11.5px * var(--ui-font-scale, 1.0833)) !important;
+}
+.text-xs {
+  font-size: calc(12px * var(--ui-font-scale, 1.0833)) !important;
+}
+.text-sm {
+  font-size: calc(14px * var(--ui-font-scale, 1.0833)) !important;
+}
+.text-base {
+  font-size: calc(16px * var(--ui-font-scale, 1.0833)) !important;
+}
+.text-lg {
+  font-size: calc(18px * var(--ui-font-scale, 1.0833)) !important;
 }
 
 html, body, #__nuxt {

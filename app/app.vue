@@ -308,8 +308,9 @@ const handleGlobalContextMenu = (e: MouseEvent) => {
 }
 
 onMounted(async () => {
-  // Apply saved theme to DOM
+  // Apply saved theme and UI font scale to DOM
   themeStore.applyThemeToDom(themeStore.currentTheme)
+  settingsStore.applyUiFontScale(settingsStore.uiFontSize)
 
   // Register listeners immediately before any async restoration
   window.addEventListener('keydown', handleGlobalKeyDown, true)
