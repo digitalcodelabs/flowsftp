@@ -830,6 +830,7 @@ pub fn parse_git_status_porcelain(
 }
 
 fn new_hidden_tokio_command(program: &str) -> tokio::process::Command {
+    #[allow(unused_mut)]
     let mut cmd = tokio::process::Command::new(program);
     #[cfg(target_os = "windows")]
     {
