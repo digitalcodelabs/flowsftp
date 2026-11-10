@@ -10,12 +10,14 @@ import {
   LogOut,
   X,
   Server,
+  Download,
 } from 'lucide-vue-next'
 import { useSshStore } from './stores/ssh'
 import { useVaultStore } from './stores/vault'
 import { useSftpStore } from './stores/sftp'
 import { useSettingsStore } from './stores/settings'
 import { useThemeStore } from './stores/theme'
+import { useUpdaterStore } from './stores/updater'
 import {
   getKeymapAction,
   onKeymapAction,
@@ -39,6 +41,7 @@ const vaultStore = useVaultStore()
 const sftpStore = useSftpStore()
 const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
+const updaterStore = useUpdaterStore()
 
 // Navigation & Modal State
 const currentTab = ref<'terminal' | 'sftp'>('terminal')
@@ -349,6 +352,14 @@ onMounted(async () => {
     } catch (err) {
       console.warn('Failed to listen to window resize:', err)
     }
+
+    if (updaterStore.autoCheckOnStartup) {
+      setTimeout(() => {
+        if (!isAppUnmounted) {
+          updaterStore.checkForUpdates({ silent: true })
+        }
+      }, 2500)
+    }
   }
 })
 
@@ -588,13 +599,45 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
           <LogOut class="w-3.5 h-3.5 shrink-0" />
         </button>
 
+        <!-- Update Available Pill -->
+        <div
+          v-if="updaterStore.showHeaderUpdateBadge"
+          class="h-7 px-2 rounded-lg text-[11px] font-medium border flex items-center space-x-1.5 shrink-0 transition-colors"
+          :style="{
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-card))',
+            borderColor: 'color-mix(in srgb, var(--color-accent) 42%, var(--color-border))',
+            color: 'var(--color-text-main)',
+          }"
+        >
+          <button
+            @click="settingsStore.openSettings('about')"
+            class="flex items-center space-x-1.5 cursor-pointer hover:opacity-90"
+            :title="`FlowSFTP v${updaterStore.latestVersion} is available — click to view and install`"
+          >
+            <Download class="w-3 h-3 shrink-0" :style="{ color: 'var(--color-accent)' }" />
+            <span class="whitespace-nowrap">Update v{{ updaterStore.latestVersion }}</span>
+          </button>
+          <button
+            @click.stop="updaterStore.dismissUpdate()"
+            class="opacity-65 hover:opacity-100 p-0.5 rounded cursor-pointer"
+            title="Dismiss update notification"
+            aria-label="Dismiss update notification"
+          >
+            <X class="w-2.5 h-2.5" />
+          </button>
+        </div>
+
         <button
           @click="settingsStore.openSettings()"
-          class="header-icon-btn w-7 h-7 shrink-0 flex items-center justify-center text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer"
+          class="header-icon-btn w-7 h-7 shrink-0 flex items-center justify-center text-xs rounded-lg font-medium border transition-colors duration-150 cursor-pointer relative"
           :title="`Open Settings (${settingsStore.keymaps.openKeymap || 'Ctrl+Shift+P'})`"
           aria-label="Open Settings"
         >
           <Settings class="w-3.5 h-3.5 shrink-0" />
+          <span
+            v-if="updaterStore.updateAvailable"
+            class="w-1.5 h-1.5 rounded-full bg-emerald-400 absolute top-1 right-1"
+          />
         </button>
 
         <button

@@ -36,6 +36,7 @@ import {
   Mail,
   Loader2,
   CheckCircle2,
+  RefreshCw,
 } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
 import { useSftpStore } from '../stores/sftp'
@@ -44,6 +45,7 @@ import { useKeychainStore } from '../stores/keychain'
 import { useSettingsStore, TERMINAL_FONTS, BROWSER_FONTS } from '../stores/settings'
 import { useThemeStore, isLightTheme, type AppTheme } from '../stores/theme'
 import { useDirWatcherStore } from '../stores/dirWatcher'
+import { useUpdaterStore } from '../stores/updater'
 import FileIcon from './FileIcon.vue'
 import {
   KEYMAP_ACTIONS_META,
@@ -74,6 +76,19 @@ const keychainStore = useKeychainStore()
 const settingsStore = useSettingsStore()
 const themeStore = useThemeStore()
 const dirWatcherStore = useDirWatcherStore()
+const updaterStore = useUpdaterStore()
+
+const formatUpdaterBytes = (bytes: number): string => {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let val = bytes
+  let idx = 0
+  while (val >= 1024 && idx < units.length - 1) {
+    val /= 1024
+    idx++
+  }
+  return `${val.toFixed(idx > 1 ? 1 : 0)} ${units[idx]}`
+}
 
 const activeTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer' | 'about'>(props.initialTab || 'themes')
 
@@ -672,6 +687,11 @@ const browserOtherFonts = computed(() => {
         >
           <Info class="w-3.5 h-3.5" />
           <span>About</span>
+          <span
+            v-if="updaterStore.updateAvailable"
+            class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+            :title="`Update v${updaterStore.latestVersion} available`"
+          />
         </button>
       </div>
 
@@ -2607,11 +2627,166 @@ const browserOtherFonts = computed(() => {
             <img :src="appIcon" alt="FlowSFTP" class="w-20 h-20 object-contain" />
             <div>
               <h3 class="text-lg font-bold tracking-tight" :style="{ color: 'var(--color-text-main)' }">FlowSFTP</h3>
-              <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">v0.9.1-beta.2 (Beta Release)</p>
+              <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+                v{{ updaterStore.currentVersion || '0.9.1' }}
+              </p>
             </div>
             <p class="text-xs max-w-md leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">
               A modern, blazing-fast, and secure dual-pane SFTP / FTP / FTPS client with an integrated hardware-accelerated SSH terminal.
             </p>
+          </div>
+
+          <!-- Software Updates Card (flowsftp.com) -->
+          <div
+            class="rounded-xl border p-5 space-y-4"
+            :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
+          >
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <h4 class="text-xs font-semibold" :style="{ color: 'var(--color-text-main)' }">
+                    Software Updates
+                  </h4>
+                  <span
+                    v-if="updaterStore.updateAvailable"
+                    class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30"
+                  >
+                    v{{ updaterStore.latestVersion }} Available
+                  </span>
+                  <span
+                    v-else-if="updaterStore.lastCheckedAt"
+                    class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-500/12 text-sky-600 dark:text-sky-300 border border-sky-500/25"
+                  >
+                    Up to Date
+                  </span>
+                </div>
+                <p class="text-[11px] mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
+                  {{ updaterStore.statusMessage || 'Checks flowsftp.com for the latest release and installs updates in-place.' }}
+                </p>
+              </div>
+
+              <button
+                @click="updaterStore.checkForUpdates({ silent: false })"
+                :disabled="updaterStore.checking || updaterStore.downloading || updaterStore.installing"
+                class="px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center space-x-1.5 transition btn-theme-card cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                <RefreshCw class="w-3.5 h-3.5" :class="{ 'animate-spin': updaterStore.checking }" :style="{ color: 'var(--color-accent)' }" />
+                <span>{{ updaterStore.checking ? 'Checking...' : 'Check for Updates' }}</span>
+              </button>
+            </div>
+
+            <!-- Error Banner -->
+            <div
+              v-if="updaterStore.errorMessage"
+              class="p-3 rounded-lg bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-300 text-xs flex items-center space-x-2"
+            >
+              <AlertTriangle class="w-4 h-4 shrink-0" />
+              <span>{{ updaterStore.errorMessage }}</span>
+            </div>
+
+            <!-- Available Update Action & Release Notes -->
+            <div
+              v-if="updaterStore.updateAvailable"
+              class="rounded-lg border p-4 space-y-3"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-accent) 35%, var(--color-border))' }"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs font-semibold" :style="{ color: 'var(--color-text-main)' }">
+                  FlowSFTP v{{ updaterStore.latestVersion }} is ready to install
+                </div>
+                <span v-if="updaterStore.pubDate" class="text-[10px] font-mono" :style="{ color: 'var(--color-text-muted)' }">
+                  {{ new Date(updaterStore.pubDate).toLocaleDateString() }}
+                </span>
+              </div>
+
+              <div
+                v-if="updaterStore.releaseNotes"
+                class="text-[11px] leading-relaxed whitespace-pre-line max-h-36 overflow-y-auto p-2.5 rounded-md border font-mono"
+                :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)', color: 'var(--color-text-muted)' }"
+              >
+                {{ updaterStore.releaseNotes }}
+              </div>
+
+              <!-- Download / Install Progress -->
+              <div v-if="updaterStore.downloading || updaterStore.installing" class="space-y-2 pt-1">
+                <div class="flex items-center justify-between text-[11px] font-mono">
+                  <span :style="{ color: 'var(--color-text-main)' }">
+                    {{ updaterStore.installing ? 'Installing update & restarting...' : `Downloading (${updaterStore.progressPercent}%)` }}
+                  </span>
+                  <span v-if="updaterStore.totalBytes > 0" :style="{ color: 'var(--color-text-muted)' }">
+                    {{ formatUpdaterBytes(updaterStore.downloadedBytes) }} / {{ formatUpdaterBytes(updaterStore.totalBytes) }}
+                  </span>
+                </div>
+                <div
+                  class="w-full h-2 rounded-full overflow-hidden border"
+                  :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)' }"
+                >
+                  <div
+                    class="h-full transition-all duration-150 rounded-full"
+                    :style="{ width: `${Math.max(4, updaterStore.progressPercent)}%`, backgroundColor: 'var(--color-accent)' }"
+                  />
+                </div>
+                <div v-if="updaterStore.downloading" class="flex justify-end pt-1">
+                  <button
+                    @click="updaterStore.cancelDownload()"
+                    class="px-3 py-1 rounded-md text-xs btn-theme-card cursor-pointer"
+                  >
+                    Cancel Download
+                  </button>
+                </div>
+              </div>
+
+              <!-- Install Update Button -->
+              <div v-else class="flex items-center justify-end gap-2 pt-1">
+                <button
+                  @click="updaterStore.downloadAndInstallUpdate()"
+                  class="px-4 py-2 rounded-lg text-xs font-medium flex items-center space-x-2 btn-accent cursor-pointer"
+                >
+                  <Download class="w-3.5 h-3.5" />
+                  <span>Download & Install v{{ updaterStore.latestVersion }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Auto-Check on Startup Toggle -->
+            <div
+              class="pt-3 border-t flex items-center justify-between"
+              :style="{ borderColor: 'color-mix(in srgb, var(--color-border) 45%, transparent)' }"
+            >
+              <div>
+                <div class="text-xs font-medium" :style="{ color: 'var(--color-text-main)' }">
+                  Automatically check for updates on startup
+                </div>
+                <div class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
+                  Notifies you in the top bar when a new version is published on flowsftp.com.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="updaterStore.autoCheckOnStartup"
+                @click="updaterStore.autoCheckOnStartup = !updaterStore.autoCheckOnStartup"
+                class="w-9 h-5 rounded-full transition-colors relative cursor-pointer shrink-0 border"
+                :style="{
+                  backgroundColor: updaterStore.autoCheckOnStartup
+                    ? 'color-mix(in srgb, var(--color-accent) 35%, var(--color-bg-card))'
+                    : 'var(--color-bg-card)',
+                  borderColor: updaterStore.autoCheckOnStartup
+                    ? 'color-mix(in srgb, var(--color-accent) 65%, var(--color-border))'
+                    : 'var(--color-border)',
+                }"
+              >
+                <span
+                  class="w-3.5 h-3.5 rounded-full transition-transform absolute top-0.5 left-0.5"
+                  :class="updaterStore.autoCheckOnStartup ? 'translate-x-4' : 'translate-x-0'"
+                  :style="{
+                    backgroundColor: updaterStore.autoCheckOnStartup
+                      ? 'var(--color-accent)'
+                      : 'var(--color-text-muted)',
+                  }"
+                />
+              </button>
+            </div>
           </div>
 
           <!-- Company & Contact Card -->

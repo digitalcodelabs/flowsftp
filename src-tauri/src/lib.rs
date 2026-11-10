@@ -45,6 +45,9 @@ use commands::ssh::{
     ssh_connect, ssh_disconnect, ssh_get_history, ssh_host_key_respond, ssh_list_config_hosts,
     ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
 };
+use commands::updater::{
+    app_cancel_update_download, app_check_for_updates, app_download_and_install_update,
+};
 use state::AppState;
 
 use tauri::Manager;
@@ -156,6 +159,10 @@ pub fn run() {
             pick_and_read_file,
             exit_app,
             get_system_fonts,
+            // In-App Auto-Updater Commands
+            app_check_for_updates,
+            app_download_and_install_update,
+            app_cancel_update_download,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

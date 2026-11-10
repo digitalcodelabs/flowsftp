@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Terminal Zoom & Clipboard Shortcuts**: Zoom terminal text on the fly with `Ctrl + +` / `Ctrl + -` / `Ctrl + 0`, and copy/paste terminal selections effortlessly with `Ctrl + Shift + C` and `Ctrl + Shift + V`.
 
 ### Added
+- **In-App Auto-Updater (`flowsftp.com`)**: Automatic startup update checks, top-bar update notification pill, and one-click in-app download & installation with live progress in **Settings -> About**, powered by `https://flowsftp.com/update/{target}/{arch}/{current_version}`.
 - **System SSH Agent Authentication (`Agent`)**: Full SSH agent support across Linux/macOS (`SSH_AUTH_SOCK` Unix sockets) and Windows (OpenSSH Named Pipe, 1Password/Bitwarden SSH Agent, and Pageant), supporting Ed25519, ECDSA, RSA (`rsa-sha2-512` / `rsa-sha2-256` negotiation), and OpenSSH Certificates.
 - **One-Click `~/.ssh/config` Importer**: Parses `~/.ssh/config` (including `Include` directives, `~/` key expansion, and `Host *` inherited defaults while skipping wildcard-only blocks) into saved Connection Manager profiles.
 - **Encrypted Backup Export & Import**: Added **Encrypted Profile & Vault Backup** in **Settings -> Security** (`PBKDF2-HMAC-SHA256` + `AES-256-GCM`) supporting both **Merge** and **Replace** restore modes.

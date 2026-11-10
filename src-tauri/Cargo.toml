@@ -39,4 +39,5 @@ notify = "8.2.0"
 sha2 = "0.10"
 md5 = "0.7"
 filetime = "0.2"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 
