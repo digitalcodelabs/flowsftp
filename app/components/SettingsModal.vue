@@ -623,7 +623,7 @@ const browserOtherFonts = computed(() => {
           :style="activeTab === 'themes' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Palette class="w-3.5 h-3.5" />
-          <span>Themes & Colors</span>
+          <span>Themes</span>
         </button>
         <button
           @click="activeTab = 'appearance'"
@@ -632,7 +632,7 @@ const browserOtherFonts = computed(() => {
           :style="activeTab === 'appearance' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Type class="w-3.5 h-3.5" />
-          <span>Fonts & Sizing</span>
+          <span>Fonts</span>
         </button>
         <button
           @click="activeTab = 'keymap'"
@@ -641,7 +641,7 @@ const browserOtherFonts = computed(() => {
           :style="activeTab === 'keymap' ? { borderColor: 'color-mix(in srgb, var(--color-accent) 70%, var(--color-border))', color: 'var(--color-accent)' } : { borderColor: 'transparent', color: 'var(--color-text-muted)' }"
         >
           <Keyboard class="w-3.5 h-3.5" />
-          <span>Keymap & Shortcuts</span>
+          <span>Keymap</span>
         </button>
         <button
           @click="activeTab = 'transfers'"
