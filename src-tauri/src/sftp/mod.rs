@@ -1661,13 +1661,11 @@ pub fn normalize_to_native_path(raw: &str) -> (PathBuf, String) {
                 } else {
                     format!("{}/{}", wsl_mnt, rest)
                 };
-            } else {
+            } else if !Path::new(&s).exists()
+                && let Some(home) = dirs::home_dir()
+            {
                 // Not WSL or drive not mounted: if path doesn't exist, fallback to home directory
-                if !Path::new(&s).exists() {
-                    if let Some(home) = dirs::home_dir() {
-                        s = home.to_string_lossy().to_string();
-                    }
-                }
+                s = home.to_string_lossy().to_string();
             }
         }
 
@@ -2180,9 +2178,12 @@ pub async fn get_wsl_distributions() -> Result<Vec<String>, String> {
             .await
     {
         let text = if output.stdout.len() >= 2 && output.stdout[1] == 0 {
-            let u16_vec: Vec<u16> = output.stdout
-                .chunks_exact(2)
-                .map(|a| u16::from_le_bytes([a[0], a[1]]))
+            let u16_vec: Vec<u16> = output
+                .stdout
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| u16::from_le_bytes(pair))
                 .collect();
             String::from_utf16_lossy(&u16_vec)
         } else {

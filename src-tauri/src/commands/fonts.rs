@@ -103,7 +103,6 @@ pub fn fetch_system_fonts() -> Vec<SystemFont> {
 
 #[cfg(target_os = "macos")]
 pub fn fetch_system_fonts() -> Vec<SystemFont> {
-    use std::collections::BTreeSet;
     use std::fs;
     let mut names = BTreeSet::new();
 
@@ -150,14 +149,14 @@ pub fn fetch_system_fonts() -> Vec<SystemFont> {
     use std::process::Command;
     let mut names = BTreeSet::new();
 
-    if let Ok(output) = Command::new("fc-list").arg(":").arg("family").output() {
-        if let Ok(text) = String::from_utf8(output.stdout) {
-            for line in text.lines() {
-                for part in line.split(',') {
-                    let trimmed = part.trim();
-                    if !trimmed.is_empty() {
-                        names.insert(trimmed.to_string());
-                    }
+    if let Ok(output) = Command::new("fc-list").arg(":").arg("family").output()
+        && let Ok(text) = String::from_utf8(output.stdout)
+    {
+        for line in text.lines() {
+            for part in line.split(',') {
+                let trimmed = part.trim();
+                if !trimmed.is_empty() {
+                    names.insert(trimmed.to_string());
                 }
             }
         }
