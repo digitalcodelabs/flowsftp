@@ -94,7 +94,7 @@ const cancelOverwrite = () => {
   <div
     v-if="show"
     tabindex="-1"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 outline-none select-none"
+    class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 outline-none select-none"
     @click.self="emit('close')"
     @keydown.esc.prevent.stop="showOverwriteConfirmation ? cancelOverwrite() : emit('close')"
   >

@@ -1051,7 +1051,7 @@ onBeforeUnmount(() => {
             borderColor: 'var(--color-border)',
             boxShadow: '0 20px 40px -8px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--color-border)',
           }"
-          class="fixed min-w-[210px] backdrop-blur-md rounded-xl border p-1 text-xs select-none animate-in fade-in zoom-in-95 duration-75 shadow-2xl"
+          class="ui-scaled fixed min-w-[210px] backdrop-blur-md rounded-xl border p-1 text-xs select-none animate-in fade-in zoom-in-95 duration-75 shadow-2xl"
           @click.stop
         >
           <!-- Cut -->

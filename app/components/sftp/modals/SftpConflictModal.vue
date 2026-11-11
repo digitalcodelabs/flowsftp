@@ -22,7 +22,7 @@ const emit = defineEmits<{
 <template>
   <div
     v-if="show && dialog"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-100"
+    class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-100"
   >
     <div
       class="w-full max-w-md rounded-2xl border shadow-2xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-100"

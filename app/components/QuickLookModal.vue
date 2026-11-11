@@ -470,7 +470,7 @@ onUnmounted(() => {
     >
       <!-- Quick Look Header -->
       <div
-        class="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+        class="ui-scaled flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
         :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)' }"
       >
         <!-- File Info -->
@@ -743,7 +743,7 @@ onUnmounted(() => {
 
       <!-- Quick Look Footer Navigation & Hints -->
       <div
-        class="flex items-center justify-between px-4 py-2 border-t text-xs select-none flex-shrink-0"
+        class="ui-scaled flex items-center justify-between px-4 py-2 border-t text-xs select-none flex-shrink-0"
         :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }"
       >
         <!-- Left: Navigation Arrows -->

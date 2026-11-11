@@ -706,7 +706,8 @@ defineExpose({
     <!-- Local File List Table -->
     <div
       ref="tableScrollRef"
-      class="flex-1 overflow-auto"
+      class="flex-1 overflow-auto scroll-pt-8"
+      :style="{ scrollPaddingTop: '30px' }"
       @scroll.passive="handleTableScroll"
       @click="handleContainerClick"
       @dragover="emit('dragover', $event)"
@@ -908,7 +909,7 @@ defineExpose({
                 <!-- Git Status Overlay Badge -->
                 <span
                   v-if="getGitStatus(true, file)"
-                  class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold flex-shrink-0"
+                  class="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold flex-shrink-0"
                   :class="{
                     'text-amber-400 bg-amber-950/60 border border-amber-800/60': getGitStatus(true, file) === 'modified',
                     'text-emerald-400 bg-emerald-950/60 border border-emerald-800/60': getGitStatus(true, file) === 'untracked',

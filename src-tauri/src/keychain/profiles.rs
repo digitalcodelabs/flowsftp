@@ -30,6 +30,8 @@ pub struct SavedConnectionProfile {
     #[serde(default)]
     pub default_remote_path: Option<String>,
     #[serde(default)]
+    pub allow_invalid_certs: bool,
+    #[serde(default)]
     pub created_at: u64,
 }
 
@@ -346,6 +348,7 @@ mod tests {
         let loaded = load_profiles_from_path(&file_path).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].host, "example.com");
+        assert!(!loaded[0].allow_invalid_certs);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -368,6 +371,7 @@ mod tests {
             key_path: None,
             has_saved_secret: true,
             default_remote_path: None,
+            allow_invalid_certs: false,
             created_at: 100,
         };
         let p2 = SavedConnectionProfile {
@@ -382,6 +386,7 @@ mod tests {
             key_path: None,
             has_saved_secret: false,
             default_remote_path: Some("/var/www".to_string()),
+            allow_invalid_certs: true,
             created_at: 0,
         };
 

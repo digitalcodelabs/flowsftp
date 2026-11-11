@@ -37,6 +37,7 @@ export interface FtpConnectConfig {
   username: string
   password?: string
   secure: boolean
+  allowInvalidCerts?: boolean
 }
 
 export interface SshSessionItem {
@@ -48,6 +49,7 @@ export interface SshSessionItem {
   status: 'connecting' | 'connected' | 'disconnected' | 'error'
   error?: string
   defaultRemotePath?: string
+  allowInvalidCerts?: boolean
 }
 
 export interface BackendSessionInfo {
@@ -56,6 +58,7 @@ export interface BackendSessionInfo {
   port: number
   username: string
   protocol: string
+  allow_invalid_certs?: boolean
 }
 
 export const useSshStore = defineStore('ssh', () => {
@@ -128,6 +131,7 @@ export const useSshStore = defineStore('ssh', () => {
           username: s.username,
           protocol: (s.protocol as 'sftp' | 'ftp' | 'ftps') || 'sftp',
           status: 'connected' as const,
+          allowInvalidCerts: Boolean(s.allow_invalid_certs),
         }))
 
         // Restore activeSessionId from localStorage or default to first session
@@ -192,6 +196,7 @@ export const useSshStore = defineStore('ssh', () => {
 
   async function connectFtp(config: FtpConnectConfig, defaultRemotePath?: string): Promise<string> {
     const tempId = `temp-${Date.now()}`
+    const allowInvalidCerts = Boolean(config.allowInvalidCerts)
     const item: SshSessionItem = {
       sessionId: tempId,
       host: config.host,
@@ -200,6 +205,7 @@ export const useSshStore = defineStore('ssh', () => {
       protocol: config.secure ? 'ftps' : 'ftp',
       status: 'connecting',
       defaultRemotePath,
+      allowInvalidCerts,
     }
     sessions.value.push(item)
 
@@ -210,14 +216,16 @@ export const useSshStore = defineStore('ssh', () => {
         username: config.username,
         password: config.password || null,
         secure: config.secure,
+        allowInvalidCerts,
       })
 
       item.sessionId = sessionId
       item.status = 'connected'
       item.defaultRemotePath = defaultRemotePath
+      item.allowInvalidCerts = allowInvalidCerts
       activeSessionId.value = sessionId
       localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId)
-      saveConfig(sessionId, config)
+      saveConfig(sessionId, { ...config, allowInvalidCerts })
       return sessionId
     } catch (err: any) {
       sessions.value = sessions.value.filter((s) => s.sessionId !== tempId)
@@ -235,7 +243,13 @@ export const useSshStore = defineStore('ssh', () => {
     const defaultRemotePath = existingSession?.defaultRemotePath
     const newId = 'auth' in config
       ? await connect(config, defaultRemotePath)
-      : await connectFtp(config, defaultRemotePath)
+      : await connectFtp(
+          {
+            ...config,
+            allowInvalidCerts: config.allowInvalidCerts ?? existingSession?.allowInvalidCerts,
+          },
+          defaultRemotePath
+        )
     await disconnect(oldSessionId)
     setActiveSession(newId)
     return newId

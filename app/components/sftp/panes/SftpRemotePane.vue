@@ -68,6 +68,7 @@ const props = defineProps<{
   allowSwitchSource?: boolean
   currentSource?: string
   isLeftPane?: boolean
+  compareDisabled?: boolean
   isLoading?: boolean
   remoteError?: string | null
   totalCount?: number
@@ -368,11 +369,15 @@ defineExpose({
         <!-- Toggle Directory Comparison -->
         <button
           v-if="sessionId"
-          @click="emit('toggle-comparison')"
-          :title="isComparing ? 'Exit Directory Comparison (Ctrl+Shift+C)' : 'Compare with Local Directory (Ctrl+Shift+C)'"
-          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition hover:opacity-80"
-          :class="isComparing ? 'text-indigo-400 bg-indigo-500/10' : ''"
-          :style="{ color: isComparing ? 'var(--color-accent-secondary)' : 'var(--color-text-muted)' }"
+          :disabled="isLeftPane || compareDisabled"
+          @click="!(isLeftPane || compareDisabled) && emit('toggle-comparison')"
+          :title="(isLeftPane || compareDisabled) ? 'Directory comparison compares Local vs Remote' : (isComparing ? 'Exit Directory Comparison (Ctrl+Shift+C)' : 'Compare with Local Directory (Ctrl+Shift+C)')"
+          class="w-6 h-6 shrink-0 flex items-center justify-center rounded text-xs transition"
+          :class="[
+            (isLeftPane || compareDisabled) ? 'opacity-35 cursor-not-allowed' : 'hover:opacity-80',
+            isComparing && !(isLeftPane || compareDisabled) ? 'text-indigo-400 bg-indigo-500/10' : '',
+          ]"
+          :style="{ color: isComparing && !(isLeftPane || compareDisabled) ? 'var(--color-accent-secondary)' : 'var(--color-text-muted)' }"
         >
           <GitCompare class="w-4 h-4 shrink-0" />
         </button>
@@ -637,7 +642,8 @@ defineExpose({
     <!-- Remote File List Table -->
     <div
       ref="tableScrollRef"
-      class="flex-1 overflow-auto"
+      class="flex-1 overflow-auto scroll-pt-8"
+      :style="{ scrollPaddingTop: '30px' }"
       @scroll.passive="handleTableScroll"
       @click="handleContainerClick"
       @dragover="emit('dragover', $event)"
@@ -890,7 +896,7 @@ defineExpose({
                 <!-- Remote Git Status Overlay Badge -->
                 <span
                   v-if="getGitStatus(false, file)"
-                  class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold flex-shrink-0"
+                  class="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold flex-shrink-0"
                   :class="{
                     'text-amber-400 bg-amber-950/60 border border-amber-800/60': getGitStatus(false, file) === 'modified',
                     'text-emerald-400 bg-emerald-950/60 border border-emerald-800/60': getGitStatus(false, file) === 'untracked',

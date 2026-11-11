@@ -409,6 +409,16 @@ export function useSftpKeyboardNav(options: UseSftpKeyboardNavOptions) {
     if (options.showEditorModal.value) {
       return
     }
+    if (options.showQuickLook.value) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        options.showQuickLook.value = false
+      } else if (e.code === 'Space' && !isTypingInInput(e)) {
+        e.preventDefault()
+        options.showQuickLook.value = false
+      }
+      return
+    }
 
     // Ctrl+L / Cmd+L / editPath: Focus address/location bar for editing
     if (

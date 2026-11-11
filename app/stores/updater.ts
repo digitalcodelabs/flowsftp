@@ -38,6 +38,19 @@ export const useUpdaterStore = defineStore('updater', () => {
   const platform = ref('')
   const arch = ref('')
 
+  if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
+    import('@tauri-apps/api/app')
+      .then(({ getVersion }) => getVersion())
+      .then((version) => {
+        if (version) {
+          currentVersion.value = version
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to read live app version:', err)
+      })
+  }
+
   const downloadedBytes = ref(0)
   const totalBytes = ref(0)
   const progressPercent = ref(0)
@@ -79,33 +92,42 @@ export const useUpdaterStore = defineStore('updater', () => {
   })
 
   let unlistenProgress: (() => void) | null = null
+  let listenerInitPromise: Promise<void> | null = null
 
   async function ensureProgressListener() {
     if (unlistenProgress) return
+    if (listenerInitPromise) return listenerInitPromise
     if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return
-    try {
-      const { listen } = await import('@tauri-apps/api/event')
-      unlistenProgress = await listen<UpdateDownloadProgress>('app:update-progress', (event) => {
-        const p = event.payload
-        downloadedBytes.value = p.downloadedBytes
-        totalBytes.value = p.totalBytes
-        progressPercent.value = p.percent
-        statusMessage.value = p.message
 
-        if (p.phase === 'downloading' || p.phase === 'extracting') {
-          downloading.value = true
-          installing.value = false
-        } else if (p.phase === 'installing') {
-          downloading.value = false
-          installing.value = true
-        } else if (p.phase === 'cancelled') {
-          downloading.value = false
-          installing.value = false
-        }
-      })
-    } catch (err) {
-      console.warn('Failed to listen to app:update-progress:', err)
-    }
+    listenerInitPromise = (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        unlistenProgress = await listen<UpdateDownloadProgress>('app:update-progress', (event) => {
+          const p = event.payload
+          downloadedBytes.value = p.downloadedBytes
+          totalBytes.value = p.totalBytes
+          progressPercent.value = p.percent
+          statusMessage.value = p.message
+
+          if (p.phase === 'downloading' || p.phase === 'extracting') {
+            downloading.value = true
+            installing.value = false
+          } else if (p.phase === 'installing') {
+            downloading.value = false
+            installing.value = true
+          } else if (p.phase === 'completed' || p.phase === 'cancelled' || p.phase === 'error') {
+            downloading.value = false
+            installing.value = false
+          }
+        })
+      } catch (err) {
+        console.warn('Failed to listen to app:update-progress:', err)
+      } finally {
+        listenerInitPromise = null
+      }
+    })()
+
+    return listenerInitPromise
   }
 
   async function checkForUpdates(options?: { silent?: boolean }): Promise<UpdateCheckResult | null> {
@@ -167,6 +189,10 @@ export const useUpdaterStore = defineStore('updater', () => {
         downloadUrl: downloadUrl.value,
         version: latestVersion.value || 'latest',
       })
+      downloading.value = false
+      setTimeout(() => {
+        installing.value = false
+      }, 1200)
       return true
     } catch (err: any) {
       const msg = typeof err === 'string' ? err : err?.message || 'Update installation failed.'

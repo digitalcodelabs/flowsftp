@@ -164,6 +164,13 @@ pub fn run() {
             app_download_and_install_update,
             app_cancel_update_download,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                let state = app_handle.state::<AppState>();
+                state.stop_all_external_edits(None);
+                state.stop_all_dir_watchers(None);
+            }
+        });
 }

@@ -30,21 +30,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Terminal Keyboard Copy & Paste**: Support `Ctrl + Shift + C` to copy active mouse selections to the clipboard and `Ctrl + Shift + V` to paste into the active SSH session.
 - **Empty-State Quick Settings Button**: Added a `Settings` button alongside `Connection Manager` on the initial no-session welcome screen for immediate access to themes, fonts, and keymaps on first launch.
 - **File Browser Font Size Slider**: Replaced the fixed 4-preset font size buttons in **Settings -> Fonts & Sizing** with a smooth `10px`–`20px` range slider and proportional file/folder icon scaling.
-- **Interface & Dialogs Text Size Slider**: Added a global UI & Modal Text Scale slider (`11px`–`18px`) in **Settings -> Fonts & Sizing** that scales text across Settings, Connection Manager, buttons, labels, and helper descriptions.
+- **Interface & Dialogs Text Size Slider**: Added a UI & Modal Text Scale slider (`11px`–`18px`) in **Settings -> Fonts & Sizing** scoped to modals, menus, and dialogs so helper descriptions, labels, and buttons scale cleanly without breaking fixed-height chrome or virtualized rows.
 - **Quick Settings Shortcut (`Ctrl + Shift + P`)**: Bound `Ctrl + Shift + P` to open Settings from anywhere in the app while suppressing the default WebView print dialog.
 - **Master Password Vault Onboarding**: Saving connection credentials when the vault is uninitialized now guides users directly through Master Password setup, with live vault status controls (`Set Up Vault`, `Vault Locked`, `Vault Unlocked`) in the Connection Manager header.
+- **FTPS TLS Certificate Verification & Per-Profile Override**: FTPS connections now verify server certificates against the operating system trust store (`TLS 1.2` + `TLS 1.3`) by default, with an opt-in **Accept invalid / self-signed TLS certificates** toggle per profile in Connection Manager.
 
 ### Changed
 - **Flat, Low-Brightness Button & Border System**: Removed 3D glossy `inset` bevels, drop shadows, and bright neon hover glows across `.btn-accent`, `.btn-accent-secondary`, `.btn-theme-card`, `.btn-danger`, toggle switches, and modal cards in favor of subtle surface tints, soft `color-mix` borders, and a gentle hover brightness lift.
 - **Minimal Icon-Only Titlebar Controls**: Streamlined header `Disconnect`, `Settings`, and `Connection Manager` buttons to compact square icon buttons (`28x28`) with descriptive tooltips and softer active session tab borders.
-- **Responsive Dual-Pane Tiling Layout**: Removed fixed `minWidth` / `minHeight` window restrictions in Tauri config, locked toolbar icon buttons against flex distortion, and automatically switch the dual-pane SFTP browser into a stacked top/bottom split with a horizontal resize handle when window width drops below `640px`.
+- **Responsive Dual-Pane Tiling Layout**: Reduced `minWidth` / `minHeight` window bounds to `420x320` in Tauri config, locked toolbar icon buttons against flex distortion, and automatically switch the dual-pane SFTP browser into a stacked top/bottom split with a horizontal resize handle when window width drops below `640px`.
 - **Smart SSH Key Selection**: Selecting a `.pub` public key file in the Connection Manager automatically resolves to its sibling private key when available, and the file picker now surfaces extensionless OpenSSH keys (such as `id_ed25519` and `id_rsa`).
 
 ### Fixed
 - **Windows Console Flash Prevention**: Applied `CREATE_NO_WINDOW` (`0x08000000`) to background `git`, `wsl`, `reg`, and `tar` subprocesses on Windows so terminal windows never flicker during Git status checks, WSL detection, or archive operations.
 - **macOS Bundle Configuration**: Resolved Tauri bundle naming collision on macOS builds.
+- **Multi-Session & Dual-Remote Polish**:
+  - Fixed background SSH session exits accidentally disconnecting the currently active session tab.
+  - Routed left-pane context-menu, keyboard, drag-and-drop, and directory comparison actions to the left remote session when operating in Server-to-Server (Dual-Remote) mode.
+  - Resolved per-session remote paths during background transfer conflict checks and post-transfer directory refreshes when multiple session tabs are open.
+  - Isolated file-pane keyboard navigation while Quick Look (`Space`) is open and kept the active pane selection synced when cycling Quick Look items with `ArrowLeft` / `ArrowRight`.
+  - Added sticky header scroll padding (`scroll-padding-top`) to Local and Remote file tables so upward keyboard navigation never hides selected rows behind column headers.
 - **Security & Stability Hardening**:
   - Enabled a strict WebView Content Security Policy (`CSP`) in `tauri.conf.json` restricting script execution, object embeds, and IPC/blob origins.
+  - Hardened the in-app auto-updater with strict URL parsing, an HTTPS host allowlist (`flowsftp.com` and GitHub Releases), concurrency locking, stale temp-bundle cleanup, and atomic Linux `.AppImage` replacement.
+  - Added global application exit cleanup (`RunEvent::Exit`) to purge any remaining staged external-editor temporary files and zeroize unlocked vault state on shutdown.
   - Guarded local archive extraction against path traversal (`Zip-Slip`) outside destination directories.
   - Switched Master Password vault verifier checks to constant-time comparison and stopped persisting plaintext session secrets in `sessionStorage`.
   - Preserved original remote POSIX file permissions when auto-uploading files via External Editor Live Sync.

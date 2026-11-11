@@ -138,7 +138,7 @@ const menuHeaderBadge = computed(() => {
       backgroundColor: 'var(--color-bg-card)',
       borderColor: 'var(--color-border)',
     }"
-    class="context-menu-box fixed z-[90] min-w-[250px] max-w-[285px] backdrop-blur-xl rounded-2xl border p-1.5 text-xs select-none animate-in fade-in zoom-in-95 duration-75 shadow-2xl"
+    class="ui-scaled context-menu-box fixed z-[90] min-w-[250px] max-w-[285px] backdrop-blur-xl rounded-2xl border p-1.5 text-xs select-none animate-in fade-in zoom-in-95 duration-75 shadow-2xl"
     @click.stop
   >
     <!-- Context Menu Header: Context / Path Identifier -->
@@ -818,8 +818,10 @@ const menuHeaderBadge = computed(() => {
 
         <button
           v-if="activeSessionId"
-          @click="emit('toggleComparison'); emit('close')"
-          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left"
+          :disabled="isLeftPaneRemote"
+          :title="isLeftPaneRemote ? 'Directory comparison compares Local vs Remote' : undefined"
+          @click="!isLeftPaneRemote && (emit('toggleComparison'), emit('close'))"
+          class="context-menu-item w-full flex items-center space-x-2.5 px-2.5 py-1.5 rounded-lg transition text-left disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <CatppuccinIcon name="compare" :size="15" />
           <span class="truncate">{{ isComparing ? 'Exit Directory Comparison' : 'Compare Directories' }}</span>

@@ -14,6 +14,7 @@ export interface SavedConnectionProfile {
   key_path?: string
   has_saved_secret: boolean
   default_remote_path?: string
+  allow_invalid_certs?: boolean
   created_at?: number
 }
 

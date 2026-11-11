@@ -30,26 +30,40 @@
 }
 
 /* Dynamic UI text scaling for Settings, Connection Manager, modals, buttons & helper labels */
-.text-\[9px\] {
+.ui-scaled .text-\[9px\],
+.ui-scaled.text-\[9px\] {
   font-size: calc(9.5px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
-.text-\[10px\] {
+.ui-scaled .text-\[10px\],
+.ui-scaled.text-\[10px\] {
   font-size: calc(10.5px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
-.text-\[11px\] {
+.ui-scaled .text-\[11px\],
+.ui-scaled.text-\[11px\] {
   font-size: calc(11.5px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
-.text-xs {
+.ui-scaled .text-xs,
+.ui-scaled.text-xs {
   font-size: calc(12px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
-.text-sm {
+.ui-scaled .text-sm,
+.ui-scaled.text-sm {
   font-size: calc(14px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
-.text-base {
+.ui-scaled .text-base,
+.ui-scaled.text-base {
   font-size: calc(16px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
-.text-lg {
+.ui-scaled .text-lg,
+.ui-scaled.text-lg {
   font-size: calc(18px * var(--ui-font-scale, 1.0833)) !important;
+  line-height: 1.38 !important;
 }
 
 html, body, #__nuxt {

@@ -120,9 +120,9 @@ const handleTerminalResize = (dims: { cols: number; rows: number }) => {
   terminalDimensions.value = dims
 }
 
-const handleTerminalExit = () => {
-  if (sshStore.activeSessionId) {
-    handleCloseSession(sshStore.activeSessionId)
+const handleTerminalExit = (sessionId: string) => {
+  if (sessionId) {
+    handleCloseSession(sessionId)
   }
 }
 
@@ -568,7 +568,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
             <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="sess.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'" />
             <span
               v-if="sess.protocol === 'ftp' || sess.protocol === 'ftps'"
-              class="px-1 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold bg-amber-500/15 text-amber-700 border border-amber-500/30 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60 shrink-0"
+              class="px-1 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider font-semibold bg-amber-500/15 text-amber-700 border border-amber-500/30 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-800/60 shrink-0"
             >
               {{ sess.protocol.toUpperCase() }}
             </span>
@@ -674,7 +674,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
       >
         <!-- Notice if active session is FTP/FTPS -->
         <template v-if="sshStore.activeSession && (sshStore.activeSession.protocol === 'ftp' || sshStore.activeSession.protocol === 'ftps')">
-          <div class="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div class="ui-scaled flex-1 flex flex-col items-center justify-center text-center p-8">
             <div class="w-14 h-14 rounded-2xl bg-amber-950/35 border border-amber-700/35 flex items-center justify-center text-amber-400 mb-4">
               <Server class="w-7 h-7" />
             </div>
@@ -707,7 +707,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
               :session-id="sess.sessionId"
               :active="currentTab === 'terminal' && sess.sessionId === sshStore.activeSessionId"
               @resize="handleTerminalResize"
-              @exit="handleTerminalExit"
+              @exit="handleTerminalExit(sess.sessionId)"
               @action="executeKeyAction"
             />
           </div>
@@ -715,7 +715,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
 
         <template v-else>
           <!-- Empty State (No active sessions) -->
-          <div class="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div class="ui-scaled flex-1 flex flex-col items-center justify-center text-center p-8">
             <div
               class="w-14 h-14 rounded-2xl border flex items-center justify-center mb-4 transition-colors duration-150"
               :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"

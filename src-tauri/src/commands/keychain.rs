@@ -11,7 +11,9 @@ pub async fn keychain_save_profile(
     profile: SavedConnectionProfile,
     secret: Option<String>,
 ) -> Result<SavedConnectionProfile, String> {
-    save_profile(&app, profile, secret)
+    tokio::task::spawn_blocking(move || save_profile(&app, profile, secret))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -20,7 +22,9 @@ pub async fn keychain_rename_group(
     old_name: String,
     new_name: String,
 ) -> Result<usize, String> {
-    rename_group(&app, &old_name, &new_name)
+    tokio::task::spawn_blocking(move || rename_group(&app, &old_name, &new_name))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -29,14 +33,18 @@ pub async fn keychain_rename_profile(
     id: String,
     new_name: String,
 ) -> Result<SavedConnectionProfile, String> {
-    rename_profile(&app, &id, &new_name)
+    tokio::task::spawn_blocking(move || rename_profile(&app, &id, &new_name))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
 pub async fn keychain_list_profiles(
     app: AppHandle,
 ) -> Result<Vec<SavedConnectionProfile>, String> {
-    load_profiles(&app)
+    tokio::task::spawn_blocking(move || load_profiles(&app))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -45,7 +53,9 @@ pub async fn keychain_import_profiles(
     profiles: Vec<SavedConnectionProfile>,
     replace_existing: bool,
 ) -> Result<usize, String> {
-    import_profiles(&app, profiles, replace_existing)
+    tokio::task::spawn_blocking(move || import_profiles(&app, profiles, replace_existing))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
@@ -53,29 +63,39 @@ pub async fn keychain_delete_profile(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    delete_profile(&app, &id)
+    tokio::task::spawn_blocking(move || delete_profile(&app, &id))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
 pub async fn keychain_get_secret(
     id: String,
 ) -> Result<Option<String>, String> {
-    KeychainManager::get_secret(&id)
+    tokio::task::spawn_blocking(move || KeychainManager::get_secret(&id))
+        .await
+        .map_err(|e| format!("Keychain worker task failed: {}", e))?
 }
 
 #[tauri::command]
 pub async fn vault_load_file(app: AppHandle) -> Result<Option<String>, String> {
-    load_vault_file(&app)
+    tokio::task::spawn_blocking(move || load_vault_file(&app))
+        .await
+        .map_err(|e| format!("Vault worker task failed: {}", e))?
 }
 
 #[tauri::command]
 pub async fn vault_save_file(app: AppHandle, content: String) -> Result<(), String> {
-    save_vault_file(&app, &content)
+    tokio::task::spawn_blocking(move || save_vault_file(&app, &content))
+        .await
+        .map_err(|e| format!("Vault worker task failed: {}", e))?
 }
 
 #[tauri::command]
 pub async fn vault_delete_file(app: AppHandle) -> Result<(), String> {
-    delete_vault_file(&app)
+    tokio::task::spawn_blocking(move || delete_vault_file(&app))
+        .await
+        .map_err(|e| format!("Vault worker task failed: {}", e))?
 }
 
 #[tauri::command]

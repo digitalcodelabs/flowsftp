@@ -73,7 +73,7 @@ const handleReopen = async (edit: ExternalEditInfo) => {
       </div>
 
       <span
-        class="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold border bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:border-sky-500/30 dark:text-sky-300 shadow-xs"
+        class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:border-sky-500/30 dark:text-sky-300 shadow-xs"
       >
         {{ sessionEdits.length }} {{ sessionEdits.length === 1 ? 'file' : 'files' }}
       </span>
@@ -81,7 +81,7 @@ const handleReopen = async (edit: ExternalEditInfo) => {
       <div class="h-3.5 w-px hidden sm:block" :style="{ backgroundColor: 'var(--color-border)' }" />
 
       <span class="text-[11px] hidden md:inline" :style="{ color: 'var(--color-text-muted)' }">
-        Changes saved in external editor (<kbd class="px-1 py-0.2 rounded border font-mono text-[10px]" :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }">Ctrl+S</kbd>) auto-upload immediately
+        Changes saved in external editor (<kbd class="px-1 py-0.5 rounded border font-mono text-[10px]" :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'var(--color-border)', color: 'var(--color-text-main)' }">Ctrl+S</kbd>) auto-upload immediately
       </span>
     </div>
 
@@ -101,7 +101,7 @@ const handleReopen = async (edit: ExternalEditInfo) => {
         <!-- Status Tag -->
         <span
           v-if="edit.status === 'watching'"
-          class="flex items-center space-x-1 text-[10px] font-mono text-emerald-700 bg-emerald-100 border-emerald-300 dark:text-emerald-400 dark:bg-emerald-950/40 dark:border-emerald-500/30 border px-1.5 py-0.2 rounded font-medium"
+          class="flex items-center space-x-1 text-[10px] font-mono text-emerald-700 bg-emerald-100 border-emerald-300 dark:text-emerald-400 dark:bg-emerald-950/40 dark:border-emerald-500/30 border px-1.5 py-0.5 rounded font-medium"
           title="Watching file on disk for changes"
         >
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -110,7 +110,7 @@ const handleReopen = async (edit: ExternalEditInfo) => {
 
         <span
           v-else-if="edit.status === 'syncing'"
-          class="flex items-center space-x-1 text-[10px] font-mono text-sky-700 bg-sky-100 border-sky-300 dark:text-sky-400 dark:bg-sky-950/40 dark:border-sky-500/30 border px-1.5 py-0.2 rounded font-medium"
+          class="flex items-center space-x-1 text-[10px] font-mono text-sky-700 bg-sky-100 border-sky-300 dark:text-sky-400 dark:bg-sky-950/40 dark:border-sky-500/30 border px-1.5 py-0.5 rounded font-medium"
         >
           <RotateCw class="w-2.5 h-2.5 animate-spin" />
           <span>Uploading...</span>
@@ -118,7 +118,7 @@ const handleReopen = async (edit: ExternalEditInfo) => {
 
         <span
           v-else-if="edit.status === 'synced'"
-          class="flex items-center space-x-1 text-[10px] font-mono text-emerald-700 bg-emerald-100 border-emerald-300 dark:text-emerald-400 dark:bg-emerald-950/40 dark:border-emerald-500/30 border px-1.5 py-0.2 rounded font-medium"
+          class="flex items-center space-x-1 text-[10px] font-mono text-emerald-700 bg-emerald-100 border-emerald-300 dark:text-emerald-400 dark:bg-emerald-950/40 dark:border-emerald-500/30 border px-1.5 py-0.5 rounded font-medium"
           title="File synced successfully"
         >
           <CheckCircle2 class="w-2.5 h-2.5" />
@@ -127,7 +127,7 @@ const handleReopen = async (edit: ExternalEditInfo) => {
 
         <span
           v-else-if="edit.status === 'error'"
-          class="flex items-center space-x-1 text-[10px] font-mono text-rose-700 bg-rose-100 border-rose-300 dark:text-rose-400 dark:bg-rose-950/50 dark:border-rose-500/40 border px-1.5 py-0.2 rounded cursor-pointer font-medium"
+          class="flex items-center space-x-1 text-[10px] font-mono text-rose-700 bg-rose-100 border-rose-300 dark:text-rose-400 dark:bg-rose-950/50 dark:border-rose-500/40 border px-1.5 py-0.5 rounded cursor-pointer font-medium"
           :title="edit.error || 'Upload failed'"
           @click="handleRetry(edit.id)"
         >

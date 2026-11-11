@@ -120,9 +120,10 @@ export function useFileOperations(deps: FileOperationsDeps) {
         console.error('[Store] deleteRemoteItem failed:', item.path, err)
         throw err
       }
-      invalidateRemoteCache(sessionId, remotePath.value)
+      const dir = remoteDirOf(sessionId)
+      invalidateRemoteCache(sessionId, dir)
       if (!skipRefresh) {
-        await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+        await fetchRemoteDir(sessionId, dir, { force: true })
       }
     } else {
       try {
@@ -168,8 +169,9 @@ export function useFileOperations(deps: FileOperationsDeps) {
         archivePath,
         targetDir: targetDir || null,
       })
-      invalidateRemoteCache(sessionId, remotePath.value)
-      await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+      const dir = remoteDirOf(sessionId)
+      invalidateRemoteCache(sessionId, dir)
+      await fetchRemoteDir(sessionId, dir, { force: true })
       return res
     }
     const res = await invoke<string>('sftp_extract_local_archive', {
@@ -195,8 +197,9 @@ export function useFileOperations(deps: FileOperationsDeps) {
         items,
         archiveName,
       })
-      invalidateRemoteCache(sessionId, remotePath.value)
-      await fetchRemoteDir(sessionId, remotePath.value, { force: true })
+      const dir = remoteDirOf(sessionId)
+      invalidateRemoteCache(sessionId, dir)
+      await fetchRemoteDir(sessionId, dir, { force: true })
       return res
     }
     const res = await invoke<string>('sftp_compress_local_archive', {

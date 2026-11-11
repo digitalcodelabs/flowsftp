@@ -197,7 +197,7 @@ const highlightSnippet = (content: string, term: string) => {
   <div
     v-if="show"
     tabindex="-1"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none outline-none"
+    class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none outline-none"
     @click.self="handleClose"
     @keydown="handleKeydown"
   >
@@ -397,7 +397,7 @@ const highlightSnippet = (content: string, term: string) => {
         <div v-if="results.length > 0" class="flex items-center justify-between px-2 py-1 text-[11px] mb-1 border-b" :style="{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }">
           <div class="flex items-center space-x-2">
             <span>Found {{ results.length }} match{{ results.length === 1 ? '' : 'es' }}</span>
-            <span v-if="wasStopped" class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+            <span v-if="wasStopped" class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
               Stopped
             </span>
           </div>
@@ -448,7 +448,7 @@ const highlightSnippet = (content: string, term: string) => {
                 </span>
                 <span
                   v-if="item.line_number"
-                  class="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold bg-sky-500/15 border border-sky-500/30 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+                  class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-sky-500/15 border border-sky-500/30 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
                 >
                   Line {{ item.line_number }}
                 </span>

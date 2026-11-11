@@ -77,25 +77,74 @@ fn is_connection_error(err: &str) -> bool {
 
 const MAX_FTP_TRANSFER_POOL_SIZE: usize = 6;
 
+fn build_ftps_client_config(allow_invalid_certs: bool) -> Result<rustls::ClientConfig, String> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("Failed to configure FTPS TLS protocol versions: {}", e))?;
+
+    if allow_invalid_certs {
+        Ok(builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AllowAnyCertVerifier))
+            .with_no_client_auth())
+    } else {
+        use rustls_platform_verifier::BuilderVerifierExt;
+        Ok(builder
+            .with_platform_verifier()
+            .map_err(|e| format!("Failed to initialize OS TLS certificate verifier: {}", e))?
+            .with_no_client_auth())
+    }
+}
+
+fn format_ftps_handshake_error(
+    host: &str,
+    err: &dyn std::fmt::Display,
+    allow_invalid_certs: bool,
+) -> String {
+    let err_str = err.to_string();
+    let lower = err_str.to_lowercase();
+    let looks_like_cert_error = lower.contains("certificate")
+        || lower.contains("invalid peer certificate")
+        || lower.contains("unknownissuer")
+        || lower.contains("unknown issuer")
+        || lower.contains("untrusted")
+        || lower.contains("self-signed")
+        || lower.contains("self signed")
+        || lower.contains("notvalidforname")
+        || lower.contains("expired")
+        || lower.contains("cert");
+
+    if !allow_invalid_certs && looks_like_cert_error {
+        format!(
+            "TLS certificate verification failed for '{}': {}. If connecting to a self-signed FTPS server, you can enable \"Allow self-signed / untrusted TLS certificates\" in the connection profile.",
+            host, err_str
+        )
+    } else if !allow_invalid_certs {
+        format!(
+            "Failed to establish TLS encryption (FTPS) with '{}': {}. If this server uses a self-signed certificate, enable \"Allow self-signed / untrusted TLS certificates\" in the connection profile; if it does not support TLS/FTPS, try 'FTP (Plain)'.",
+            host, err_str
+        )
+    } else {
+        format!(
+            "Failed to establish TLS encryption (FTPS): {}. If this server does not support TLS/FTPS, try connecting with 'FTP (Plain)' protocol.",
+            err_str
+        )
+    }
+}
+
 fn connect_ftp_stream(
     host: &str,
     port: u16,
     username: &str,
     password: &str,
     secure: bool,
+    allow_invalid_certs: bool,
 ) -> Result<(FtpClientStream, String), String> {
     let addr = format!("{}:{}", host, port);
     if secure {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let root_store = rustls::RootCertStore::empty();
-        let mut config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        config
-            .dangerous()
-            .set_certificate_verifier(Arc::new(AllowAnyCertVerifier));
-
+        let config = build_ftps_client_config(allow_invalid_certs)?;
         let connector = RustlsConnector::from(Arc::new(config));
 
         let stream = RustlsFtpStream::connect(&addr)
@@ -103,12 +152,7 @@ fn connect_ftp_stream(
 
         let mut secure_stream = stream
             .into_secure(connector, host)
-            .map_err(|e| {
-                format!(
-                    "Failed to establish TLS encryption (FTPS): {}. If this server does not support TLS/FTPS, try connecting with 'FTP (Plain)' protocol.",
-                    e
-                )
-            })?;
+            .map_err(|e| format_ftps_handshake_error(host, &e, allow_invalid_certs))?;
 
         secure_stream.set_passive_nat_workaround(true);
 
@@ -180,6 +224,7 @@ pub struct ActiveFtpSession {
     pub username: String,
     pub password: Option<String>,
     pub is_secure: bool,
+    pub allow_invalid_certs: bool,
     pub current_dir: Arc<RwLock<String>>,
     client: Arc<Mutex<FtpClientStream>>,
     transfer_pool: Arc<Mutex<Vec<FtpClientStream>>>,
@@ -611,6 +656,7 @@ impl ActiveFtpSession {
         username: String,
         password: Option<String>,
         secure: bool,
+        allow_invalid_certs: bool,
     ) -> Result<Self, String> {
         let user = username.clone();
         let pass = password.clone().unwrap_or_default();
@@ -618,7 +664,7 @@ impl ActiveFtpSession {
         let h = host.clone();
 
         let (client, initial_pwd) = tokio::task::spawn_blocking(move || -> Result<(FtpClientStream, String), String> {
-            connect_ftp_stream(&h, port, &user, &pass, secure)
+            connect_ftp_stream(&h, port, &user, &pass, secure, allow_invalid_certs)
         })
         .await
         .map_err(|e| format!("FTP worker thread failed: {}", e))??;
@@ -636,6 +682,7 @@ impl ActiveFtpSession {
             username,
             password: pass_stored,
             is_secure: secure,
+            allow_invalid_certs,
             current_dir: Arc::new(RwLock::new(clean_pwd)),
             client: Arc::new(Mutex::new(client)),
             transfer_pool: Arc::new(Mutex::new(Vec::new())),
@@ -648,13 +695,15 @@ impl ActiveFtpSession {
         let h = self.host.clone();
         let port = self.port;
         let secure = self.is_secure;
+        let allow_invalid_certs = self.allow_invalid_certs;
         let client_arc = self.client.clone();
         let current_dir_arc = self.current_dir.clone();
 
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut guard = client_arc.blocking_lock();
 
-            let (new_stream, _) = connect_ftp_stream(&h, port, &user, &pass, secure)?;
+            let (new_stream, _) =
+                connect_ftp_stream(&h, port, &user, &pass, secure, allow_invalid_certs)?;
 
             let cached_dir = {
                 let dir_guard = current_dir_arc.blocking_read();
@@ -876,6 +925,7 @@ impl ActiveFtpSession {
         let user = self.username.clone();
         let pass = self.password.clone().unwrap_or_default();
         let secure = self.is_secure;
+        let allow_invalid_certs = self.allow_invalid_certs;
 
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut sorted_paths = paths;
@@ -895,7 +945,7 @@ impl ActiveFtpSession {
                     if ok { Some(stream) } else { None }
                 })
                 .or_else(|| {
-                    connect_ftp_stream(&host, port, &user, &pass, secure)
+                    connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
                         .ok()
                         .map(|(st, _)| st)
                 });
@@ -966,6 +1016,7 @@ impl ActiveFtpSession {
         let user = self.username.clone();
         let pass = self.password.clone().unwrap_or_default();
         let secure = self.is_secure;
+        let allow_invalid_certs = self.allow_invalid_certs;
         let target_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
         let patterns = ignore_patterns.unwrap_or_default();
 
@@ -1000,7 +1051,7 @@ impl ActiveFtpSession {
                     if ok { Some(stream) } else { None }
                 })
                 .or_else(|| {
-                    connect_ftp_stream(&host, port, &user, &pass, secure)
+                    connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
                         .ok()
                         .map(|(st, _)| st)
                 });
@@ -1818,6 +1869,7 @@ impl ActiveFtpSession {
         let user = self.username.clone();
         let pass = self.password.clone().unwrap_or_default();
         let secure = self.is_secure;
+        let allow_invalid_certs = self.allow_invalid_certs;
         let r_path = remote_path.to_string();
         let l_path = local_path.to_string();
         let t_id = transfer_id.to_string();
@@ -1854,7 +1906,9 @@ impl ActiveFtpSession {
                 }
             }
 
-            if let Ok((mut stream, _)) = connect_ftp_stream(&host, port, &user, &pass, secure) {
+            if let Ok((mut stream, _)) =
+                connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
+            {
                 let transfer_res = (|| -> Result<(), String> {
                     match &mut stream {
                         FtpClientStream::Plain(s) => {
@@ -1909,6 +1963,7 @@ impl ActiveFtpSession {
         let user = self.username.clone();
         let pass = self.password.clone().unwrap_or_default();
         let secure = self.is_secure;
+        let allow_invalid_certs = self.allow_invalid_certs;
         let r_path = remote_path.to_string();
         let l_path = local_path.to_string();
         let t_id = transfer_id.to_string();
@@ -1945,7 +2000,9 @@ impl ActiveFtpSession {
                 }
             }
 
-            if let Ok((mut stream, _)) = connect_ftp_stream(&host, port, &user, &pass, secure) {
+            if let Ok((mut stream, _)) =
+                connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
+            {
                 let transfer_res = (|| -> Result<(), String> {
                     match &mut stream {
                         FtpClientStream::Plain(s) => {
@@ -2210,6 +2267,30 @@ mod tests {
         assert!(is_connection_error("os error 10054"));
         assert!(is_connection_error("Broken pipe"));
         assert!(!is_connection_error("550 Permission denied"));
+    }
+
+    #[test]
+    fn build_ftps_client_config_supports_strict_and_opt_in_self_signed() {
+        assert!(build_ftps_client_config(false).is_ok());
+        assert!(build_ftps_client_config(true).is_ok());
+    }
+
+    #[test]
+    fn format_ftps_handshake_error_guides_user_on_cert_failure() {
+        let msg = format_ftps_handshake_error(
+            "ftp.internal.local",
+            &"invalid peer certificate: UnknownIssuer",
+            false,
+        );
+        assert!(msg.contains("TLS certificate verification failed"));
+        assert!(msg.contains("Allow self-signed / untrusted TLS certificates"));
+
+        let permissive_msg = format_ftps_handshake_error(
+            "ftp.internal.local",
+            &"unexpected eof during handshake",
+            true,
+        );
+        assert!(!permissive_msg.contains("TLS certificate verification failed"));
     }
 }
 

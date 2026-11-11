@@ -63,6 +63,36 @@ describe('useFileOperations (by-pane API)', () => {
     expect(calls('sftp_create_local_dir')).toEqual([])
   })
 
+  it('deleteItem, extractArchive, and compressArchive on secondary session s2 refresh s2 directory rather than s1 remotePath', async () => {
+    const { browser, ops } = await setup()
+    expect(browser.currentSessionId.value).toBe('s1')
+    expect(browser.remotePath.value).toBe('/srv')
+
+    // Populate s2's tracked remote directory (/srv2) while s1 remains the active session (/srv)
+    browser.sessionRemotePaths.value['s2'] = '/srv2'
+    invokeMock.mockClear()
+
+    await ops.byPane.deleteItem(remotePane('s2'), entry('/srv2/obsolete.txt'))
+    expect(calls('sftp_remove_remote_file')).toEqual([
+      { sessionId: 's2', path: '/srv2/obsolete.txt', deletionId: null },
+    ])
+    expect(calls('sftp_list_remote')).toEqual([{ sessionId: 's2', path: '/srv2' }])
+
+    invokeMock.mockClear()
+    await ops.byPane.extractArchive(remotePane('s2'), '/srv2/bundle.tar.gz')
+    expect(calls('sftp_extract_remote_archive')).toEqual([
+      { sessionId: 's2', archivePath: '/srv2/bundle.tar.gz', targetDir: null },
+    ])
+    expect(calls('sftp_list_remote')).toEqual([{ sessionId: 's2', path: '/srv2' }])
+
+    invokeMock.mockClear()
+    await ops.byPane.compressArchive(remotePane('s2'), '/srv2', ['app.js'], 'app.tar.gz')
+    expect(calls('sftp_compress_remote_archive')).toEqual([
+      { sessionId: 's2', parentDir: '/srv2', items: ['app.js'], archiveName: 'app.tar.gz' },
+    ])
+    expect(calls('sftp_list_remote')).toEqual([{ sessionId: 's2', path: '/srv2' }])
+  })
+
   it('a local pane never touches a remote session', async () => {
     const { ops } = await setup()
 

@@ -1,4 +1,4 @@
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, watch, type Ref } from 'vue'
 import {
   useSftpStore,
   type SftpFileEntry,
@@ -12,6 +12,7 @@ import type {
 
 export interface UseSftpComparisonOptions {
   sessionId: Ref<string | null> | (() => string | null)
+  leftPaneSource?: Ref<string> | (() => string)
   onBatchUpload: (files: LocalFileEntry[]) => Promise<void>
   onBatchDownload: (files: SftpFileEntry[]) => Promise<void>
 }
@@ -29,14 +30,37 @@ export function useSftpComparison(options: UseSftpComparisonOptions) {
       : options.sessionId.value
   }
 
+  const getLeftPaneSource = (): string => {
+    if (!options.leftPaneSource) return 'local'
+    return typeof options.leftPaneSource === 'function'
+      ? options.leftPaneSource()
+      : options.leftPaneSource.value
+  }
+
+  if (options.leftPaneSource) {
+    watch(
+      () => getLeftPaneSource(),
+      (src) => {
+        if (src !== 'local') {
+          isComparing.value = false
+        }
+      },
+      { immediate: true }
+    )
+  }
+
   const toggleComparison = () => {
     if (!getSessionId()) return
+    if (getLeftPaneSource() !== 'local') {
+      isComparing.value = false
+      return
+    }
     isComparing.value = !isComparing.value
   }
 
   const comparisonResult = computed<ComparisonResult | null>(() => {
     const sid = getSessionId()
-    if (!isComparing.value || !sid) return null
+    if (!isComparing.value || !sid || getLeftPaneSource() !== 'local') return null
 
     const localMap = new Map<string, ComparisonItemInfo>()
     const remoteMap = new Map<string, ComparisonItemInfo>()

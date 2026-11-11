@@ -132,13 +132,14 @@ impl AppState {
     pub async fn remove_session(&self, session_id: &str) -> Option<Arc<ActiveSession>> {
         self.stop_all_external_edits(Some(session_id));
         self.stop_all_dir_watchers(Some(session_id));
-        let mut map = self.sessions.write().await;
-        if let Some(session) = map.remove(session_id) {
+        let removed = {
+            let mut map = self.sessions.write().await;
+            map.remove(session_id)
+        };
+        if let Some(ref session) = removed {
             let _ = session.close().await;
-            Some(session)
-        } else {
-            None
         }
+        removed
     }
 
     pub async fn add_ftp_session(&self, session: ActiveFtpSession) {
@@ -154,13 +155,14 @@ impl AppState {
     pub async fn remove_ftp_session(&self, session_id: &str) -> Option<Arc<ActiveFtpSession>> {
         self.stop_all_external_edits(Some(session_id));
         self.stop_all_dir_watchers(Some(session_id));
-        let mut map = self.ftp_sessions.write().await;
-        if let Some(session) = map.remove(session_id) {
+        let removed = {
+            let mut map = self.ftp_sessions.write().await;
+            map.remove(session_id)
+        };
+        if let Some(ref session) = removed {
             let _ = session.close().await;
-            Some(session)
-        } else {
-            None
         }
+        removed
     }
 
     pub async fn list_sessions(&self) -> Vec<SessionInfo> {
@@ -244,7 +246,18 @@ impl AppState {
             handle.is_active.store(false, Ordering::SeqCst);
             let _ = std::fs::remove_file(&handle.local_path);
             if let Some(parent) = handle.local_path.parent() {
-                let _ = std::fs::remove_dir(parent);
+                if parent
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("ext-"))
+                {
+                    let _ = std::fs::remove_dir_all(parent);
+                } else {
+                    let _ = std::fs::remove_dir(parent);
+                }
+                if let Some(session_dir) = parent.parent() {
+                    let _ = std::fs::remove_dir(session_dir);
+                }
             }
         }
         if let Ok(mut map) = self.external_edits.write() {
@@ -265,6 +278,9 @@ impl AppState {
         }
         for id in ids_to_remove {
             self.stop_external_edit(&id);
+        }
+        if session_id.is_none() {
+            let _ = std::fs::remove_dir(std::env::temp_dir().join("flowsftp_ext_edits"));
         }
     }
 

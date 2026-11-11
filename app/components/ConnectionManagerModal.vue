@@ -118,6 +118,7 @@ const profileToDelete = ref<SavedConnectionProfile | null>(null)
 const isDeleting = ref(false)
 
 // New / Edit profile form state
+const allowInvalidCerts = ref(false)
 const form = ref({
   name: '',
   group: '',
@@ -415,6 +416,7 @@ const handleImportSshConfig = async () => {
 // Navigation between modes
 const handleStartAdd = () => {
   editingProfileId.value = null
+  allowInvalidCerts.value = false
   form.value = {
     name: '',
     group: selectedGroupFilter.value !== 'all' && selectedGroupFilter.value !== '__ungrouped__' ? selectedGroupFilter.value : '',
@@ -434,6 +436,7 @@ const handleStartAdd = () => {
 
 const handleStartEdit = (profile: SavedConnectionProfile) => {
   editingProfileId.value = profile.id
+  allowInvalidCerts.value = profile.allow_invalid_certs ?? false
   form.value = {
     name: profile.name,
     group: profile.group || '',
@@ -467,6 +470,7 @@ const doConnect = async (profile: SavedConnectionProfile, authPayload: any) => {
       username: profile.username,
       password: password || undefined,
       secure: profile.protocol === 'ftps',
+      allowInvalidCerts: profile.protocol === 'ftps' ? Boolean(profile.allow_invalid_certs) : false,
     }, profile.default_remote_path)
 
     addLog('FTP session ready. Launching...', 'success')
@@ -691,6 +695,7 @@ const saveProfileData = async (shouldConnect: boolean) => {
       key_path: effectiveAuthType === 'KeyFile' ? form.value.keyPath.trim() : undefined,
       has_saved_secret: willHaveSecret,
       default_remote_path: form.value.defaultRemotePath.trim() || undefined,
+      allow_invalid_certs: form.value.protocol === 'ftps' ? allowInvalidCerts.value : false,
       created_at: existingProfile?.created_at || Math.floor(Date.now() / 1000),
     }
 
@@ -981,7 +986,7 @@ const handleFormSubmit = () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
+  <div class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
     <div
       class="w-full max-w-[720px] rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95 duration-150 transition-colors duration-150"
       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 65%, transparent)' }"
@@ -1355,7 +1360,7 @@ const handleFormSubmit = () => {
                 <Folder v-else class="w-4 h-4 shrink-0" :style="{ color: 'var(--color-accent)' }" />
                 <span class="text-xs font-semibold" :style="{ color: 'var(--color-text-main)' }">{{ section.name }}</span>
                 <span
-                  class="px-1.5 py-0.2 rounded-full text-[10px] border font-mono"
+                  class="px-1.5 py-0.5 rounded-full text-[10px] border font-mono"
                   :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 50%, transparent)', color: 'var(--color-text-muted)' }"
                 >
                   {{ section.profiles.length }}
@@ -1683,6 +1688,35 @@ const handleFormSubmit = () => {
             </button>
           </div>
         </div>
+
+        <!-- FTPS TLS Certificate Option -->
+        <label
+          v-if="form.protocol === 'ftps'"
+          for="allowInvalidCertsCheck"
+          class="flex items-start justify-between gap-3 p-3 rounded-xl border cursor-pointer transition-colors duration-150"
+          :style="{
+            backgroundColor: 'var(--color-bg-pane)',
+            borderColor: allowInvalidCerts
+              ? 'color-mix(in srgb, var(--color-accent) 55%, var(--color-border))'
+              : 'color-mix(in srgb, var(--color-border) 55%, transparent)',
+          }"
+        >
+          <div class="space-y-0.5 min-w-0">
+            <div class="text-xs font-medium" :style="{ color: 'var(--color-text-main)' }">
+              Allow self-signed / untrusted TLS certificates
+            </div>
+            <p class="text-[11px]" :style="{ color: 'var(--color-text-muted)' }">
+              Enable only for private or legacy FTPS servers using self-signed certificates.
+            </p>
+          </div>
+          <input
+            id="allowInvalidCertsCheck"
+            v-model="allowInvalidCerts"
+            type="checkbox"
+            class="mt-0.5 rounded focus:ring-0 shrink-0 cursor-pointer"
+            :style="{ accentColor: 'var(--color-accent)' }"
+          />
+        </label>
 
         <!-- Host & Port in Grid -->
         <div class="grid grid-cols-3 gap-3">

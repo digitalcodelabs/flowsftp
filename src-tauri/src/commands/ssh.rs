@@ -21,7 +21,7 @@ pub async fn ssh_connect(
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
 
-    let session = spawn_ssh_session(app, session_id.clone(), config).await?;
+    let session = spawn_ssh_session(app, state.inner().clone(), session_id.clone(), config).await?;
     state.add_session(session).await;
 
     Ok(session_id)

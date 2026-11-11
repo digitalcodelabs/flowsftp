@@ -172,7 +172,7 @@ const handleSubmit = async () => {
 <template>
   <div
     v-if="vaultStore.showModal"
-    class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
+    class="ui-scaled fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
     @click.self="handleCancel"
     @keydown.esc.stop="handleCancel"
   >

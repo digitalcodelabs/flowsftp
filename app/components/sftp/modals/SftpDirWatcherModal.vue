@@ -113,7 +113,7 @@ const handleStop = async (pairing: DirWatcherPairing) => {
 <template>
   <div
     v-if="show"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
+    class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
     @click.self="emit('close')"
   >
     <div
@@ -256,7 +256,7 @@ const handleStop = async (pairing: DirWatcherPairing) => {
               <div class="space-y-1.5 min-w-0 flex-1">
                 <div class="flex items-center space-x-2">
                   <span
-                    class="px-1.5 py-0.2 rounded text-[10px] font-mono font-medium border"
+                    class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border"
                     :class="
                       pairing.status === 'watching'
                         ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:bg-emerald-950/60 dark:border-emerald-500/40 dark:text-emerald-300'

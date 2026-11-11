@@ -65,7 +65,7 @@ onUnmounted(() => {
 <template>
   <div
     v-if="current"
-    class="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+    class="ui-scaled fixed inset-0 z-[110] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
     @keydown.esc.stop="respond(false)"
   >
     <div

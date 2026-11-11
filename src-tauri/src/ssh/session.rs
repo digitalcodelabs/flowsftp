@@ -183,6 +183,7 @@ pub fn parse_host_and_port(raw_host: &str, default_port: u16) -> (String, u16) {
 
 pub async fn spawn_ssh_session(
     app: AppHandle,
+    state: crate::state::AppState,
     session_id: String,
     config: SshConnectConfig,
 ) -> Result<ActiveSession, String> {
@@ -389,6 +390,9 @@ pub async fn spawn_ssh_session(
     let stdout_history_clone = stdout_history.clone();
     let is_closed = Arc::new(AtomicBool::new(false));
     let is_closed_clone = is_closed.clone();
+    let sftp = Arc::new(Mutex::new(None));
+    let sftp_for_task = sftp.clone();
+    let state_for_task = state;
 
     tokio::spawn(async move {
         const MAX_HISTORY: usize = 256 * 1024;
@@ -401,6 +405,7 @@ pub async fn spawn_ssh_session(
                         SessionCommand::Write(data) => {
                             if channel.data(&data[..]).await.is_err() {
                                 is_closed_clone.store(true, Ordering::SeqCst);
+                                let _ = app.emit(&format!("ssh:exit:{}", session_id_clone), ());
                                 break;
                             }
                         }
@@ -452,6 +457,12 @@ pub async fn spawn_ssh_session(
                 }
             }
         }
+
+        // Always clean up session-scoped staged external edits, directory watchers, and SFTP channel on exit
+        is_closed_clone.store(true, Ordering::SeqCst);
+        *sftp_for_task.lock().await = None;
+        state_for_task.stop_all_external_edits(Some(&session_id_clone));
+        state_for_task.stop_all_dir_watchers(Some(&session_id_clone));
     });
 
     Ok(ActiveSession {
@@ -461,7 +472,7 @@ pub async fn spawn_ssh_session(
         username,
         cmd_tx,
         handle,
-        sftp: Arc::new(Mutex::new(None)),
+        sftp,
         is_closed,
         stdout_history,
     })

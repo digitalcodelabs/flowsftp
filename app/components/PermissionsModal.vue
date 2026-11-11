@@ -157,7 +157,7 @@ const handleSave = async () => {
 <template>
   <div
     v-if="show && item"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
+    class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150 select-none"
     @click.self="emit('close')"
   >
     <div

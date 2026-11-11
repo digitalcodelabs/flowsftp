@@ -8,6 +8,22 @@ use tokio::io::AsyncWriteExt;
 pub const DEFAULT_UPDATE_BASE_URL: &str = "https://flowsftp.com/update";
 
 static UPDATE_CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+struct UpdateInProgressGuard;
+
+impl Drop for UpdateInProgressGuard {
+    fn drop(&mut self) {
+        UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
+    }
+}
+
+fn try_acquire_update_guard() -> Result<UpdateInProgressGuard, String> {
+    UPDATE_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .map(|_| UpdateInProgressGuard)
+        .map_err(|_| "An update download is already in progress".to_string())
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateServerResponse {
@@ -102,19 +118,73 @@ pub fn sanitize_version(version: &str) -> String {
     }
 }
 
+fn is_allowed_update_host(host: &str) -> bool {
+    let lower = host.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "flowsftp.com"
+            | "www.flowsftp.com"
+            | "github.com"
+            | "objects.githubusercontent.com"
+            | "release-assets.githubusercontent.com"
+    ) || lower
+        .strip_suffix(".flowsftp.com")
+        .is_some_and(|sub| !sub.is_empty())
+}
+
 pub fn validate_download_url(raw_url: &str) -> Result<String, String> {
     let trimmed = raw_url.trim();
     if trimmed.is_empty() {
         return Err("Update download URL is empty".to_string());
     }
-    let lower = trimmed.to_lowercase();
-    let is_https = lower.starts_with("https://");
-    let is_local_dev =
-        lower.starts_with("http://localhost") || lower.starts_with("http://127.0.0.1");
-    if !is_https && !is_local_dev {
+
+    let url = reqwest::Url::parse(trimmed)
+        .map_err(|e| format!("Invalid update download URL: {}", e))?;
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Update download URL must not contain credentials".to_string());
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "Update download URL is missing a host".to_string())?;
+
+    #[cfg(debug_assertions)]
+    if url.scheme() == "http" && (host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1") {
+        return Ok(trimmed.to_string());
+    }
+
+    if url.scheme() != "https" {
         return Err("Update download URL must use HTTPS".to_string());
     }
+
+    if !is_allowed_update_host(host) {
+        return Err(format!(
+            "Update download host '{}' is not in the trusted allowlist",
+            host
+        ));
+    }
+
     Ok(trimmed.to_string())
+}
+
+fn prune_stale_update_dirs(base_temp_dir: &Path, keep_dir_name: &str) {
+    let Ok(entries) = std::fs::read_dir(base_temp_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if name.starts_with("flowsftp-update-v")
+            && name != keep_dir_name
+            && entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 pub fn sanitize_update_filename(url: &str, version: &str) -> String {
@@ -265,6 +335,7 @@ pub async fn app_download_and_install_update(
     download_url: String,
     version: String,
 ) -> Result<String, String> {
+    let _in_progress_guard = try_acquire_update_guard()?;
     UPDATE_CANCEL_FLAG.store(false, Ordering::SeqCst);
 
     let valid_url = validate_download_url(&download_url)?;
@@ -272,7 +343,16 @@ pub async fn app_download_and_install_update(
     let safe_version = sanitize_version(&version);
     let filename = sanitize_update_filename(&valid_url, &safe_version);
 
-    let update_dir = std::env::temp_dir().join(format!("flowsftp-update-v{}", safe_version));
+    let temp_root = std::env::temp_dir();
+    let update_dir_name = format!("flowsftp-update-v{}", safe_version);
+    let temp_root_for_prune = temp_root.clone();
+    let keep_name_for_prune = update_dir_name.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        prune_stale_update_dirs(&temp_root_for_prune, &keep_name_for_prune);
+    })
+    .await;
+
+    let update_dir = temp_root.join(&update_dir_name);
     tokio::fs::create_dir_all(&update_dir)
         .await
         .map_err(|e| format!("Failed to create temporary update directory: {}", e))?;
@@ -414,12 +494,56 @@ pub async fn app_download_and_install_update(
         },
     );
 
-    launch_installer_and_schedule_exit(&app, &installer_path)?;
+    let will_exit = launch_installer_and_schedule_exit(&app, &installer_path)?;
+    if !will_exit {
+        let _ = app.emit(
+            "app:update-progress",
+            UpdateDownloadProgress {
+                downloaded_bytes,
+                total_bytes: downloaded_bytes,
+                percent: 100,
+                phase: "completed".to_string(),
+                message: "Update package opened — follow the installer prompts to finish updating."
+                    .to_string(),
+            },
+        );
+    }
 
     Ok(installer_path.to_string_lossy().to_string())
 }
 
-fn launch_installer_and_schedule_exit(app: &AppHandle, installer_path: &Path) -> Result<(), String> {
+#[cfg(any(target_os = "linux", test))]
+fn replace_executable_atomically(src: &Path, target: &Path) -> std::io::Result<()> {
+    let parent_dir = target.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Target path has no parent directory",
+        )
+    })?;
+    let tmp_target = parent_dir.join(".flowsftp-appimage-update.tmp");
+    let _ = std::fs::remove_file(&tmp_target);
+
+    let res = (|| -> std::io::Result<()> {
+        std::fs::copy(src, &tmp_target)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = std::fs::metadata(&tmp_target)?;
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&tmp_target, perms)?;
+        }
+        std::fs::rename(&tmp_target, target)?;
+        Ok(())
+    })();
+
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp_target);
+    }
+    res
+}
+
+fn launch_installer_and_schedule_exit(app: &AppHandle, installer_path: &Path) -> Result<bool, String> {
     let ext_lower = installer_path
         .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())
@@ -444,7 +568,7 @@ fn launch_installer_and_schedule_exit(app: &AppHandle, installer_path: &Path) ->
             tokio::time::sleep(Duration::from_millis(650)).await;
             app_clone.exit(0);
         });
-        return Ok(());
+        Ok(true)
     }
 
     #[cfg(target_os = "macos")]
@@ -460,8 +584,10 @@ fn launch_installer_and_schedule_exit(app: &AppHandle, installer_path: &Path) ->
                 tokio::time::sleep(Duration::from_millis(650)).await;
                 app_clone.exit(0);
             });
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        return Ok(());
     }
 
     #[cfg(target_os = "linux")]
@@ -475,22 +601,19 @@ fn launch_installer_and_schedule_exit(app: &AppHandle, installer_path: &Path) ->
                 let _ = std::fs::set_permissions(installer_path, perms);
             }
 
-            // If currently running inside an AppImage, replace it in-place and relaunch
+            // If currently running inside an AppImage, replace it atomically via sibling temp file (avoids ETXTBSY) and relaunch
             if let Ok(current_appimage) = std::env::var("APPIMAGE") {
                 let target_appimage = PathBuf::from(&current_appimage);
-                if target_appimage.exists() && std::fs::copy(installer_path, &target_appimage).is_ok() {
-                    if let Ok(meta) = std::fs::metadata(&target_appimage) {
-                        let mut perms = meta.permissions();
-                        perms.set_mode(0o755);
-                        let _ = std::fs::set_permissions(&target_appimage, perms);
-                    }
-                    let _ = std::process::Command::new(&target_appimage).spawn();
+                if target_appimage.exists()
+                    && replace_executable_atomically(installer_path, &target_appimage).is_ok()
+                    && std::process::Command::new(&target_appimage).spawn().is_ok()
+                {
                     let app_clone = app.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(650)).await;
                         app_clone.exit(0);
                     });
-                    return Ok(());
+                    return Ok(true);
                 }
             }
 
@@ -503,20 +626,23 @@ fn launch_installer_and_schedule_exit(app: &AppHandle, installer_path: &Path) ->
                 tokio::time::sleep(Duration::from_millis(650)).await;
                 app_clone.exit(0);
             });
-            return Ok(());
+            Ok(true)
+        } else {
+            // For .deb / .rpm packages, open with xdg-open
+            std::process::Command::new("xdg-open")
+                .arg(installer_path)
+                .spawn()
+                .map_err(|e| format!("Failed to open Linux package installer: {}", e))?;
+
+            Ok(false)
         }
-
-        // For .deb / .rpm packages, open with xdg-open
-        std::process::Command::new("xdg-open")
-            .arg(installer_path)
-            .spawn()
-            .map_err(|e| format!("Failed to open Linux package installer: {}", e))?;
-
-        return Ok(());
     }
 
-    #[allow(unreachable_code)]
-    Ok(())
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (app, installer_path, ext_lower);
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
@@ -534,10 +660,87 @@ mod tests {
     #[test]
     fn test_validate_download_url() {
         assert!(validate_download_url("https://flowsftp.com/storage/releases/FlowSFTP.exe").is_ok());
-        assert!(validate_download_url("http://localhost:8000/storage/FlowSFTP.exe").is_ok());
+        assert!(validate_download_url("https://www.flowsftp.com/releases/FlowSFTP.exe").is_ok());
+        assert!(validate_download_url("https://cdn.flowsftp.com/releases/FlowSFTP.exe").is_ok());
+        assert!(validate_download_url("https://FLOWSFTP.COM/releases/FlowSFTP.exe").is_ok());
+        assert!(validate_download_url(
+            "https://github.com/FlowSFTP/FlowSFTP/releases/download/v1.0.0/FlowSFTP.exe"
+        )
+        .is_ok());
+        assert!(validate_download_url(
+            "https://objects.githubusercontent.com/github-production-release-asset/FlowSFTP.exe"
+        )
+        .is_ok());
+        assert!(validate_download_url(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/FlowSFTP.exe"
+        )
+        .is_ok());
+
+        #[cfg(debug_assertions)]
+        {
+            assert!(validate_download_url("http://localhost:8000/storage/FlowSFTP.exe").is_ok());
+            assert!(validate_download_url("http://127.0.0.1:8000/storage/FlowSFTP.exe").is_ok());
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            assert!(validate_download_url("http://localhost:8000/storage/FlowSFTP.exe").is_err());
+            assert!(validate_download_url("http://127.0.0.1:8000/storage/FlowSFTP.exe").is_err());
+        }
+
+        // Spoofed localhost prefix & untrusted hosts must always be rejected
+        assert!(validate_download_url("http://localhost.attacker.com/payload.exe").is_err());
+        assert!(validate_download_url("http://127.0.0.1.attacker.com/payload.exe").is_err());
+        assert!(validate_download_url("https://evil.example.com/payload.exe").is_err());
+        assert!(validate_download_url("https://flowsftp.com.evil.com/payload.exe").is_err());
+        assert!(validate_download_url("https://notflowsftp.com/payload.exe").is_err());
+        assert!(validate_download_url("https://evil@flowsftp.com/payload.exe").is_err());
         assert!(validate_download_url("http://flowsftp.com/storage/FlowSFTP.exe").is_err());
         assert!(validate_download_url("ftp://flowsftp.com/FlowSFTP.exe").is_err());
         assert!(validate_download_url("").is_err());
+    }
+
+    #[test]
+    fn test_update_in_progress_concurrency_guard() {
+        let guard = try_acquire_update_guard().expect("first guard should acquire");
+        let second = try_acquire_update_guard();
+        assert!(second.is_err());
+        drop(guard);
+        let third = try_acquire_update_guard();
+        assert!(third.is_ok());
+    }
+
+    #[test]
+    fn test_prune_stale_update_dirs() {
+        let base = std::env::temp_dir().join(format!("flowsftp_prune_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(base.join("flowsftp-update-v0.8.0")).unwrap();
+        std::fs::write(base.join("flowsftp-update-v0.8.0").join("old.exe"), b"old").unwrap();
+        std::fs::create_dir_all(base.join("flowsftp-update-v1.0.0")).unwrap();
+        std::fs::create_dir_all(base.join("unrelated-folder")).unwrap();
+
+        prune_stale_update_dirs(&base, "flowsftp-update-v1.0.0");
+
+        assert!(!base.join("flowsftp-update-v0.8.0").exists());
+        assert!(base.join("flowsftp-update-v1.0.0").exists());
+        assert!(base.join("unrelated-folder").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_replace_executable_atomically() {
+        let base = std::env::temp_dir().join(format!("flowsftp_atomic_appimage_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let src = base.join("new.AppImage");
+        let dst = base.join("FlowSFTP.AppImage");
+        std::fs::write(&src, b"new-binary-v1.0").unwrap();
+        std::fs::write(&dst, b"old-binary-v0.9").unwrap();
+
+        replace_executable_atomically(&src, &dst).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), b"new-binary-v1.0");
+        assert!(!base.join(".flowsftp-appimage-update.tmp").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

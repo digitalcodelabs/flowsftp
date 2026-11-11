@@ -581,13 +581,20 @@ const browserOtherFonts = computed(() => {
     .filter((f) => !f.is_monospace && !commonUi.some((ui) => f.name.toLowerCase().includes(ui)))
     .filter((f) => !query || f.name.toLowerCase().includes(query))
 })
+
+const handleTabStripWheel = (e: WheelEvent) => {
+  const el = e.currentTarget as HTMLElement | null
+  if (el && e.deltaY !== 0) {
+    el.scrollLeft += e.deltaY
+  }
+}
 </script>
 
 <template>
   <div
     v-if="props.show"
     @click.self="emit('close')"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
+    class="ui-scaled fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
   >
     <div
       class="w-full max-w-4xl h-[680px] max-h-[92vh] rounded-2xl border shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100 transition-colors duration-150"
@@ -613,6 +620,7 @@ const browserOtherFonts = computed(() => {
 
       <!-- Tabs Navigation -->
       <div
+        @wheel.passive="handleTabStripWheel"
         class="flex border-b px-6 pt-2.5 space-x-4 text-xs font-medium overflow-x-auto no-scrollbar shrink-0 transition-colors duration-150"
         :style="{ backgroundColor: 'var(--color-bg-header)', borderColor: 'color-mix(in srgb, var(--color-border) 60%, transparent)' }"
       >
@@ -791,28 +799,28 @@ const browserOtherFonts = computed(() => {
                     </span>
                     <span
                       v-if="theme.id === 'default'"
-                      class="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
+                      class="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
                       :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                     >
                       Default
                     </span>
                     <span
                       v-else-if="theme.isCustom"
-                      class="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
+                      class="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
                       :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent-secondary)' }"
                     >
                       Custom JSON
                     </span>
                     <span
                       v-else
-                      class="px-1.5 py-0.2 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
+                      class="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider font-semibold border shrink-0"
                       :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-text-muted)' }"
                     >
                       Preset
                     </span>
                     <span
                       v-if="isLightTheme(theme)"
-                      class="px-1.5 py-0.2 rounded text-[9px] font-mono tracking-wider font-semibold border shrink-0"
+                      class="px-1.5 py-0.5 rounded text-[9px] font-mono tracking-wider font-semibold border shrink-0"
                       :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: theme.ui.accent }"
                     >
                       ☀️ Light
@@ -1911,7 +1919,7 @@ const browserOtherFonts = computed(() => {
                       Intelligent Ignore Filtering (Upload &amp; Download)
                     </h4>
                     <span
-                      class="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold uppercase tracking-wider"
+                      class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wider"
                       :style="settingsStore.enableTransferIgnoreFilter
                         ? { backgroundColor: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.25)' }
                         : { backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-muted)', border: '1px solid color-mix(in srgb, var(--color-border) 55%, transparent)' }"
@@ -2388,7 +2396,7 @@ const browserOtherFonts = computed(() => {
                   <div class="font-medium flex items-center space-x-2" :style="{ color: 'var(--color-text-main)' }">
                     <span>SFTP (SSH File Transfer Protocol)</span>
                     <span
-                      class="px-1.5 py-0.2 rounded text-[10px] border font-semibold"
+                      class="px-1.5 py-0.5 rounded text-[10px] border font-semibold"
                       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                     >
                       Active
@@ -2406,7 +2414,7 @@ const browserOtherFonts = computed(() => {
                   <div class="font-medium flex items-center space-x-2" :style="{ color: 'var(--color-text-main)' }">
                     <span>FTP & FTPS (Native TLS)</span>
                     <span
-                      class="px-1.5 py-0.2 rounded text-[10px] border font-semibold"
+                      class="px-1.5 py-0.5 rounded text-[10px] border font-semibold"
                       :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
                     >
                       Active
@@ -2577,7 +2585,7 @@ const browserOtherFonts = computed(() => {
             <!-- Info box -->
             <div class="p-3 rounded-lg bg-sky-500/8 border border-sky-500/20 text-sky-900 dark:text-sky-200 text-[11px] leading-relaxed">
               <span class="font-semibold text-sky-700 dark:text-sky-300">How Live Sync Works:</span>
-              When you open a remote file in an external editor, FlowSFTP downloads a temporary staging copy, preserves its file extension for syntax highlighting, and watches it with a real-time filesystem watcher. Whenever you save in your editor (<kbd class="px-1 py-0.2 rounded border bg-sky-500/15 text-sky-950 dark:text-sky-100 border-sky-500/25 font-mono text-[10px]">Ctrl+S</kbd>), FlowSFTP automatically debounces and uploads your changes back to the remote server.
+              When you open a remote file in an external editor, FlowSFTP downloads a temporary staging copy, preserves its file extension for syntax highlighting, and watches it with a real-time filesystem watcher. Whenever you save in your editor (<kbd class="px-1 py-0.5 rounded border bg-sky-500/15 text-sky-950 dark:text-sky-100 border-sky-500/25 font-mono text-[10px]">Ctrl+S</kbd>), FlowSFTP automatically debounces and uploads your changes back to the remote server.
             </div>
           </div>
 
