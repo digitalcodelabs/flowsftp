@@ -30,7 +30,7 @@ export const useUpdaterStore = defineStore('updater', () => {
   const downloading = ref(false)
   const installing = ref(false)
   const updateAvailable = ref(false)
-  const currentVersion = ref('0.9.1')
+  const currentVersion = ref('1.0.0')
   const latestVersion = ref<string | null>(null)
   const downloadUrl = ref<string | null>(null)
   const releaseNotes = ref<string | null>(null)
