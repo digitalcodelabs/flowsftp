@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [1.0.1] — v1.0.1 (2026-11-12)
+
+### Release Highlights
+- **FileZilla-Style FTP / FTPS Transfer Modes (`Auto` / `Binary` / `ASCII`)**: Added automatic and manual FTP data representation selection so ionCube-encoded `.php` files, SourceGuardian/Phar scripts, and binary assets are always transferred byte-for-byte in `Binary` (`TYPE I`) mode without corrupting byte offsets.
+- **Hardened FTP, FTPS & SFTP Stream Finalization**: Enforced explicit `TYPE` negotiation before every FTP data transfer, explicit TLS/TCP stream flushing before closing FTPS uploads, and checked `flush` + `shutdown` acknowledgments on pipelined SFTP uploads.
+
+### Added
+- **FTP / FTPS Transfer Data Type (`Auto` / `Binary` / `ASCII`)**:
+  - **`Auto` Mode (Default)**: Inspects the first 16 KB of local files before `STOR` to detect NUL/binary bytes, invalid UTF-8 sequences, ionCube hex headers (`<?php //004fb`), and encoded PHP signatures (`ionCube`, `SourceGuardian` / `sg_load`, `Zend Guard`, `Phar`, `__halt_compiler`, `phpBolt`), automatically switching to `Binary` (`TYPE I`) even for 7-bit ASCII-armored ionCube `.php` files. Keeps `.php` downloads in `Binary` mode so remote encoded scripts are never altered.
+  - **Settings & Status Bar Controls**: Added the **FTP / FTPS Transfer Data Type** selector in **Settings -> Transfers** and a quick-cycle `Type: Auto | Binary | ASCII` status pill in the bottom transfer queue bar whenever an FTP/FTPS session is active.
+- **Built-In Text Editor Binary / Encoded File Guard**: Displays a warning banner when opening files containing non-UTF-8 / binary bytes (such as binary-encoded ionCube files) so they aren't accidentally overwritten as lossy UTF-8 text.
+
+### Fixed
+- **FTP Corruption After Directory Listings (`LIST`)**: Fixed FTP servers (`Pure-FTPd`, `ProFTPD`, `cPanel`, `vsFTPd`, `IIS`) leaving pooled or shared connections in `ASCII` (`TYPE A`) mode after `LIST` operations by explicitly setting the transfer type before every `STOR` / `RETR` and restoring `Binary` (`TYPE I`) afterward so `SIZE` checks, Quick Look, checksums, remote copies, and external-editor saves remain byte-exact.
+- **FTPS & SFTP Upload Flush Integrity**: Added explicit `writer.flush()` before `finalize_put_stream` on FTP/FTPS uploads so `RustlsStream` buffers never drop trailing bytes, and verified both `flush().await` and `shutdown().await` (`SSH_FXP_CLOSE`) on SFTP uploads before applying file metadata.
+- **CI & Release Pipeline Modernization**: Upgraded GitHub Actions workflows to Node 24 (`actions/checkout@v7`, `actions/setup-node@v7`, `tauri-apps/tauri-action@v1`) and resolved Rust `1.99` Clippy lints across Linux, macOS, and Windows runners.
+
+---
+
 ## [1.0.0] — v1.0.0 (2026-11-11)
 
 ### Release Highlights

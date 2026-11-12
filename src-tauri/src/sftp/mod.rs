@@ -592,7 +592,9 @@ pub async fn write_remote_file_binary(sftp: &SftpSession, path: &str, data: &[u8
     file.flush()
         .await
         .map_err(|e| format!("Failed to flush remote file: {}", e))?;
-    let _ = file.shutdown().await;
+    file.shutdown()
+        .await
+        .map_err(|e| format!("Failed to close remote file '{}': {}", path, e))?;
 
     Ok(())
 }
@@ -664,7 +666,10 @@ pub async fn upload_local_to_remote_file(
         .flush()
         .await
         .map_err(|e| format!("Failed to flush remote file '{}': {}", remote_path, e))?;
-    let _ = remote_file.shutdown().await;
+    remote_file
+        .shutdown()
+        .await
+        .map_err(|e| format!("Failed to close remote file '{}': {}", remote_path, e))?;
 
     Ok(())
 }
@@ -1509,7 +1514,44 @@ pub async fn upload_file(
         }
     }
 
-    let _ = remote_file.flush().await;
+    if let Err(e) = remote_file.flush().await {
+        let err_msg = format!("Failed to flush remote file '{}': {}", remote_path, e);
+        log::error!("[upload_file] {}", err_msg);
+        let _ = app.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id,
+                file_name,
+                direction: "upload".to_string(),
+                bytes_transferred: transferred,
+                total_bytes,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: Some(err_msg.clone()),
+            },
+        );
+        return Err(err_msg);
+    }
+
+    if let Err(e) = remote_file.shutdown().await {
+        let err_msg = format!("Failed to finalize remote file '{}': {}", remote_path, e);
+        log::error!("[upload_file] {}", err_msg);
+        let _ = app.emit(
+            &event_name,
+            TransferProgress {
+                transfer_id,
+                file_name,
+                direction: "upload".to_string(),
+                bytes_transferred: transferred,
+                total_bytes,
+                speed_bytes_per_sec: 0,
+                is_complete: true,
+                error: Some(err_msg.clone()),
+            },
+        );
+        return Err(err_msg);
+    }
+
     drop(remote_file);
 
     // Preserve local modification timestamp on uploaded remote file

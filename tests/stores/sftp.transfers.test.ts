@@ -105,6 +105,7 @@ describe('transfer pipelines', () => {
     store.remotePath = '/remote'
     const settings = useSettingsStore()
     settings.enableTransferIgnoreFilter = false
+    settings.ftpTransferMode = 'auto'
   })
 
   afterEach(() => {
@@ -286,6 +287,24 @@ describe('transfer pipelines', () => {
       expect(callsTo('sftp_upload')).toHaveLength(1)
       expect(callsTo('sftp_list_remote').length).toBeGreaterThan(0)
       expect(store.completedTransfers.map((t) => t.file_name)).toEqual(['solo.txt'])
+    })
+
+    it('forwards ftpTransferMode setting (auto, binary, ascii) to sftp_upload and sftp_download', async () => {
+      const settings = useSettingsStore()
+      expect(settings.ftpTransferMode).toBe('auto')
+
+      await store.startUpload('s1', localFile('encoded.php'), '/remote')
+      expect(callsTo('sftp_upload')[0]).toMatchObject({ ftpTransferMode: 'auto' })
+
+      settings.cycleFtpTransferMode()
+      expect(settings.ftpTransferMode).toBe('binary')
+      await store.startDownload('s1', remoteFile('encoded.php'), 'C:/dl')
+      expect(callsTo('sftp_download')[0]).toMatchObject({ ftpTransferMode: 'binary' })
+
+      settings.cycleFtpTransferMode()
+      expect(settings.ftpTransferMode).toBe('ascii')
+      settings.cycleFtpTransferMode()
+      expect(settings.ftpTransferMode).toBe('auto')
     })
   })
 

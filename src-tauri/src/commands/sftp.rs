@@ -361,15 +361,24 @@ pub async fn sftp_download(
     local_path: String,
     conflict_action: Option<String>,
     file_size: Option<u64>,
+    ftp_transfer_mode: Option<String>,
 ) -> Result<(), String> {
     log::info!(
-        "Command sftp_download: session='{}', transfer_id='{}', remote='{}' -> local='{}' (conflict: '{:?}', size: '{:?}')",
-        session_id, transfer_id, remote_path, local_path, conflict_action, file_size
+        "Command sftp_download: session='{}', transfer_id='{}', remote='{}' -> local='{}' (conflict: '{:?}', size: '{:?}', ftp_mode: '{:?}')",
+        session_id, transfer_id, remote_path, local_path, conflict_action, file_size, ftp_transfer_mode
     );
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
         return ftp
-            .download_file(&app, &remote_path, &local_path, &transfer_id, conflict_action, file_size)
+            .download_file(
+                &app,
+                &remote_path,
+                &local_path,
+                &transfer_id,
+                conflict_action,
+                file_size,
+                ftp_transfer_mode,
+            )
             .await;
     }
 
@@ -393,15 +402,23 @@ pub async fn sftp_upload(
     remote_path: String,
     conflict_action: Option<String>,
     file_size: Option<u64>,
+    ftp_transfer_mode: Option<String>,
 ) -> Result<(), String> {
     log::info!(
-        "Command sftp_upload: session='{}', transfer_id='{}', local='{}' -> remote='{}' (conflict: '{:?}', size: '{:?}')",
-        session_id, transfer_id, local_path, remote_path, conflict_action, file_size
+        "Command sftp_upload: session='{}', transfer_id='{}', local='{}' -> remote='{}' (conflict: '{:?}', size: '{:?}', ftp_mode: '{:?}')",
+        session_id, transfer_id, local_path, remote_path, conflict_action, file_size, ftp_transfer_mode
     );
 
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
         return ftp
-            .upload_file(&app, &local_path, &remote_path, &transfer_id, conflict_action)
+            .upload_file(
+                &app,
+                &local_path,
+                &remote_path,
+                &transfer_id,
+                conflict_action,
+                ftp_transfer_mode,
+            )
             .await;
     }
 

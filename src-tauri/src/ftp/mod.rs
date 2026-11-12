@@ -1,8 +1,9 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use std::time::Instant;
+use suppaftp::types::{FileType, FormatControl};
 use suppaftp::{FtpStream, RustlsConnector, RustlsFtpStream};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
@@ -134,6 +135,274 @@ fn format_ftps_handshake_error(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FtpTransferMode {
+    Auto,
+    Binary,
+    Ascii,
+}
+
+impl FtpTransferMode {
+    pub fn from_option(raw: Option<&str>) -> Self {
+        match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            Some("binary") | Some("image") => Self::Binary,
+            Some("ascii") | Some("text") => Self::Ascii,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// Detects ionCube's signature header (`<?php //004fb`, `<? //0050a`, etc.) at the start of a PHP file,
+/// even when the loader stub has been customized or obfuscated and contains only 7-bit ASCII characters.
+fn has_ioncube_hex_header(sample: &[u8]) -> bool {
+    let bytes = sample.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(sample);
+    let trimmed = {
+        let idx = bytes
+            .iter()
+            .position(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            .unwrap_or(bytes.len());
+        &bytes[idx..]
+    };
+
+    let after_open = if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case(b"<?php") {
+        &trimmed[5..]
+    } else if let Some(rest) = trimmed.strip_prefix(b"<?") {
+        rest
+    } else {
+        return false;
+    };
+
+    let ws_idx = after_open
+        .iter()
+        .position(|b| !matches!(b, b' ' | b'\t'))
+        .unwrap_or(after_open.len());
+    let comment = &after_open[ws_idx..];
+
+    let Some(hex_part) = comment.strip_prefix(b"//") else {
+        return false;
+    };
+
+    let hex_count = hex_part
+        .iter()
+        .take_while(|b| b.is_ascii_hexdigit())
+        .count();
+
+    // ionCube headers use 4-8 hex digits immediately after `//` followed by whitespace or comment end
+    (4..=8).contains(&hex_count)
+        && hex_part
+            .get(hex_count)
+            .is_none_or(|b| matches!(b, b'\r' | b'\n' | b' ' | b'\t'))
+}
+
+/// Inspects an initial byte sample (up to 16 KB) to detect binary content OR byte-sensitive
+/// encoded scripts (ionCube, SourceGuardian, Zend Guard, Phar, PHP `__halt_compiler`, etc.)
+/// that MUST be transferred in Binary (`TYPE I`) mode even if their filename ends in `.php`.
+pub fn is_binary_or_encoded_sample(sample: &[u8]) -> bool {
+    if sample.is_empty() {
+        return false;
+    }
+
+    // 1. NUL bytes or raw binary C0 control characters (excluding \t, \n, \x0C, \r)
+    if sample
+        .iter()
+        .any(|&b| b == 0 || (b < 0x20 && !matches!(b, b'\t' | b'\n' | 0x0C | b'\r')))
+    {
+        return true;
+    }
+
+    // 2. Invalid UTF-8 byte sequence (ignoring an incomplete multi-byte char cut right at buffer end)
+    if let Err(err) = std::str::from_utf8(sample)
+        && err.error_len().is_some()
+    {
+        return true;
+    }
+
+    // 3. ionCube `<?php //004fb` hex stub header
+    if has_ioncube_hex_header(sample) {
+        return true;
+    }
+
+    // 4. Known PHP encoder / self-extracting archive signatures whose byte offsets break under ASCII CRLF translation
+    let lower: Vec<u8> = sample.iter().map(|b| b.to_ascii_lowercase()).collect();
+    const ENCODED_SIGNATURES: &[&[u8]] = &[
+        b"ioncube",
+        b"__halt_compiler",
+        b"sg_load",
+        b"sourceguardian",
+        b"@zend",
+        b"zend guard",
+        b"zend optimizer",
+        b"phar::mapphar",
+        b"phar::webphar",
+        b"bolt_decrypt",
+        b"phpbolt",
+    ];
+
+    ENCODED_SIGNATURES
+        .iter()
+        .any(|sig| lower.windows(sig.len()).any(|w| w == *sig))
+}
+
+/// Checks whether a filename has a known plain-text extension eligible for FTP ASCII mode when `Auto` is active.
+fn is_ascii_text_filename(file_name: &str, is_download: bool) -> bool {
+    let lower = file_name.trim().to_ascii_lowercase();
+
+    // On download, we cannot inspect the remote file's header before issuing `TYPE` + `RETR`.
+    // Never use ASCII on download for PHP extensions because remote `.php` files may be ionCube/SourceGuardian encoded.
+    if is_download
+        && matches!(
+            Path::new(&lower).extension().and_then(|e| e.to_str()),
+            Some("php" | "php3" | "php4" | "php5" | "php7" | "php8" | "phtml" | "inc" | "phar")
+        )
+    {
+        return false;
+    }
+
+    const EXACT_ASCII_NAMES: &[&str] = &[
+        ".htaccess",
+        ".htpasswd",
+        ".env",
+        ".gitignore",
+        ".gitattributes",
+        ".editorconfig",
+        ".bashrc",
+        ".bash_profile",
+        ".zshrc",
+        ".profile",
+        "makefile",
+        "dockerfile",
+    ];
+    if EXACT_ASCII_NAMES.contains(&lower.as_str()) {
+        return true;
+    }
+
+    let Some(ext) = Path::new(&lower).extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+
+    matches!(
+        ext,
+        "txt"
+            | "htm"
+            | "html"
+            | "shtml"
+            | "css"
+            | "scss"
+            | "sass"
+            | "less"
+            | "js"
+            | "mjs"
+            | "cjs"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "vue"
+            | "json"
+            | "xml"
+            | "xsl"
+            | "svg"
+            | "yml"
+            | "yaml"
+            | "toml"
+            | "ini"
+            | "cfg"
+            | "conf"
+            | "env"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "cgi"
+            | "pl"
+            | "pm"
+            | "py"
+            | "rb"
+            | "tcl"
+            | "lua"
+            | "sql"
+            | "csv"
+            | "tsv"
+            | "md"
+            | "rst"
+            | "log"
+            | "php"
+            | "php3"
+            | "php4"
+            | "php5"
+            | "php7"
+            | "php8"
+            | "phtml"
+            | "inc"
+    )
+}
+
+pub fn resolve_ftp_file_type_from_sample(
+    mode: FtpTransferMode,
+    file_name: &str,
+    sample: &[u8],
+) -> FileType {
+    match mode {
+        FtpTransferMode::Binary => FileType::Binary,
+        FtpTransferMode::Ascii => FileType::Ascii(FormatControl::Default),
+        FtpTransferMode::Auto => {
+            if !is_ascii_text_filename(file_name, false) || is_binary_or_encoded_sample(sample) {
+                FileType::Binary
+            } else {
+                FileType::Ascii(FormatControl::Default)
+            }
+        }
+    }
+}
+
+fn resolve_ftp_upload_file_type(
+    mode: FtpTransferMode,
+    file_name: &str,
+    local_file: &mut File,
+) -> Result<FileType, String> {
+    match mode {
+        FtpTransferMode::Binary => Ok(FileType::Binary),
+        FtpTransferMode::Ascii => Ok(FileType::Ascii(FormatControl::Default)),
+        FtpTransferMode::Auto => {
+            if !is_ascii_text_filename(file_name, false) {
+                return Ok(FileType::Binary);
+            }
+            let mut sample = vec![0u8; 16 * 1024];
+            let mut filled = 0usize;
+            while filled < sample.len() {
+                match local_file.read(&mut sample[filled..]) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) => {
+                        return Err(format!("Failed to inspect local file header: {}", e));
+                    }
+                }
+            }
+            local_file
+                .seek(SeekFrom::Start(0))
+                .map_err(|e| format!("Failed to rewind local source file: {}", e))?;
+
+            Ok(resolve_ftp_file_type_from_sample(
+                mode,
+                file_name,
+                &sample[..filled],
+            ))
+        }
+    }
+}
+
+pub fn resolve_ftp_download_file_type(mode: FtpTransferMode, file_name: &str) -> FileType {
+    match mode {
+        FtpTransferMode::Binary => FileType::Binary,
+        FtpTransferMode::Ascii => FileType::Ascii(FormatControl::Default),
+        FtpTransferMode::Auto => {
+            if is_ascii_text_filename(file_name, true) {
+                FileType::Ascii(FormatControl::Default)
+            } else {
+                FileType::Binary
+            }
+        }
+    }
+}
+
 fn connect_ftp_stream(
     host: &str,
     port: u16,
@@ -231,7 +500,7 @@ pub struct ActiveFtpSession {
 }
 
 macro_rules! run_ftp_download {
-    ($stream:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr, $known_size:expr) => {{
+    ($stream:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr, $known_size:expr, $ftp_mode:expr) => {{
         let stream = $stream;
         let state = $app_handle.state::<crate::state::AppState>();
         if state.is_transfer_cancelled($transfer_id) {
@@ -246,7 +515,10 @@ macro_rules! run_ftp_download {
 
         let total_size = match $known_size {
             Some(sz) if sz > 0 => sz,
-            _ => stream.size($remote_path).unwrap_or(0) as u64,
+            _ => {
+                let _ = stream.transfer_type(FileType::Binary);
+                stream.size($remote_path).unwrap_or(0) as u64
+            }
         };
         let event_name = format!("sftp:progress:{}", $transfer_id);
 
@@ -277,9 +549,21 @@ macro_rules! run_ftp_download {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let mut reader = stream
-            .retr_as_stream($remote_path)
-            .map_err(|e| format!("Failed to retrieve file: {}", e))?;
+        let desired_type = resolve_ftp_download_file_type($ftp_mode, &file_name);
+        let used_ascii = matches!(desired_type, FileType::Ascii(_));
+        stream
+            .transfer_type(desired_type)
+            .map_err(|e| format!("FTP failed to set transfer mode: {}", e))?;
+
+        let mut reader = match stream.retr_as_stream($remote_path) {
+            Ok(r) => r,
+            Err(e) => {
+                if used_ascii {
+                    let _ = stream.transfer_type(FileType::Binary);
+                }
+                return Err(format!("Failed to retrieve file: {}", e));
+            }
+        };
 
         let mut local_file = File::create(&native_local)
             .map_err(|e| format!("Failed to create local destination file: {}", e))?;
@@ -374,7 +658,11 @@ macro_rules! run_ftp_download {
 
         drop(local_file);
 
-        if let Err(e) = stream.finalize_retr_stream(reader) {
+        let finalize_res = stream.finalize_retr_stream(reader);
+        if used_ascii {
+            let _ = stream.transfer_type(FileType::Binary);
+        }
+        if let Err(e) = finalize_res {
             let _ = std::fs::remove_file(&native_local);
             return Err(format!("Failed to finalize FTP download: {}", e));
         }
@@ -484,7 +772,7 @@ macro_rules! remove_ftp_dir_recursive {
 }
 
 macro_rules! run_ftp_upload {
-    ($stream:expr, $app_handle:expr, $local_path:expr, $remote_path:expr, $transfer_id:expr, $conflict_action:expr) => {{
+    ($stream:expr, $app_handle:expr, $local_path:expr, $remote_path:expr, $transfer_id:expr, $conflict_action:expr, $ftp_mode:expr) => {{
         let stream = $stream;
         let state = $app_handle.state::<crate::state::AppState>();
         if state.is_transfer_cancelled($transfer_id) {
@@ -508,26 +796,35 @@ macro_rules! run_ftp_upload {
         let event_name = format!("sftp:progress:{}", $transfer_id);
 
         let conflict = $conflict_action.as_deref().unwrap_or("overwrite");
-        if conflict == "skip" && stream.size($remote_path).is_ok() {
-            let _ = $app_handle.emit(
-                &event_name,
-                TransferProgress {
-                    transfer_id: $transfer_id.to_string(),
-                    file_name,
-                    direction: "upload".to_string(),
-                    bytes_transferred: total_size,
-                    total_bytes: total_size,
-                    speed_bytes_per_sec: 0,
-                    is_complete: true,
-                    error: Some("Skipped (file exists)".to_string()),
-                },
-            );
-            return Ok::<(), String>(());
+        if conflict == "skip" {
+            let _ = stream.transfer_type(FileType::Binary);
+            if stream.size($remote_path).is_ok() {
+                let _ = $app_handle.emit(
+                    &event_name,
+                    TransferProgress {
+                        transfer_id: $transfer_id.to_string(),
+                        file_name,
+                        direction: "upload".to_string(),
+                        bytes_transferred: total_size,
+                        total_bytes: total_size,
+                        speed_bytes_per_sec: 0,
+                        is_complete: true,
+                        error: Some("Skipped (file exists)".to_string()),
+                    },
+                );
+                return Ok::<(), String>(());
+            }
         }
 
         if state.is_transfer_cancelled($transfer_id) {
             return Err("Transfer cancelled by user".to_string());
         }
+
+        let desired_type = resolve_ftp_upload_file_type($ftp_mode, &file_name, &mut local_file)?;
+        let used_ascii = matches!(desired_type, FileType::Ascii(_));
+        stream
+            .transfer_type(desired_type)
+            .map_err(|e| format!("FTP failed to set transfer mode: {}", e))?;
 
         let mut writer = match stream.put_with_stream($remote_path) {
             Ok(w) => w,
@@ -541,9 +838,24 @@ macro_rules! run_ftp_upload {
                         ensure_ftp_dir_recursive!(stream, &parent_str);
                     }
                 }
-                stream.put_with_stream($remote_path).map_err(|e| {
-                    format!("Failed to initiate FTP upload for '{}' (initial error: {}): {}", $remote_path, initial_err, e)
-                })?
+                let retry_type = if used_ascii {
+                    FileType::Ascii(FormatControl::Default)
+                } else {
+                    FileType::Binary
+                };
+                let _ = stream.transfer_type(retry_type);
+                match stream.put_with_stream($remote_path) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        if used_ascii {
+                            let _ = stream.transfer_type(FileType::Binary);
+                        }
+                        return Err(format!(
+                            "Failed to initiate FTP upload for '{}' (initial error: {}): {}",
+                            $remote_path, initial_err, e
+                        ));
+                    }
+                }
             }
         };
 
@@ -626,9 +938,19 @@ macro_rules! run_ftp_upload {
             }
         }
 
-        stream
-            .finalize_put_stream(writer)
-            .map_err(|e| format!("Failed to finalize FTP upload: {}", e))?;
+        if let Err(e) = writer.flush() {
+            drop(writer);
+            if used_ascii {
+                let _ = stream.transfer_type(FileType::Binary);
+            }
+            return Err(format!("Failed to flush FTP upload stream: {}", e));
+        }
+
+        let finalize_res = stream.finalize_put_stream(writer);
+        if used_ascii {
+            let _ = stream.transfer_type(FileType::Binary);
+        }
+        finalize_res.map_err(|e| format!("Failed to finalize FTP upload: {}", e))?;
 
         let _ = $app_handle.emit(
             &event_name,
@@ -645,6 +967,25 @@ macro_rules! run_ftp_upload {
         );
 
         Ok::<(), String>(())
+    }};
+}
+
+macro_rules! ftp_put_reader_binary {
+    ($stream:expr, $path:expr, $reader:expr, $action_desc:expr) => {{
+        $stream
+            .transfer_type(FileType::Binary)
+            .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
+        let mut writer = $stream
+            .put_with_stream($path)
+            .map_err(|e| format!("Failed to {} '{}': {}", $action_desc, $path, e))?;
+        std::io::copy($reader, &mut writer)
+            .map_err(|e| format!("Failed to stream {} '{}': {}", $action_desc, $path, e))?;
+        writer
+            .flush()
+            .map_err(|e| format!("Failed to flush FTP stream for '{}': {}", $path, e))?;
+        $stream
+            .finalize_put_stream(writer)
+            .map_err(|e| format!("Failed to finalize FTP {} '{}': {}", $action_desc, $path, e))
     }};
 }
 
@@ -1350,8 +1691,14 @@ impl ActiveFtpSession {
         tokio::task::spawn_blocking(move || -> Result<u64, String> {
             let mut guard = client_arc.blocking_lock();
             match &mut *guard {
-                FtpClientStream::Plain(s) => s.size(&p).map(|sz| sz as u64).map_err(|e| format!("Failed to get file size: {}", e)),
-                FtpClientStream::Secure(s) => s.size(&p).map(|sz| sz as u64).map_err(|e| format!("Failed to get file size: {}", e)),
+                FtpClientStream::Plain(s) => {
+                    let _ = s.transfer_type(FileType::Binary);
+                    s.size(&p).map(|sz| sz as u64).map_err(|e| format!("Failed to get file size: {}", e))
+                }
+                FtpClientStream::Secure(s) => {
+                    let _ = s.transfer_type(FileType::Binary);
+                    s.size(&p).map(|sz| sz as u64).map_err(|e| format!("Failed to get file size: {}", e))
+                }
             }
         })
         .await
@@ -1367,8 +1714,14 @@ impl ActiveFtpSession {
             let mut guard = client_arc.blocking_lock();
             if !allow_overwrite {
                 let exists = match &mut *guard {
-                    FtpClientStream::Plain(s) => s.size(&p).is_ok(),
-                    FtpClientStream::Secure(s) => s.size(&p).is_ok(),
+                    FtpClientStream::Plain(s) => {
+                        let _ = s.transfer_type(FileType::Binary);
+                        s.size(&p).is_ok()
+                    }
+                    FtpClientStream::Secure(s) => {
+                        let _ = s.transfer_type(FileType::Binary);
+                        s.size(&p).is_ok()
+                    }
                 };
                 if exists {
                     return Err(format!("File '{}' already exists on remote server", p));
@@ -1376,8 +1729,8 @@ impl ActiveFtpSession {
             }
             let mut cursor = std::io::Cursor::new(&[]);
             match &mut *guard {
-                FtpClientStream::Plain(s) => s.put_file(&p, &mut cursor).map(|_| ()).map_err(|e| format!("Failed to create file: {}", e)),
-                FtpClientStream::Secure(s) => s.put_file(&p, &mut cursor).map(|_| ()).map_err(|e| format!("Failed to create file: {}", e)),
+                FtpClientStream::Plain(s) => ftp_put_reader_binary!(s, &p, &mut cursor, "create file"),
+                FtpClientStream::Secure(s) => ftp_put_reader_binary!(s, &p, &mut cursor, "create file"),
             }
         })
         .await
@@ -1460,6 +1813,8 @@ impl ActiveFtpSession {
 
             match &mut *guard {
                 FtpClientStream::Plain(s) => {
+                    s.transfer_type(FileType::Binary)
+                        .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
                     let mut reader = s
                         .retr_as_stream(&p)
                         .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
@@ -1489,6 +1844,8 @@ impl ActiveFtpSession {
                     let _ = s.finalize_retr_stream(reader);
                 }
                 FtpClientStream::Secure(s) => {
+                    s.transfer_type(FileType::Binary)
+                        .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
                     let mut reader = s
                         .retr_as_stream(&p)
                         .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
@@ -1560,6 +1917,8 @@ impl ActiveFtpSession {
 
             match &mut *guard {
                 FtpClientStream::Plain(s) => {
+                    s.transfer_type(FileType::Binary)
+                        .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
                     let mut reader = s
                         .retr_as_stream(&p)
                         .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
@@ -1572,6 +1931,8 @@ impl ActiveFtpSession {
                         .map_err(|e| format!("Failed to finalize FTP download: {}", e))?;
                 }
                 FtpClientStream::Secure(s) => {
+                    s.transfer_type(FileType::Binary)
+                        .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
                     let mut reader = s
                         .retr_as_stream(&p)
                         .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
@@ -1624,9 +1985,7 @@ impl ActiveFtpSession {
                             ensure_ftp_dir_recursive!(s, &parent_str);
                         }
                     }
-                    s.put_file(&p, &mut local_file)
-                        .map(|_| ())
-                        .map_err(|e| format!("Failed to upload file '{}': {}", p, e))
+                    ftp_put_reader_binary!(s, &p, &mut local_file, "upload file")
                 }
                 FtpClientStream::Secure(s) => {
                     if let Some(parent) = Path::new(&p).parent() {
@@ -1635,9 +1994,7 @@ impl ActiveFtpSession {
                             ensure_ftp_dir_recursive!(s, &parent_str);
                         }
                     }
-                    s.put_file(&p, &mut local_file)
-                        .map(|_| ())
-                        .map_err(|e| format!("Failed to upload file '{}': {}", p, e))
+                    ftp_put_reader_binary!(s, &p, &mut local_file, "upload file")
                 }
             }
         })
@@ -1669,6 +2026,8 @@ impl ActiveFtpSession {
 
             match &mut *guard {
                 FtpClientStream::Plain(s) => {
+                    s.transfer_type(FileType::Binary)
+                        .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
                     let mut reader = s
                         .retr_as_stream(&p)
                         .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
@@ -1701,6 +2060,8 @@ impl ActiveFtpSession {
                     Ok(hash)
                 }
                 FtpClientStream::Secure(s) => {
+                    s.transfer_type(FileType::Binary)
+                        .map_err(|e| format!("FTP failed to set binary mode: {}", e))?;
                     let mut reader = s
                         .retr_as_stream(&p)
                         .map_err(|e| format!("Failed to retrieve file '{}': {}", p, e))?;
@@ -1776,16 +2137,8 @@ impl ActiveFtpSession {
             let mut cursor = std::io::Cursor::new(buf);
 
             match &mut *guard {
-                FtpClientStream::Plain(s) => {
-                    s.put_file(&p, &mut cursor)
-                        .map(|_| ())
-                        .map_err(|e| format!("Failed to save file '{}': {}", p, e))
-                }
-                FtpClientStream::Secure(s) => {
-                    s.put_file(&p, &mut cursor)
-                        .map(|_| ())
-                        .map_err(|e| format!("Failed to save file '{}': {}", p, e))
-                }
+                FtpClientStream::Plain(s) => ftp_put_reader_binary!(s, &p, &mut cursor, "save file"),
+                FtpClientStream::Secure(s) => ftp_put_reader_binary!(s, &p, &mut cursor, "save file"),
             }
         })
         .await
@@ -1827,8 +2180,14 @@ impl ActiveFtpSession {
         tokio::task::spawn_blocking(move || {
             let mut guard = client_arc.blocking_lock();
             let size = match &mut *guard {
-                FtpClientStream::Plain(s) => s.size(&p).ok().map(|s| s as u64),
-                FtpClientStream::Secure(s) => s.size(&p).ok().map(|s| s as u64),
+                FtpClientStream::Plain(s) => {
+                    let _ = s.transfer_type(FileType::Binary);
+                    s.size(&p).ok().map(|s| s as u64)
+                }
+                FtpClientStream::Secure(s) => {
+                    let _ = s.transfer_type(FileType::Binary);
+                    s.size(&p).ok().map(|s| s as u64)
+                }
             };
 
             if let Some(s) = size {
@@ -1853,6 +2212,7 @@ impl ActiveFtpSession {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_file(
         &self,
         app: &AppHandle,
@@ -1861,6 +2221,7 @@ impl ActiveFtpSession {
         transfer_id: &str,
         conflict_action: Option<String>,
         file_size: Option<u64>,
+        ftp_transfer_mode: Option<String>,
     ) -> Result<(), String> {
         let client_arc = self.client.clone();
         let pool_arc = self.transfer_pool.clone();
@@ -1874,6 +2235,7 @@ impl ActiveFtpSession {
         let l_path = local_path.to_string();
         let t_id = transfer_id.to_string();
         let app_handle = app.clone();
+        let ftp_mode = FtpTransferMode::from_option(ftp_transfer_mode.as_deref());
 
         let (res, used_shared_client) = tokio::task::spawn_blocking(move || -> (Result<(), String>, bool) {
             let pooled = {
@@ -1885,10 +2247,10 @@ impl ActiveFtpSession {
                 let first_try = (|| -> Result<(), String> {
                     match &mut stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                         }
                     }
                 })();
@@ -1912,10 +2274,10 @@ impl ActiveFtpSession {
                 let transfer_res = (|| -> Result<(), String> {
                     match &mut stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                         }
                     }
                 })();
@@ -1929,10 +2291,10 @@ impl ActiveFtpSession {
             let shared_res = (|| -> Result<(), String> {
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
-                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                     }
                     FtpClientStream::Secure(s) => {
-                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size)
+                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                     }
                 }
             })();
@@ -1955,6 +2317,7 @@ impl ActiveFtpSession {
         remote_path: &str,
         transfer_id: &str,
         conflict_action: Option<String>,
+        ftp_transfer_mode: Option<String>,
     ) -> Result<(), String> {
         let client_arc = self.client.clone();
         let pool_arc = self.transfer_pool.clone();
@@ -1968,6 +2331,7 @@ impl ActiveFtpSession {
         let l_path = local_path.to_string();
         let t_id = transfer_id.to_string();
         let app_handle = app.clone();
+        let ftp_mode = FtpTransferMode::from_option(ftp_transfer_mode.as_deref());
 
         let (res, used_shared_client) = tokio::task::spawn_blocking(move || -> (Result<(), String>, bool) {
             let pooled = {
@@ -1979,10 +2343,10 @@ impl ActiveFtpSession {
                 let first_try = (|| -> Result<(), String> {
                     match &mut stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                         }
                     }
                 })();
@@ -2006,10 +2370,10 @@ impl ActiveFtpSession {
                 let transfer_res = (|| -> Result<(), String> {
                     match &mut stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                         }
                     }
                 })();
@@ -2023,10 +2387,10 @@ impl ActiveFtpSession {
             let shared_res = (|| -> Result<(), String> {
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
-                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                     }
                     FtpClientStream::Secure(s) => {
-                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action)
+                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                     }
                 }
             })();
@@ -2291,6 +2655,79 @@ mod tests {
             true,
         );
         assert!(!permissive_msg.contains("TLS certificate verification failed"));
+    }
+
+    #[test]
+    fn auto_transfer_mode_forces_binary_for_ioncube_and_encoded_php() {
+        // 1. Standard ASCII-armored ionCube file (pure 7-bit printable ASCII, no NULs!)
+        let ioncube_ascii = br#"<?php //004fb
+if(!extension_loaded('ionCube Loader')){$__oc=strtolower(substr(php_uname(),0,3));$__ln='ioncube_loader_'.$__oc.'_'.substr(phpversion(),0,3).(($__oc=='win')?'.dll':'.so');}
+HR+cPv5x7f6n9v+x0A1B2C3D4E5F6G7H8I9J0K=="#;
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "license.php", ioncube_ascii),
+            FileType::Binary
+        );
+
+        // 2. Custom/obfuscated ionCube stub where 'ionCube' string was stripped, leaving only `<?php //0050a` hex header
+        let ioncube_custom_stub = b"<?php //0050a\r\n$__x='custom_loader';eval($__x);\r\nAABBCCDDEEFF001122334455==";
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "index.php", ioncube_custom_stub),
+            FileType::Binary
+        );
+
+        // 3. Binary-encoded ionCube file containing raw non-UTF-8 / NUL bytes
+        let ioncube_binary = b"<?php //004fb\n\x00\x9f\x82\xff\x1bionCube\x00payload";
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "config.php", ioncube_binary),
+            FileType::Binary
+        );
+
+        // 4. SourceGuardian & PHP __halt_compiler() self-contained scripts
+        let sourceguardian = b"<?php if(!function_exists('sg_load')) die('Protected'); sg_load('ABCD'); ?>";
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "app.php", sourceguardian),
+            FileType::Binary
+        );
+        let halt_compiler = b"<?php Phar::mapPhar('app.phar'); __HALT_COMPILER(); ?>\r\nMANIFEST";
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "installer.php", halt_compiler),
+            FileType::Binary
+        );
+    }
+
+    #[test]
+    fn auto_and_explicit_transfer_modes_resolve_expected_ftp_file_types() {
+        let plain_php = b"<?php\n// Regular source file\necho 'Hello World';\n";
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "hello.php", plain_php),
+            FileType::Ascii(FormatControl::Default)
+        );
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Binary, "hello.php", plain_php),
+            FileType::Binary
+        );
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Ascii, "archive.zip", b"PK\x03\x04\x00"),
+            FileType::Ascii(FormatControl::Default)
+        );
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, "logo.png", b"\x89PNG\r\n\x1a\n"),
+            FileType::Binary
+        );
+        assert_eq!(
+            resolve_ftp_file_type_from_sample(FtpTransferMode::Auto, ".htaccess", b"RewriteEngine On\n"),
+            FileType::Ascii(FormatControl::Default)
+        );
+
+        // Downloads cannot inspect remote header before RETR, so Auto keeps .php in Binary to protect ionCube files
+        assert_eq!(
+            resolve_ftp_download_file_type(FtpTransferMode::Auto, "encoded.php"),
+            FileType::Binary
+        );
+        assert_eq!(
+            resolve_ftp_download_file_type(FtpTransferMode::Auto, "readme.txt"),
+            FileType::Ascii(FormatControl::Default)
+        );
     }
 }
 

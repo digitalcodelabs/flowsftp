@@ -23,6 +23,8 @@ export interface BrowserFontOption {
   value: string
 }
 
+export type FtpTransferMode = 'auto' | 'binary' | 'ascii'
+
 export const TERMINAL_FONTS: TerminalFontOption[] = [
   {
     label: 'JetBrains Mono',
@@ -313,6 +315,29 @@ export const useSettingsStore = defineStore('settings', () => {
 
   const transferIgnorePatterns = ref<string[]>(loadSavedIgnorePatterns())
 
+  // FTP / FTPS Data Representation Type (FileZilla-style Auto / Binary / ASCII)
+  const loadSavedFtpTransferMode = (): FtpTransferMode => {
+    if (typeof window === 'undefined') return 'auto'
+    const saved = localStorage.getItem('flowsftp_ftp_transfer_mode')
+    if (saved === 'binary' || saved === 'ascii' || saved === 'auto') {
+      return saved
+    }
+    return 'auto'
+  }
+
+  const ftpTransferMode = ref<FtpTransferMode>(loadSavedFtpTransferMode())
+
+  function cycleFtpTransferMode(): FtpTransferMode {
+    const next: FtpTransferMode =
+      ftpTransferMode.value === 'auto'
+        ? 'binary'
+        : ftpTransferMode.value === 'binary'
+          ? 'ascii'
+          : 'auto'
+    ftpTransferMode.value = next
+    return next
+  }
+
   // Global Settings Modal Open State
   const isSettingsModalOpen = ref<boolean>(false)
   const settingsModalTab = ref<'themes' | 'appearance' | 'keymap' | 'transfers' | 'security' | 'protocols' | 'developer' | 'about'>('transfers')
@@ -320,6 +345,9 @@ export const useSettingsStore = defineStore('settings', () => {
   if (typeof window !== 'undefined') {
     watch(enableTransferIgnoreFilter, (val) => {
       localStorage.setItem('flowsftp_enable_transfer_ignore', val ? 'true' : 'false')
+    })
+    watch(ftpTransferMode, (val) => {
+      localStorage.setItem('flowsftp_ftp_transfer_mode', val)
     })
     watch(
       transferIgnorePatterns,
@@ -500,6 +528,8 @@ export const useSettingsStore = defineStore('settings', () => {
     resetBrowserDefaults,
     enableTransferIgnoreFilter,
     transferIgnorePatterns,
+    ftpTransferMode,
+    cycleFtpTransferMode,
     addIgnorePattern,
     removeIgnorePattern,
     resetIgnorePatterns,

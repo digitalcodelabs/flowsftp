@@ -62,6 +62,7 @@ const initialContent = ref('')
 const isLoading = ref(true)
 const isSaving = ref(false)
 const isDirty = ref(false)
+const hasBinaryLossyBytes = ref(false)
 const errorMessage = ref<string | null>(null)
 const successMessage = ref<string | null>(null)
 const isMaximized = ref(false)
@@ -449,6 +450,7 @@ const initEditor = (docContent: string) => {
 const loadContent = async () => {
   if (!props.filePath) return
   isLoading.value = true
+  hasBinaryLossyBytes.value = false
   errorMessage.value = null
   successMessage.value = null
 
@@ -469,6 +471,7 @@ const loadContent = async () => {
     }
 
     initialContent.value = text
+    hasBinaryLossyBytes.value = text.includes('\uFFFD')
     isDirty.value = false
 
     if (editorView) {
@@ -934,6 +937,15 @@ onBeforeUnmount(() => {
       >
         <AlertCircle class="w-4 h-4 shrink-0 text-red-400" />
         <span class="truncate">{{ errorMessage }}</span>
+      </div>
+
+      <!-- Binary / Encoded File Warning -->
+      <div
+        v-if="hasBinaryLossyBytes"
+        class="px-4 py-2 bg-amber-500/12 border-b border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center space-x-2 shrink-0"
+      >
+        <AlertCircle class="w-4 h-4 shrink-0 text-amber-500" />
+        <span>Binary or encoded payload detected (e.g. ionCube). Saving as UTF-8 text will corrupt binary bytes — upload/download directly instead.</span>
       </div>
 
       <!-- Main Editor Body -->

@@ -1873,6 +1873,33 @@ const handleTabStripWheel = (e: WheelEvent) => {
               </div>
             </div>
 
+            <!-- FTP / FTPS Data Representation Type (Auto / Binary / ASCII) -->
+            <div
+              class="p-3 rounded-lg border space-y-2"
+              :style="{ backgroundColor: 'var(--color-bg-card)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)' }"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-medium" :style="{ color: 'var(--color-text-main)' }">FTP / FTPS Transfer Data Type</span>
+                <span
+                  class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold border uppercase"
+                  :style="{ backgroundColor: 'var(--color-bg-pane)', borderColor: 'color-mix(in srgb, var(--color-border) 55%, transparent)', color: 'var(--color-accent)' }"
+                >
+                  {{ settingsStore.ftpTransferMode }}
+                </span>
+              </div>
+              <select
+                v-model="settingsStore.ftpTransferMode"
+                class="w-full px-2.5 py-1.5 rounded-lg border text-xs focus:outline-none input-theme font-medium cursor-pointer"
+              >
+                <option value="auto">Auto (Detect binary, ionCube &amp; encoded PHP automatically — Recommended)</option>
+                <option value="binary">Binary (TYPE I — Byte-for-byte exact transfer for all files)</option>
+                <option value="ascii">ASCII (TYPE A — Convert CRLF/LF line endings for all files)</option>
+              </select>
+              <p class="text-[10px]" :style="{ color: 'var(--color-text-muted)' }">
+                Applies to FTP and FTPS sessions (SFTP transfers are always byte-exact). Auto mode inspects file headers so ionCube, SourceGuardian, Phar, and binary files are always transferred in Binary mode without corrupting byte offsets.
+              </p>
+            </div>
+
             <!-- Auto-remove completed toggle -->
             <div
               class="flex items-center justify-between pt-2 border-t"
@@ -2686,7 +2713,7 @@ const handleTabStripWheel = (e: WheelEvent) => {
             <div>
               <h3 class="text-lg font-bold tracking-tight" :style="{ color: 'var(--color-text-main)' }">FlowSFTP</h3>
               <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
-                v{{ updaterStore.currentVersion || '1.0.0' }}
+                v{{ updaterStore.currentVersion || '1.0.1' }}
               </p>
             </div>
             <p class="text-xs max-w-md leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">

@@ -53,6 +53,33 @@ const openIgnoreSettings = () => {
   settingsStore.openSettings('transfers')
 }
 
+const activeSessionProtocol = computed(() => {
+  if (!props.sessionId) return null
+  const found = sshStore.sessions.find((s) => s.sessionId === props.sessionId)
+  return found?.protocol || null
+})
+
+const isFtpActiveSession = computed(
+  () => activeSessionProtocol.value === 'ftp' || activeSessionProtocol.value === 'ftps'
+)
+
+const ftpModeLabel = computed(() => {
+  if (settingsStore.ftpTransferMode === 'binary') return 'Binary'
+  if (settingsStore.ftpTransferMode === 'ascii') return 'ASCII'
+  return 'Auto'
+})
+
+const handleCycleFtpMode = () => {
+  const next = settingsStore.cycleFtpTransferMode()
+  const desc =
+    next === 'auto'
+      ? 'Auto (ionCube & binary files use Binary)'
+      : next === 'binary'
+        ? 'Binary (TYPE I for all files)'
+        : 'ASCII (TYPE A line-ending conversion)'
+  emit('toast', `FTP Transfer Mode: ${desc}`, false, false, 2400)
+}
+
 const showTransferDrawer = computed({
   get: () => props.show,
   set: (val: boolean) => emit('update:show', val),
@@ -1338,6 +1365,21 @@ defineExpose({
           <span v-else-if="queueCompletionAction === 'disconnect'">🔌 Disconnect on complete</span>
           <span v-else-if="queueCompletionAction === 'close'">🚪 Close on complete</span>
         </div>
+
+        <!-- FTP Data Type Pill Button (FileZilla Auto / Binary / ASCII) -->
+        <button
+          v-if="isFtpActiveSession"
+          type="button"
+          @click="handleCycleFtpMode"
+          @contextmenu.prevent="openIgnoreSettings"
+          class="hidden sm:flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono border transition cursor-pointer"
+          :style="settingsStore.ftpTransferMode === 'ascii'
+            ? { backgroundColor: 'rgba(245, 158, 11, 0.12)', color: '#d97706', borderColor: 'rgba(245, 158, 11, 0.35)' }
+            : { backgroundColor: 'var(--color-bg-card)', color: 'var(--color-text-main)', borderColor: 'var(--color-border)' }"
+          :title="`FTP Transfer Type: ${ftpModeLabel} (${settingsStore.ftpTransferMode === 'auto' ? 'Auto-detects ionCube, encoded PHP & binary files as Binary' : settingsStore.ftpTransferMode === 'binary' ? 'Forces Binary TYPE I for all files' : 'Forces ASCII TYPE A for all files'}). Click to cycle, right-click for Settings.`"
+        >
+          <span>Type: {{ ftpModeLabel }}</span>
+        </button>
 
         <!-- Intelligent Ignore Filter Pill Button -->
         <button

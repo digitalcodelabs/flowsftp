@@ -1,6 +1,6 @@
 {
   "name": "flowsftp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A modern, blazing-fast dual-pane SFTP and FTP client with integrated hardware-accelerated SSH terminal",
   "type": "module",
   "private": true,

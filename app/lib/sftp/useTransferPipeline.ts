@@ -545,6 +545,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           localPath: targetLocal,
           fileSize: remoteFile.size || null,
           conflictAction,
+          ftpTransferMode: useSettingsStore().ftpTransferMode,
         }),
       afterSuccess: async () => {
         // Smooth background refresh of local folder during downloads
@@ -731,6 +732,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           remotePath: targetRemote,
           fileSize: localFile.size || null,
           conflictAction,
+          ftpTransferMode: useSettingsStore().ftpTransferMode,
         }),
       afterSuccess: async () => {
         // Smooth background refresh of remote folder during uploads
