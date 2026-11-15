@@ -585,7 +585,9 @@ pub async fn sftp_set_permissions(
     target_type: Option<String>,
 ) -> Result<(), String> {
     if let Some(ftp) = state.get_ftp_session(&session_id).await {
-        return ftp.set_permissions(&path, permissions).await;
+        return ftp
+            .set_permissions(&path, permissions, recursive, target_type.as_deref())
+            .await;
     }
 
     let session = state

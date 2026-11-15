@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [1.0.2] — v1.0.2 (2026-11-16)
+
+### Added
+- **Recursive FTP / FTPS Permissions (`SITE CHMOD`)**: Checking **Recurse into subdirectories** (`All files and directories`, `Apply to files only`, or `Apply to directories only`) in the Permissions modal now traverses FTP/FTPS directories recursively while skipping symlinks and restoring the session working directory and `Binary` mode afterward.
+
+### Fixed
+- **FTP / FTPS `chmod` (`500 'SITE SITE' not understood`)**: Fixed `ActiveFtpSession::set_permissions` sending a duplicated `SITE SITE CHMOD` prefix (caused by `suppaftp::FtpStream::site` prepending `SITE ` a second time). Permissions are now formatted with zero-padded octal modes (`{:03o}`) and sent via `SITE CHMOD <mode> <path>` accepting both `200` (`CommandOk`) and `250` (`RequestedFileActionOk`) server responses, with automatic reconnect-and-retry if an idle FTP control connection timed out.
+
+---
+
 ## [1.0.1] — v1.0.1 (2026-11-12)
 
 ### Release Highlights

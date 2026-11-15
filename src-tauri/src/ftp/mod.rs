@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use std::time::Instant;
 use suppaftp::types::{FileType, FormatControl};
-use suppaftp::{FtpStream, RustlsConnector, RustlsFtpStream};
+use suppaftp::{FtpStream, RustlsConnector, RustlsFtpStream, Status};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 
@@ -403,6 +403,21 @@ pub fn resolve_ftp_download_file_type(mode: FtpTransferMode, file_name: &str) ->
     }
 }
 
+/// Builds a full `SITE CHMOD` command string for `suppaftp::FtpStream::custom_command`.
+/// Note: `suppaftp::FtpStream::site()` already prepends `SITE ` (which would produce `SITE SITE CHMOD`)
+/// and only accepts `200`, whereas FTP servers return `200` or `250` for `SITE CHMOD`.
+pub fn format_ftp_chmod_command(permissions: u32, path: &str) -> Result<String, String> {
+    if path.is_empty() {
+        return Err("Invalid path: empty remote path".to_string());
+    }
+    if path.contains('\r') || path.contains('\n') || path.contains('\0') {
+        return Err("Invalid path: contains control characters".to_string());
+    }
+    let clean_path = path.replace('\\', "/");
+    let mode = permissions & 0o7777;
+    Ok(format!("SITE CHMOD {:03o} {}", mode, clean_path))
+}
+
 fn connect_ftp_stream(
     host: &str,
     port: u16,
@@ -752,8 +767,9 @@ macro_rules! remove_ftp_dir_recursive {
                 }
             }
 
-            // Always restore initial PWD before deleting
+            // Always restore initial PWD and Binary mode before deleting
             let _ = stream.cwd(&initial_pwd);
+            let _ = stream.transfer_type(FileType::Binary);
 
             // Delete files first
             for file_path in files_to_delete {
@@ -2149,24 +2165,152 @@ impl ActiveFtpSession {
         self.write_file_binary(path, content.as_bytes()).await
     }
 
-    pub async fn set_permissions(&self, path: &str, permissions: u32) -> Result<(), String> {
-        if path.contains('\r') || path.contains('\n') {
-            return Err("Invalid path: contains control characters".to_string());
+    pub async fn set_permissions(
+        &self,
+        path: &str,
+        permissions: u32,
+        recursive: bool,
+        target_type: Option<&str>,
+    ) -> Result<(), String> {
+        match self
+            .try_set_permissions(path, permissions, recursive, target_type)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                if is_connection_error(&e) {
+                    log::info!("[ftp] Connection dropped during set_permissions, reconnecting...");
+                    if self.reconnect().await.is_ok() {
+                        return self
+                            .try_set_permissions(path, permissions, recursive, target_type)
+                            .await;
+                    }
+                }
+                Err(e)
+            }
         }
+    }
+
+    async fn try_set_permissions(
+        &self,
+        path: &str,
+        permissions: u32,
+        recursive: bool,
+        target_type: Option<&str>,
+    ) -> Result<(), String> {
+        // Validate path and command formatting upfront
+        let _ = format_ftp_chmod_command(permissions, path)?;
 
         let client_arc = self.client.clone();
         let p = path.to_string();
+        let target_owned = target_type.map(|t| t.to_string());
+
+        macro_rules! exec_single_chmod {
+            ($stream:expr, $target_path:expr) => {{
+                let cmd = format_ftp_chmod_command(permissions, $target_path)?;
+                $stream
+                    .custom_command(&cmd, &[Status::CommandOk, Status::RequestedFileActionOk])
+                    .map(|_| ())
+                    .map_err(|e| format!("Failed to change permissions on '{}': {}", $target_path, e))
+            }};
+        }
+
+        macro_rules! run_chmod_op {
+            ($stream:expr) => {{
+                let s = $stream;
+                if !recursive {
+                    exec_single_chmod!(s, &p)
+                } else {
+                    let target = target_owned.as_deref().unwrap_or("all");
+                    let initial_pwd = s.pwd().unwrap_or_else(|_| "/".to_string());
+
+                    if s.cwd(&p).is_err() {
+                        let _ = s.cwd(&initial_pwd);
+                        if target != "dirs" {
+                            exec_single_chmod!(s, &p)?;
+                        }
+                        Ok::<(), String>(())
+                    } else {
+                        let root_canonical = s.pwd().unwrap_or_else(|_| p.clone());
+                        let mut dirs_to_visit = vec![root_canonical];
+                        let mut dirs_to_chmod = Vec::new();
+                        let mut files_to_chmod = Vec::new();
+
+                        while let Some(dir) = dirs_to_visit.pop() {
+                            if s.cwd(&dir).is_err() {
+                                continue;
+                            }
+                            let canonical_dir = s.pwd().unwrap_or_else(|_| dir.clone());
+                            dirs_to_chmod.push(canonical_dir.clone());
+
+                            let lines = match s.list(None) {
+                                Ok(l) => l,
+                                Err(_) => continue,
+                            };
+
+                            for line in lines {
+                                if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
+                                    if entry.name == "." || entry.name == ".." || entry.is_symlink {
+                                        continue;
+                                    }
+                                    if entry.is_dir {
+                                        dirs_to_visit.push(entry.path);
+                                    } else {
+                                        files_to_chmod.push(entry.path);
+                                    }
+                                }
+                            }
+                        }
+
+                        let _ = s.cwd(&initial_pwd);
+                        let _ = s.transfer_type(FileType::Binary);
+
+                        let mut targets = Vec::new();
+                        if target == "all" || target == "dirs" {
+                            targets.extend(dirs_to_chmod);
+                        }
+                        if target == "all" || target == "files" {
+                            targets.extend(files_to_chmod);
+                        }
+
+                        let mut succeeded = 0usize;
+                        let mut first_err: Option<String> = None;
+
+                        for item_path in &targets {
+                            match exec_single_chmod!(s, item_path) {
+                                Ok(()) => succeeded += 1,
+                                Err(e) => {
+                                    if is_connection_error(&e)
+                                        || e.contains("[500]")
+                                        || e.contains("[502]")
+                                        || e.contains("[504]")
+                                    {
+                                        return Err(e);
+                                    }
+                                    if first_err.is_none() {
+                                        first_err = Some(e);
+                                    }
+                                }
+                            }
+                        }
+
+                        if succeeded == 0
+                            && let Some(err) = first_err
+                        {
+                            return Err(err);
+                        }
+
+                        Ok::<(), String>(())
+                    }
+                }
+            }};
+        }
 
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut guard = client_arc.blocking_lock();
-            let cmd = format!("SITE CHMOD {:o} {}", permissions, p);
             match &mut *guard {
-                FtpClientStream::Plain(s) => {
-                    s.site(&cmd).map(|_| ()).map_err(|e| format!("Failed to change permissions: {}", e))
-                }
-                FtpClientStream::Secure(s) => {
-                    s.site(&cmd).map(|_| ()).map_err(|e| format!("Failed to change permissions: {}", e))
-                }
+                FtpClientStream::Plain(s) => run_chmod_op!(s),
+                FtpClientStream::Secure(s) => run_chmod_op!(s),
             }
         })
         .await
@@ -2728,6 +2872,41 @@ HR+cPv5x7f6n9v+x0A1B2C3D4E5F6G7H8I9J0K=="#;
             resolve_ftp_download_file_type(FtpTransferMode::Auto, "readme.txt"),
             FileType::Ascii(FormatControl::Default)
         );
+    }
+
+    #[test]
+    fn format_ftp_chmod_command_sends_single_site_prefix_and_pads_octal_mode() {
+        // Regression test: previously `s.site("SITE CHMOD ...")` sent `SITE SITE CHMOD ...`
+        assert_eq!(
+            format_ftp_chmod_command(0o755, "/public_html/index.php").unwrap(),
+            "SITE CHMOD 755 /public_html/index.php"
+        );
+        assert_eq!(
+            format_ftp_chmod_command(0o644, "/public_html/my file.php").unwrap(),
+            "SITE CHMOD 644 /public_html/my file.php"
+        );
+        // Zero-pad modes below 0o100 (e.g. 0o044 -> 044, 0o000 -> 000)
+        assert_eq!(
+            format_ftp_chmod_command(0o044, "/var/www/readonly.txt").unwrap(),
+            "SITE CHMOD 044 /var/www/readonly.txt"
+        );
+        assert_eq!(
+            format_ftp_chmod_command(0, "/var/www/locked.txt").unwrap(),
+            "SITE CHMOD 000 /var/www/locked.txt"
+        );
+        // Strip POSIX file-type bits (e.g. 0o100644 -> 644) while preserving special bits (0o2755 -> 2755)
+        assert_eq!(
+            format_ftp_chmod_command(0o100644, "/var/www/app.php").unwrap(),
+            "SITE CHMOD 644 /var/www/app.php"
+        );
+        assert_eq!(
+            format_ftp_chmod_command(0o2755, "/var/www/shared").unwrap(),
+            "SITE CHMOD 2755 /var/www/shared"
+        );
+        // Reject empty paths and CRLF/NUL command injection characters
+        assert!(format_ftp_chmod_command(0o644, "").is_err());
+        assert!(format_ftp_chmod_command(0o644, "/var/www/bad\r\nDELE /etc/passwd").is_err());
+        assert!(format_ftp_chmod_command(0o644, "/var/www/bad\0file").is_err());
     }
 }
 
