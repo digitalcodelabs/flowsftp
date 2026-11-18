@@ -42,8 +42,9 @@ use commands::sftp::{
     sftp_calculate_remote_checksum, sftp_calculate_local_checksum,
 };
 use commands::ssh::{
-    ssh_connect, ssh_disconnect, ssh_get_history, ssh_host_key_respond, ssh_list_config_hosts,
-    ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
+    ssh_attach_stdout, ssh_connect, ssh_disconnect, ssh_get_history, ssh_host_key_respond,
+    ssh_list_config_hosts, ssh_list_sessions, ssh_resize_pty, ssh_write_stdin,
+    ssh_write_stdin_bytes,
 };
 use commands::updater::{
     app_cancel_update_download, app_check_for_updates, app_download_and_install_update,
@@ -67,10 +68,12 @@ pub fn run() {
             // SSH Terminal Commands
             ssh_connect,
             ssh_write_stdin,
+            ssh_write_stdin_bytes,
             ssh_resize_pty,
             ssh_disconnect,
             ssh_list_sessions,
             ssh_get_history,
+            ssh_attach_stdout,
             ssh_host_key_respond,
             ssh_list_config_hosts,
             // FTP Commands

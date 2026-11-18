@@ -125,8 +125,8 @@ pub struct LocalCrawlBatchPayload {
     pub total_directories: usize,
 }
 
-pub const CRAWL_STREAM_BATCH_SIZE: usize = 25;
-pub const CRAWL_STREAM_BATCH_INTERVAL_MS: u64 = 120;
+pub const CRAWL_STREAM_BATCH_SIZE: usize = 30;
+pub const CRAWL_STREAM_BATCH_INTERVAL_MS: u64 = 40;
 
 pub fn get_matching_ignore_pattern(name: &str, rel_or_full_path: &str, patterns: &[String]) -> Option<String> {
     if patterns.is_empty() {
@@ -980,10 +980,10 @@ pub async fn download_file(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".to_string());
 
-    // 1. Get remote file size (fast-path: if known, skip network roundtrip stat)
+    // 1. Get remote file size (fast-path: if known, including 0-byte crawled files, skip stat round-trip)
     let total_bytes = match file_size {
-        Some(s) if s > 0 => s,
-        _ => sftp.metadata(&remote_path).await.ok().and_then(|m| m.size).unwrap_or(0),
+        Some(s) => s,
+        None => sftp.metadata(&remote_path).await.ok().and_then(|m| m.size).unwrap_or(0),
     };
 
     let (native_local, _) = normalize_to_native_path(&local_path);
@@ -1022,13 +1022,6 @@ pub async fn download_file(
             msg
         })?;
 
-    // 3. Create parent local directories if needed
-    if let Some(parent) = native_local.parent()
-        && let Err(e) = fs::create_dir_all(parent).await
-    {
-        log::warn!("[download_file] Warning creating parent dir '{:?}': {}", parent, e);
-    }
-
     let mut resume_offset: u64 = 0;
     if conflict == "resume"
         && let Ok(meta) = fs::metadata(&native_local).await
@@ -1055,7 +1048,30 @@ pub async fn download_file(
         return Ok(());
     }
 
-    // 4. Open or create local file
+    async fn create_local_with_parents(native_local: &Path, display_path: &str) -> Result<fs::File, String> {
+        match fs::File::create(native_local).await {
+            Ok(f) => Ok(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = native_local.parent()
+                    && let Err(dir_err) = fs::create_dir_all(parent).await
+                {
+                    log::warn!("[download_file] Warning creating parent dir '{:?}': {}", parent, dir_err);
+                }
+                fs::File::create(native_local).await.map_err(|err| {
+                    let msg = format!("Failed to create local file '{}': {}", display_path, err);
+                    log::error!("[download_file] {}", msg);
+                    msg
+                })
+            }
+            Err(e) => {
+                let msg = format!("Failed to create local file '{}': {}", display_path, e);
+                log::error!("[download_file] {}", msg);
+                Err(msg)
+            }
+        }
+    }
+
+    // 3. Open or create local file (creating parent directories lazily only when missing)
     let mut local_file = if resume_offset > 0 {
         use tokio::io::AsyncSeekExt;
         if remote_file.seek(std::io::SeekFrom::Start(resume_offset)).await.is_ok() {
@@ -1071,27 +1087,17 @@ pub async fn download_file(
                 })?
         } else {
             resume_offset = 0;
-            fs::File::create(&native_local).await.map_err(|e| {
-                let msg = format!("Failed to create local file '{}': {}", local_path, e);
-                log::error!("[download_file] {}", msg);
-                msg
-            })?
+            create_local_with_parents(&native_local, &local_path).await?
         }
     } else {
-        fs::File::create(&native_local)
-            .await
-            .map_err(|e| {
-                let msg = format!("Failed to create local file '{}': {}", local_path, e);
-                log::error!("[download_file] {}", msg);
-                msg
-            })?
+        create_local_with_parents(&native_local, &local_path).await?
     };
 
     let event_name = format!("sftp:progress:{}", transfer_id);
-    let buf_size = if total_bytes > 0 && total_bytes < 64 * 1024 {
+    let buf_size = if total_bytes > 0 && total_bytes < 256 * 1024 {
         (total_bytes as usize).max(4096)
     } else {
-        64 * 1024
+        256 * 1024
     };
     let mut buffer = vec![0u8; buf_size];
     let mut transferred: u64 = resume_offset;

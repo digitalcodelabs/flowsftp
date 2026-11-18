@@ -673,37 +673,38 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
         ]"
       >
         <!-- Notice if active session is FTP/FTPS -->
-        <template v-if="sshStore.activeSession && (sshStore.activeSession.protocol === 'ftp' || sshStore.activeSession.protocol === 'ftps')">
-          <div class="ui-scaled flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div class="w-14 h-14 rounded-2xl bg-amber-950/35 border border-amber-700/35 flex items-center justify-center text-amber-400 mb-4">
-              <Server class="w-7 h-7" />
-            </div>
-            <h2 class="text-base font-semibold mb-1" :style="{ color: 'var(--color-text-main)' }">
-              {{ sshStore.activeSession.protocol.toUpperCase() }} Session Active
-            </h2>
-            <p class="text-xs max-w-sm mb-5" :style="{ color: 'var(--color-text-muted)' }">
-              Command line shell is only supported for SSH connections. Use the dual-pane browser to list, upload, and download files over FTP.
-            </p>
-            <button
-              @click="currentTab = 'sftp'"
-              class="px-4 py-2 rounded-lg text-xs font-medium flex items-center space-x-2 btn-accent-secondary cursor-pointer"
-            >
-              <FolderSync class="w-3.5 h-3.5 shrink-0" />
-              <span>Switch to SFTP / FTP Browser</span>
-            </button>
+        <div
+          v-if="sshStore.activeSession && (sshStore.activeSession.protocol === 'ftp' || sshStore.activeSession.protocol === 'ftps')"
+          class="ui-scaled flex-1 flex flex-col items-center justify-center text-center p-8"
+        >
+          <div class="w-14 h-14 rounded-2xl bg-amber-950/35 border border-amber-700/35 flex items-center justify-center text-amber-400 mb-4">
+            <Server class="w-7 h-7" />
           </div>
-        </template>
+          <h2 class="text-base font-semibold mb-1" :style="{ color: 'var(--color-text-main)' }">
+            {{ sshStore.activeSession.protocol.toUpperCase() }} Session Active
+          </h2>
+          <p class="text-xs max-w-sm mb-5" :style="{ color: 'var(--color-text-muted)' }">
+            Command line shell is only supported for SSH connections. Use the dual-pane browser to list, upload, and download files over FTP.
+          </p>
+          <button
+            @click="currentTab = 'sftp'"
+            class="px-4 py-2 rounded-lg text-xs font-medium flex items-center space-x-2 btn-accent-secondary cursor-pointer"
+          >
+            <FolderSync class="w-3.5 h-3.5 shrink-0" />
+            <span>Switch to SFTP / FTP Browser</span>
+          </button>
+        </div>
 
-        <!-- Active SSH sessions: each gets its own kept-alive SshTerminal component -->
-        <template v-else-if="sshStore.sessions.length > 0">
+        <!-- Active SSH sessions: kept alive across FTP/SFTP tab switches so WebGL & Neovim state never reload -->
+        <template v-if="sshStore.sessions.length > 0">
           <div
             v-for="sess in sshStore.sessions"
             :key="sess.sessionId"
-            v-show="sess.sessionId === sshStore.activeSessionId"
+            v-show="sess.sessionId === sshStore.activeSessionId && (!sess.protocol || sess.protocol === 'sftp')"
             class="w-full h-full flex flex-col"
           >
             <SshTerminal
-              v-if="!sess.protocol || sess.protocol === 'sftp'"
+              v-if="sess.status === 'connected' && (!sess.protocol || sess.protocol === 'sftp')"
               :session-id="sess.sessionId"
               :active="currentTab === 'terminal' && sess.sessionId === sshStore.activeSessionId"
               @resize="handleTerminalResize"
@@ -713,7 +714,7 @@ const handleHeaderDblClick = async (e: MouseEvent) => {
           </div>
         </template>
 
-        <template v-else>
+        <template v-if="sshStore.sessions.length === 0">
           <!-- Empty State (No active sessions) -->
           <div class="ui-scaled flex-1 flex flex-col items-center justify-center text-center p-8">
             <div

@@ -166,6 +166,11 @@ export const useSshStore = defineStore('ssh', () => {
     }
     sessions.value.push(item)
 
+    const estimatedCols =
+      typeof window !== 'undefined' ? Math.max(80, Math.floor((window.innerWidth - 24) / 8.2)) : 120
+    const estimatedRows =
+      typeof window !== 'undefined' ? Math.max(24, Math.floor((window.innerHeight - 72) / 19)) : 36
+
     try {
       const sessionId = await invoke<string>('ssh_connect', {
         config: {
@@ -173,8 +178,8 @@ export const useSshStore = defineStore('ssh', () => {
           port: config.port,
           username: config.username,
           auth: config.auth,
-          cols: config.cols ?? 80,
-          rows: config.rows ?? 24,
+          cols: config.cols ?? estimatedCols,
+          rows: config.rows ?? estimatedRows,
           term: config.term ?? 'xterm-256color',
         },
       })

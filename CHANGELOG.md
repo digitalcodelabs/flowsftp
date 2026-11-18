@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [1.0.3] — v1.0.3 (2026-11-18)
+
+### Release Highlights
+- **Parallel Multi-Worker Directory Crawling & High-Concurrency Downloads (`FTP` / `FTPS` / `SFTP`)**: Downloading deep folder trees with `1,000+` files and nested subdirectories now scans directories concurrently (`24` pipelined SFTP `read_dir` requests or up to `5` parallel FTP `MLSD` / `LIST` crawler connections) and keeps all `10` transfer workers saturated instead of dropping to a single active thread.
+- **High-Speed Binary SSH Terminal Pipeline for Neovim & TUI Apps**: Replaced JSON-escaped string events with raw binary `ArrayBuffer` streaming (`tauri::ipc::Channel`), DEC Mode `2026` synchronized frame coalescing, and backpressure-coupled WebGL rendering for crisp, zero-lag Neovim (LazyVim / Treesitter / Telescope / NerdFont) performance.
+
+### Added
+- **Parallel FTP Crawler + RFC 3659 `MLSD` Fast-Path**: Crawls remote FTP/FTPS subdirectories in Breadth-First order across up to `5` parallel connections using single-command `MLSD <dir>` where supported (`Pure-FTPd`, `ProFTPD`, `FileZilla Server`) with automatic `CWD` + `LIST` fallback, then donates warm crawler connections directly into the transfer pool.
+- **24-Way Pipelined SFTP Crawler & 4-Channel SFTP Transfer Pool**: Traverses SFTP directory trees with `24` concurrent `read_dir` tasks and isolates bulk file transfers onto up to `4` dedicated SFTP subsystem channels (`32` pipelined reads/writes, `256 KiB` packets) while staying safely below OpenSSH's `MaxSessions 10` limit.
+- **Binary Terminal IPC Channel & DEC Mode `2026` Frame Coalescing**:
+  - Streams raw PTY bytes directly into `xterm.js` (`Uint8Array`) via `ssh_attach_stdout` (`InvokeResponseBody::Raw`), eliminating `\u001b` JSON string inflation and preventing split-packet UTF-8 corruption on multi-byte NerdFont and box-drawing glyphs.
+  - Detects Neovim's `\x1b[?2026h ... \x1b[?2026l` synchronized redraw frames (even across SSH packet boundaries) to deliver full TUI screen updates atomically while keeping single-keystroke shell echo at `0ms`.
+  - Advertises `COLORTERM=truecolor`, enlarges SSH channel flow-control windows to `4 MiB`, enables WebGL `customGlyphs` & `rescaleOverlappingGlyphs`, batches rapid `STDIN` / SGR mouse-hover bursts, and preserves live WebGL terminal instances when switching across FTP session tabs.
+
+### Changed
+- **12-Slot Warm FTP Transfer Pool & `MaxClientsPerIP` Handoff**: Raised `MAX_FTP_TRANSFER_POOL_SIZE` from `6` to `12` so all `10` simultaneous transfer workers retain warm connections, added `Condvar` stream handoff when FTP servers enforce per-IP connection limits (such as `8` on cPanel), and tracked per-stream `Binary` state to skip redundant `TYPE I` commands across batches.
+- **Faster Crawl Streaming & Local WSL / Disk I/O**: Reduced crawl batch interval from `120ms` to `40ms`, preserved `0`-byte crawled file sizes to skip redundant `SIZE` / `STAT` round-trips, created local parent directories lazily on `NotFound`, and avoided redundant background parent listings once top-level folders are already visible.
+
+---
+
 ## [1.0.2] — v1.0.2 (2026-11-16)
 
 ### Added

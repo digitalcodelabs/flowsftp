@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
@@ -10,10 +10,146 @@ use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::agent::AgentIdentity;
 use russh_sftp::client::SftpSession;
 
+const MAX_TRANSFER_SFTP_CHANNELS: usize = 4;
+
+fn build_sftp_client_config() -> russh_sftp::client::Config {
+    russh_sftp::client::Config {
+        max_packet_len: 262144,
+        max_concurrent_reads: 32,
+        max_concurrent_writes: 32,
+        max_write_packet_len: 65536,
+        request_timeout_secs: 30,
+    }
+}
+
 pub enum SessionCommand {
     Write(Vec<u8>),
     Resize { cols: u32, rows: u32 },
     Close,
+}
+
+struct TerminalOutputState {
+    history: std::collections::VecDeque<u8>,
+    channel: Option<tauri::ipc::Channel<tauri::ipc::Response>>,
+}
+
+/// Tracks DEC Mode 2026 Synchronized Output (`\x1b[?2026h` begin / `\x1b[?2026l` end),
+/// used heavily by Neovim 0.8+ and modern TUI plugins to bracket atomic full-screen redraws.
+/// Preserves up to 7 trailing bytes across SSH packet boundaries so split escape sequences are caught.
+/// Returns `true` when a synchronized frame end (`\x1b[?2026l`) completed inside `chunk`.
+fn scan_dec_sync_mode(
+    tail: &mut [u8; 7],
+    tail_len: &mut usize,
+    chunk: &[u8],
+    in_sync: &mut bool,
+) -> bool {
+    const SYNC_BEGIN: &[u8; 8] = b"\x1b[?2026h";
+    const SYNC_END: &[u8; 8] = b"\x1b[?2026l";
+
+    if chunk.is_empty() {
+        return false;
+    }
+
+    let mut saw_sync_end = false;
+    let prev_len = *tail_len;
+
+    // 1. Check boundary windows straddling `tail[..prev_len]` and the start of `chunk`
+    if prev_len > 0 {
+        let take_from_chunk = chunk.len().min(7);
+        let mut combined = [0u8; 14];
+        combined[..prev_len].copy_from_slice(&tail[..prev_len]);
+        combined[prev_len..prev_len + take_from_chunk].copy_from_slice(&chunk[..take_from_chunk]);
+        let combined_slice = &combined[..prev_len + take_from_chunk];
+        for win in combined_slice.windows(8) {
+            if win == SYNC_BEGIN {
+                *in_sync = true;
+            } else if win == SYNC_END {
+                *in_sync = false;
+                saw_sync_end = true;
+            }
+        }
+    }
+
+    // 2. Fast byte scan inside `chunk` (only inspecting 8-byte slices starting at ESC `0x1b`)
+    if chunk.len() >= 8 {
+        let last_start = chunk.len() - 8;
+        let mut i = 0usize;
+        while i <= last_start {
+            if chunk[i] == 0x1b {
+                let candidate = &chunk[i..i + 8];
+                if candidate == SYNC_BEGIN {
+                    *in_sync = true;
+                    i += 8;
+                    continue;
+                } else if candidate == SYNC_END {
+                    *in_sync = false;
+                    saw_sync_end = true;
+                    i += 8;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    // 3. Update rolling 7-byte tail for the next SSH packet
+    if chunk.len() >= 7 {
+        tail.copy_from_slice(&chunk[chunk.len() - 7..]);
+        *tail_len = 7;
+    } else {
+        let total = prev_len + chunk.len();
+        let mut tmp = [0u8; 14];
+        tmp[..prev_len].copy_from_slice(&tail[..prev_len]);
+        tmp[prev_len..total].copy_from_slice(chunk);
+        if total <= 7 {
+            tail[..total].copy_from_slice(&tmp[..total]);
+            *tail_len = total;
+        } else {
+            tail.copy_from_slice(&tmp[total - 7..total]);
+            *tail_len = 7;
+        }
+    }
+
+    saw_sync_end
+}
+
+fn flush_terminal_output(
+    output_state: &std::sync::Mutex<TerminalOutputState>,
+    app: &AppHandle,
+    legacy_event_name: &str,
+    out_buf: &mut Vec<u8>,
+) {
+    if out_buf.is_empty() {
+        return;
+    }
+    const MAX_HISTORY: usize = 256 * 1024;
+    const PURGE_CHUNK: usize = 64 * 1024;
+
+    let payload = std::mem::replace(out_buf, Vec::with_capacity(64 * 1024));
+    let active_channel = {
+        let mut guard = output_state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.history.extend(&payload);
+        if guard.history.len() > MAX_HISTORY + PURGE_CHUNK {
+            let mut drain_end = PURGE_CHUNK;
+            while drain_end < guard.history.len()
+                && (guard.history[drain_end] & 0b1100_0000) == 0b1000_0000
+            {
+                drain_end += 1;
+            }
+            guard.history.drain(0..drain_end);
+        }
+        guard.channel.clone()
+    };
+
+    if let Some(ch) = active_channel {
+        if ch.send(tauri::ipc::Response::new(payload)).is_err() {
+            let mut guard = output_state.lock().unwrap_or_else(|e| e.into_inner());
+            guard.channel = None;
+        }
+    } else {
+        let text = String::from_utf8_lossy(&payload).to_string();
+        let _ = app.emit(legacy_event_name, text);
+    }
 }
 
 pub struct ActiveSession {
@@ -24,8 +160,10 @@ pub struct ActiveSession {
     pub cmd_tx: mpsc::Sender<SessionCommand>,
     pub handle: Handle<SshClientHandler>,
     pub sftp: Arc<Mutex<Option<Arc<SftpSession>>>>,
+    pub transfer_sftp_pool: Arc<Mutex<Vec<Arc<SftpSession>>>>,
+    pub transfer_sftp_cursor: AtomicUsize,
     pub is_closed: Arc<AtomicBool>,
-    pub stdout_history: Arc<Mutex<Vec<u8>>>,
+    output_state: Arc<std::sync::Mutex<TerminalOutputState>>,
 }
 
 impl ActiveSession {
@@ -46,24 +184,41 @@ impl ActiveSession {
     pub async fn close(&self) -> Result<(), String> {
         self.is_closed.store(true, Ordering::SeqCst);
         *self.sftp.lock().await = None;
+        self.transfer_sftp_pool.lock().await.clear();
+        {
+            let mut guard = self.output_state.lock().unwrap_or_else(|e| e.into_inner());
+            guard.channel = None;
+        }
         let _ = self.cmd_tx.send(SessionCommand::Close).await;
         let _ = self.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
         Ok(())
     }
 
     pub async fn get_history(&self) -> Vec<u8> {
-        let hist = self.stdout_history.lock().await;
-        hist.clone()
+        let guard = self.output_state.lock().unwrap_or_else(|e| e.into_inner());
+        let (a, b) = guard.history.as_slices();
+        let mut out = Vec::with_capacity(a.len() + b.len());
+        out.extend_from_slice(a);
+        out.extend_from_slice(b);
+        out
     }
 
-    pub async fn get_sftp(&self) -> Result<Arc<SftpSession>, String> {
-        let mut lock = self.sftp.lock().await;
-        if let Some(ref sftp) = *lock {
-            return Ok(sftp.clone());
-        }
+    /// Atomically snapshots the current scrollback history and installs a binary IPC `Channel`
+    /// so subsequent PTY bytes stream directly as `ArrayBuffer`s with zero JSON overhead or gaps.
+    pub fn attach_stdout_channel(
+        &self,
+        channel: tauri::ipc::Channel<tauri::ipc::Response>,
+    ) -> Vec<u8> {
+        let mut guard = self.output_state.lock().unwrap_or_else(|e| e.into_inner());
+        let (a, b) = guard.history.as_slices();
+        let mut out = Vec::with_capacity(a.len() + b.len());
+        out.extend_from_slice(a);
+        out.extend_from_slice(b);
+        guard.channel = Some(channel);
+        out
+    }
 
-        log::info!("Opening SFTP subsystem channel for session '{}'", self.session_id);
-
+    async fn open_sftp_subsystem(&self) -> Result<Arc<SftpSession>, String> {
         let channel = self
             .handle
             .channel_open_session()
@@ -77,17 +232,71 @@ impl ActiveSession {
 
         let sftp_session = tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            SftpSession::new(channel.into_stream()),
+            SftpSession::new_with_config(channel.into_stream(), build_sftp_client_config()),
         )
         .await
         .map_err(|_| "SFTP session initialization timed out after 15s. Ensure SFTP subsystem is enabled on the server.".to_string())?
         .map_err(|e| format!("Failed to initialize SFTP session: {}", e))?;
 
-        log::info!("SFTP session initialized successfully for session '{}'", self.session_id);
+        Ok(Arc::new(sftp_session))
+    }
 
-        let sftp_arc = Arc::new(sftp_session);
+    pub async fn get_sftp(&self) -> Result<Arc<SftpSession>, String> {
+        let mut lock = self.sftp.lock().await;
+        if let Some(ref sftp) = *lock {
+            return Ok(sftp.clone());
+        }
+
+        log::info!("Opening primary SFTP subsystem channel for session '{}'", self.session_id);
+        let sftp_arc = self.open_sftp_subsystem().await?;
+        log::info!("Primary SFTP session initialized for session '{}'", self.session_id);
+
         *lock = Some(sftp_arc.clone());
         Ok(sftp_arc)
+    }
+
+    /// Returns a pooled SFTP channel dedicated to file transfers (up to 4 parallel SFTP channels
+    /// per SSH connection, staying safely under OpenSSH's `MaxSessions 10` default while isolating
+    /// bulk file transfers from interactive browsing and directory crawling).
+    pub async fn get_transfer_sftp(&self) -> Result<Arc<SftpSession>, String> {
+        {
+            let pool = self.transfer_sftp_pool.lock().await;
+            if pool.len() >= MAX_TRANSFER_SFTP_CHANNELS {
+                let idx = self.transfer_sftp_cursor.fetch_add(1, Ordering::Relaxed) % pool.len();
+                return Ok(pool[idx].clone());
+            }
+        }
+
+        let mut pool = self.transfer_sftp_pool.lock().await;
+        if pool.len() < MAX_TRANSFER_SFTP_CHANNELS {
+            match self.open_sftp_subsystem().await {
+                Ok(ch) => {
+                    pool.push(ch.clone());
+                    log::debug!(
+                        "Opened transfer SFTP channel {}/{} for session '{}'",
+                        pool.len(),
+                        MAX_TRANSFER_SFTP_CHANNELS,
+                        self.session_id
+                    );
+                    return Ok(ch);
+                }
+                Err(err) => {
+                    log::debug!(
+                        "Could not open extra transfer SFTP channel for '{}' ({}); reusing existing SFTP session",
+                        self.session_id,
+                        err
+                    );
+                }
+            }
+        }
+
+        if !pool.is_empty() {
+            let idx = self.transfer_sftp_cursor.fetch_add(1, Ordering::Relaxed) % pool.len();
+            return Ok(pool[idx].clone());
+        }
+        drop(pool);
+
+        self.get_sftp().await
     }
 }
 
@@ -190,6 +399,10 @@ pub async fn spawn_ssh_session(
     let client_config = Arc::new(russh::client::Config {
         // Disable Nagle's algorithm for instant, zero-latency interactive terminal typing
         nodelay: true,
+        // Enlarged channel flow-control window & buffers for smooth Neovim / TUI screen redraws
+        window_size: 4 * 1024 * 1024,
+        maximum_packet_size: 65536,
+        channel_buffer_size: 512,
         keepalive_interval: Some(std::time::Duration::from_secs(15)),
         ..Default::default()
     });
@@ -361,7 +574,7 @@ pub async fn spawn_ssh_session(
         .await
         .map_err(|e| format!("Failed to open channel: {}", e))?;
 
-    // 4. Request PTY & Shell
+    // 4. Request PTY, advertise 24-bit truecolor (non-blocking), & launch Shell
     channel
         .request_pty(
             false,
@@ -375,6 +588,8 @@ pub async fn spawn_ssh_session(
         .await
         .map_err(|e| format!("Failed to request PTY: {}", e))?;
 
+    let _ = channel.set_env(false, "COLORTERM", "truecolor").await;
+
     channel
         .request_shell(true)
         .await
@@ -382,30 +597,76 @@ pub async fn spawn_ssh_session(
 
     let _ = app.emit("ssh:connect_log", "PTY Shell ready. Connection established.");
 
-    // 5. Spawn actor task for bidirectional streaming
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<SessionCommand>(100);
+    // 5. Spawn actor task for bidirectional binary streaming with DEC Mode 2026 frame coalescing
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<SessionCommand>(512);
     let event_name = format!("ssh:stdout:{}", session_id);
     let session_id_clone = session_id.clone();
-    let stdout_history = Arc::new(Mutex::new(Vec::new()));
-    let stdout_history_clone = stdout_history.clone();
+    let output_state = Arc::new(std::sync::Mutex::new(TerminalOutputState {
+        history: std::collections::VecDeque::with_capacity(256 * 1024),
+        channel: None,
+    }));
+    let output_state_clone = output_state.clone();
     let is_closed = Arc::new(AtomicBool::new(false));
     let is_closed_clone = is_closed.clone();
     let sftp = Arc::new(Mutex::new(None));
     let sftp_for_task = sftp.clone();
+    let transfer_sftp_pool = Arc::new(Mutex::new(Vec::new()));
+    let transfer_sftp_for_task = transfer_sftp_pool.clone();
     let state_for_task = state;
 
     tokio::spawn(async move {
-        const MAX_HISTORY: usize = 256 * 1024;
-        const PURGE_CHUNK: usize = 64 * 1024;
+        const SYNC_FRAME_MAX_WAIT: std::time::Duration = std::time::Duration::from_millis(4);
+        const BURST_COALESCE_WAIT: std::time::Duration = std::time::Duration::from_micros(750);
+        const MAX_COALESCE_BYTES: usize = 128 * 1024;
+
+        let mut out_buf: Vec<u8> = Vec::with_capacity(64 * 1024);
+        let mut sync_tail = [0u8; 7];
+        let mut sync_tail_len = 0usize;
+        let mut in_sync_update = false;
+        let mut flush_deadline: Option<tokio::time::Instant> = None;
 
         loop {
+            let sleep_fut = async {
+                match flush_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+
             tokio::select! {
+                biased;
+
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
-                        SessionCommand::Write(data) => {
+                        SessionCommand::Write(mut data) => {
+                            let mut pending_resize: Option<(u32, u32)> = None;
+                            let mut should_close = false;
+                            while data.len() < 32 * 1024 {
+                                match cmd_rx.try_recv() {
+                                    Ok(SessionCommand::Write(more)) => data.extend_from_slice(&more),
+                                    Ok(SessionCommand::Resize { cols, rows }) => {
+                                        pending_resize = Some((cols, rows));
+                                    }
+                                    Ok(SessionCommand::Close) => {
+                                        should_close = true;
+                                        break;
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
                             if channel.data(&data[..]).await.is_err() {
+                                flush_terminal_output(&output_state_clone, &app, &event_name, &mut out_buf);
                                 is_closed_clone.store(true, Ordering::SeqCst);
                                 let _ = app.emit(&format!("ssh:exit:{}", session_id_clone), ());
+                                break;
+                            }
+                            if let Some((cols, rows)) = pending_resize {
+                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                            }
+                            if should_close {
+                                flush_terminal_output(&output_state_clone, &app, &event_name, &mut out_buf);
+                                is_closed_clone.store(true, Ordering::SeqCst);
+                                let _ = channel.close().await;
                                 break;
                             }
                         }
@@ -413,6 +674,7 @@ pub async fn spawn_ssh_session(
                             let _ = channel.window_change(cols, rows, 0, 0).await;
                         }
                         SessionCommand::Close => {
+                            flush_terminal_output(&output_state_clone, &app, &event_name, &mut out_buf);
                             is_closed_clone.store(true, Ordering::SeqCst);
                             let _ = channel.close().await;
                             break;
@@ -421,33 +683,33 @@ pub async fn spawn_ssh_session(
                 }
                 msg = channel.wait() => {
                     match msg {
-                        Some(russh::ChannelMsg::Data { ref data }) => {
-                            let text = String::from_utf8_lossy(data).to_string();
-                            let _ = app.emit(&event_name, text);
-                            let mut hist = stdout_history_clone.lock().await;
-                            hist.extend_from_slice(data);
-                            if hist.len() > MAX_HISTORY + PURGE_CHUNK {
-                                let mut drain_end = PURGE_CHUNK;
-                                while drain_end < hist.len() && (hist[drain_end] & 0b1100_0000) == 0b1000_0000 {
-                                    drain_end += 1;
+                        Some(russh::ChannelMsg::Data { ref data })
+                        | Some(russh::ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
+                            let saw_sync_end = scan_dec_sync_mode(
+                                &mut sync_tail,
+                                &mut sync_tail_len,
+                                data,
+                                &mut in_sync_update,
+                            );
+                            let was_empty = out_buf.is_empty();
+                            out_buf.extend_from_slice(data);
+
+                            if out_buf.len() >= MAX_COALESCE_BYTES
+                                || (!in_sync_update && (saw_sync_end || (was_empty && data.len() <= 128)))
+                            {
+                                flush_deadline = None;
+                                flush_terminal_output(&output_state_clone, &app, &event_name, &mut out_buf);
+                            } else if in_sync_update {
+                                let target = tokio::time::Instant::now() + SYNC_FRAME_MAX_WAIT;
+                                if flush_deadline.is_none_or(|d| d < target && was_empty) {
+                                    flush_deadline = Some(target);
                                 }
-                                hist.drain(0..drain_end);
-                            }
-                        }
-                        Some(russh::ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
-                            let text = String::from_utf8_lossy(data).to_string();
-                            let _ = app.emit(&event_name, text);
-                            let mut hist = stdout_history_clone.lock().await;
-                            hist.extend_from_slice(data);
-                            if hist.len() > MAX_HISTORY + PURGE_CHUNK {
-                                let mut drain_end = PURGE_CHUNK;
-                                while drain_end < hist.len() && (hist[drain_end] & 0b1100_0000) == 0b1000_0000 {
-                                    drain_end += 1;
-                                }
-                                hist.drain(0..drain_end);
+                            } else if flush_deadline.is_none() {
+                                flush_deadline = Some(tokio::time::Instant::now() + BURST_COALESCE_WAIT);
                             }
                         }
                         Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
+                            flush_terminal_output(&output_state_clone, &app, &event_name, &mut out_buf);
                             is_closed_clone.store(true, Ordering::SeqCst);
                             let _ = app.emit(&format!("ssh:exit:{}", session_id_clone), ());
                             break;
@@ -455,12 +717,22 @@ pub async fn spawn_ssh_session(
                         _ => {}
                     }
                 }
+                _ = sleep_fut => {
+                    flush_deadline = None;
+                    in_sync_update = false;
+                    flush_terminal_output(&output_state_clone, &app, &event_name, &mut out_buf);
+                }
             }
         }
 
-        // Always clean up session-scoped staged external edits, directory watchers, and SFTP channel on exit
+        // Always clean up session-scoped staged external edits, directory watchers, and SFTP channels on exit
         is_closed_clone.store(true, Ordering::SeqCst);
+        {
+            let mut guard = output_state_clone.lock().unwrap_or_else(|e| e.into_inner());
+            guard.channel = None;
+        }
         *sftp_for_task.lock().await = None;
+        transfer_sftp_for_task.lock().await.clear();
         state_for_task.stop_all_external_edits(Some(&session_id_clone));
         state_for_task.stop_all_dir_watchers(Some(&session_id_clone));
     });
@@ -473,8 +745,10 @@ pub async fn spawn_ssh_session(
         cmd_tx,
         handle,
         sftp,
+        transfer_sftp_pool,
+        transfer_sftp_cursor: AtomicUsize::new(0),
         is_closed,
-        stdout_history,
+        output_state,
     })
 }
 
@@ -735,5 +1009,27 @@ mod tests {
         assert_eq!(parse_host_and_port("2001:db8::1", 22), ("2001:db8::1".to_string(), 22));
         assert_eq!(parse_host_and_port("[2001:db8::1]:2222", 22), ("2001:db8::1".to_string(), 2222));
         assert_eq!(parse_host_and_port("ssh://user@[::1]:2200", 22), ("::1".to_string(), 2200));
+    }
+
+    #[test]
+    fn scan_dec_sync_mode_tracks_neovim_frames_even_across_split_packets() {
+        let mut tail = [0u8; 7];
+        let mut tail_len = 0usize;
+        let mut in_sync = false;
+
+        // 1. Full frame in a single packet
+        let single = b"\x1b[?2026h\x1b[Hhello nvim\x1b[?2026l";
+        assert!(scan_dec_sync_mode(&mut tail, &mut tail_len, single, &mut in_sync));
+        assert!(!in_sync);
+
+        // 2. `\x1b[?2026h` split across packet 1 & packet 2, then `\x1b[?2026l` split across packet 3 & 4
+        assert!(!scan_dec_sync_mode(&mut tail, &mut tail_len, b"prefix\x1b[?20", &mut in_sync));
+        assert!(!in_sync);
+        assert!(!scan_dec_sync_mode(&mut tail, &mut tail_len, b"26hframe_body_part_1", &mut in_sync));
+        assert!(in_sync);
+        assert!(!scan_dec_sync_mode(&mut tail, &mut tail_len, b"frame_body_part_2\x1b[?2026", &mut in_sync));
+        assert!(in_sync);
+        assert!(scan_dec_sync_mode(&mut tail, &mut tail_len, b"l", &mut in_sync));
+        assert!(!in_sync);
     }
 }

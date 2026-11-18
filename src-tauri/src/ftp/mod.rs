@@ -1,7 +1,10 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU8, Ordering},
+    Arc,
+};
 use std::time::Instant;
 use suppaftp::types::{FileType, FormatControl};
 use suppaftp::{FtpStream, RustlsConnector, RustlsFtpStream, Status};
@@ -76,7 +79,130 @@ fn is_connection_error(err: &str) -> bool {
         || lower.contains("timeout")
 }
 
-const MAX_FTP_TRANSFER_POOL_SIZE: usize = 6;
+const MAX_FTP_TRANSFER_POOL_SIZE: usize = 12;
+const FTP_CRAWL_PARALLEL_WORKERS: usize = 5;
+
+const MLSD_UNTESTED: u8 = 0;
+const MLSD_SUPPORTED: u8 = 1;
+const MLSD_UNSUPPORTED: u8 = 2;
+
+struct PooledFtpStream {
+    stream: FtpClientStream,
+    is_binary: bool,
+}
+
+struct FtpPoolInner {
+    idle: Vec<PooledFtpStream>,
+    in_use: usize,
+}
+
+struct FtpTransferPool {
+    inner: std::sync::Mutex<FtpPoolInner>,
+    condvar: std::sync::Condvar,
+}
+
+impl FtpTransferPool {
+    fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(FtpPoolInner {
+                idle: Vec::new(),
+                in_use: 0,
+            }),
+            condvar: std::sync::Condvar::new(),
+        }
+    }
+
+    fn try_checkout_idle(&self) -> Option<PooledFtpStream> {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(item) = guard.idle.pop() {
+            guard.in_use += 1;
+            Some(item)
+        } else {
+            None
+        }
+    }
+
+    fn register_new_checkout(&self) {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard.in_use += 1;
+    }
+
+    /// Waits for an active worker to return a warm FTP connection when the server's
+    /// per-IP connection limit (`MaxClientsPerIP`) prevents opening additional sockets.
+    fn wait_for_checked_in_stream(
+        &self,
+        timeout: std::time::Duration,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Option<PooledFtpStream> {
+        let deadline = Instant::now() + timeout;
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if is_cancelled() {
+                return None;
+            }
+            if let Some(item) = guard.idle.pop() {
+                guard.in_use += 1;
+                return Some(item);
+            }
+            if guard.in_use == 0 {
+                return None;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            let slice = (deadline - now).min(std::time::Duration::from_millis(200));
+            let (next_guard, _) = self
+                .condvar
+                .wait_timeout(guard, slice)
+                .unwrap_or_else(|e| e.into_inner());
+            guard = next_guard;
+        }
+    }
+
+    fn checkin(&self, item: PooledFtpStream) {
+        let overflow = {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            guard.in_use = guard.in_use.saturating_sub(1);
+            if guard.idle.len() < MAX_FTP_TRANSFER_POOL_SIZE {
+                guard.idle.push(item);
+                self.condvar.notify_one();
+                None
+            } else {
+                self.condvar.notify_all();
+                Some(item.stream)
+            }
+        };
+        if let Some(mut stream) = overflow {
+            match &mut stream {
+                FtpClientStream::Plain(s) => {
+                    let _ = s.quit();
+                }
+                FtpClientStream::Secure(s) => {
+                    let _ = s.quit();
+                }
+            }
+        }
+    }
+
+    fn discard_checked_out(&self) {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard.in_use = guard.in_use.saturating_sub(1);
+        if guard.in_use == 0 && guard.idle.is_empty() {
+            self.condvar.notify_all();
+        } else {
+            self.condvar.notify_one();
+        }
+    }
+
+    fn drain_all(&self) -> Vec<PooledFtpStream> {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard.in_use = 0;
+        let drained = std::mem::take(&mut guard.idle);
+        self.condvar.notify_all();
+        drained
+    }
+}
 
 fn build_ftps_client_config(allow_invalid_certs: bool) -> Result<rustls::ClientConfig, String> {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -485,22 +611,6 @@ fn connect_ftp_stream(
     }
 }
 
-fn return_transfer_stream(pool_arc: &Arc<Mutex<Vec<FtpClientStream>>>, mut stream: FtpClientStream) {
-    let mut pool = pool_arc.blocking_lock();
-    if pool.len() < MAX_FTP_TRANSFER_POOL_SIZE {
-        pool.push(stream);
-    } else {
-        match &mut stream {
-            FtpClientStream::Plain(s) => {
-                let _ = s.quit();
-            }
-            FtpClientStream::Secure(s) => {
-                let _ = s.quit();
-            }
-        }
-    }
-}
-
 pub struct ActiveFtpSession {
     pub session_id: String,
     pub host: String,
@@ -511,12 +621,31 @@ pub struct ActiveFtpSession {
     pub allow_invalid_certs: bool,
     pub current_dir: Arc<RwLock<String>>,
     client: Arc<Mutex<FtpClientStream>>,
-    transfer_pool: Arc<Mutex<Vec<FtpClientStream>>>,
+    transfer_pool: Arc<FtpTransferPool>,
+    mlsd_support: Arc<AtomicU8>,
+}
+
+macro_rules! ensure_ftp_stream_type {
+    ($stream:expr, $is_binary:expr, $want_binary:expr) => {{
+        if *$is_binary != $want_binary {
+            let ft = if $want_binary {
+                FileType::Binary
+            } else {
+                FileType::Ascii(FormatControl::Default)
+            };
+            $stream
+                .transfer_type(ft)
+                .map_err(|e| format!("FTP failed to set transfer mode: {}", e))?;
+            *$is_binary = $want_binary;
+        }
+        Ok::<(), String>(())
+    }};
 }
 
 macro_rules! run_ftp_download {
-    ($stream:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr, $known_size:expr, $ftp_mode:expr) => {{
+    ($stream:expr, $is_binary:expr, $app_handle:expr, $remote_path:expr, $local_path:expr, $transfer_id:expr, $conflict_action:expr, $known_size:expr, $ftp_mode:expr) => {{
         let stream = $stream;
+        let is_binary: &mut bool = $is_binary;
         let state = $app_handle.state::<crate::state::AppState>();
         if state.is_transfer_cancelled($transfer_id) {
             return Err("Transfer cancelled by user".to_string());
@@ -529,9 +658,9 @@ macro_rules! run_ftp_download {
             .unwrap_or_else(|| "file".to_string());
 
         let total_size = match $known_size {
-            Some(sz) if sz > 0 => sz,
-            _ => {
-                let _ = stream.transfer_type(FileType::Binary);
+            Some(sz) => sz,
+            None => {
+                let _ = ensure_ftp_stream_type!(stream, is_binary, true);
                 stream.size($remote_path).unwrap_or(0) as u64
             }
         };
@@ -559,49 +688,48 @@ macro_rules! run_ftp_download {
             return Err("Transfer cancelled by user".to_string());
         }
 
-        // Ensure parent directory exists
-        if let Some(parent) = native_local.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
         let desired_type = resolve_ftp_download_file_type($ftp_mode, &file_name);
-        let used_ascii = matches!(desired_type, FileType::Ascii(_));
-        stream
-            .transfer_type(desired_type)
-            .map_err(|e| format!("FTP failed to set transfer mode: {}", e))?;
+        let want_binary = !matches!(desired_type, FileType::Ascii(_));
+        ensure_ftp_stream_type!(stream, is_binary, want_binary)?;
 
-        let mut reader = match stream.retr_as_stream($remote_path) {
-            Ok(r) => r,
-            Err(e) => {
-                if used_ascii {
-                    let _ = stream.transfer_type(FileType::Binary);
+        let mut reader = stream
+            .retr_as_stream($remote_path)
+            .map_err(|e| format!("Failed to retrieve file: {}", e))?;
+
+        let mut local_file = match File::create(&native_local) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = native_local.parent() {
+                    let _ = std::fs::create_dir_all(parent);
                 }
-                return Err(format!("Failed to retrieve file: {}", e));
+                File::create(&native_local)
+                    .map_err(|err| format!("Failed to create local destination file: {}", err))?
             }
+            Err(e) => return Err(format!("Failed to create local destination file: {}", e)),
         };
-
-        let mut local_file = File::create(&native_local)
-            .map_err(|e| format!("Failed to create local destination file: {}", e))?;
 
         let mut buffer = [0u8; 64 * 1024];
         let mut transferred = 0u64;
         let start_time = Instant::now();
         let mut last_emit = Instant::now();
 
-        // Emit initial 0% progress immediately so frontend queue displays the item in active state
-        let _ = $app_handle.emit(
-            &event_name,
-            TransferProgress {
-                transfer_id: $transfer_id.to_string(),
-                file_name: file_name.clone(),
-                direction: "download".to_string(),
-                bytes_transferred: 0,
-                total_bytes: total_size,
-                speed_bytes_per_sec: 0,
-                is_complete: false,
-                error: None,
-            },
-        );
+        // For larger files (> 128 KB), emit initial 0% progress immediately;
+        // for small files that finish in milliseconds, skip to cut IPC overhead in half.
+        if total_size > 128 * 1024 {
+            let _ = $app_handle.emit(
+                &event_name,
+                TransferProgress {
+                    transfer_id: $transfer_id.to_string(),
+                    file_name: file_name.clone(),
+                    direction: "download".to_string(),
+                    bytes_transferred: 0,
+                    total_bytes: total_size,
+                    speed_bytes_per_sec: 0,
+                    is_complete: false,
+                    error: None,
+                },
+            );
+        }
 
         loop {
             if state.is_transfer_cancelled($transfer_id) {
@@ -673,11 +801,7 @@ macro_rules! run_ftp_download {
 
         drop(local_file);
 
-        let finalize_res = stream.finalize_retr_stream(reader);
-        if used_ascii {
-            let _ = stream.transfer_type(FileType::Binary);
-        }
-        if let Err(e) = finalize_res {
+        if let Err(e) = stream.finalize_retr_stream(reader) {
             let _ = std::fs::remove_file(&native_local);
             return Err(format!("Failed to finalize FTP download: {}", e));
         }
@@ -788,8 +912,9 @@ macro_rules! remove_ftp_dir_recursive {
 }
 
 macro_rules! run_ftp_upload {
-    ($stream:expr, $app_handle:expr, $local_path:expr, $remote_path:expr, $transfer_id:expr, $conflict_action:expr, $ftp_mode:expr) => {{
+    ($stream:expr, $is_binary:expr, $app_handle:expr, $local_path:expr, $remote_path:expr, $transfer_id:expr, $conflict_action:expr, $ftp_mode:expr) => {{
         let stream = $stream;
+        let is_binary: &mut bool = $is_binary;
         let state = $app_handle.state::<crate::state::AppState>();
         if state.is_transfer_cancelled($transfer_id) {
             return Err("Transfer cancelled by user".to_string());
@@ -813,7 +938,7 @@ macro_rules! run_ftp_upload {
 
         let conflict = $conflict_action.as_deref().unwrap_or("overwrite");
         if conflict == "skip" {
-            let _ = stream.transfer_type(FileType::Binary);
+            let _ = ensure_ftp_stream_type!(stream, is_binary, true);
             if stream.size($remote_path).is_ok() {
                 let _ = $app_handle.emit(
                     &event_name,
@@ -837,10 +962,8 @@ macro_rules! run_ftp_upload {
         }
 
         let desired_type = resolve_ftp_upload_file_type($ftp_mode, &file_name, &mut local_file)?;
-        let used_ascii = matches!(desired_type, FileType::Ascii(_));
-        stream
-            .transfer_type(desired_type)
-            .map_err(|e| format!("FTP failed to set transfer mode: {}", e))?;
+        let want_binary = !matches!(desired_type, FileType::Ascii(_));
+        ensure_ftp_stream_type!(stream, is_binary, want_binary)?;
 
         let mut writer = match stream.put_with_stream($remote_path) {
             Ok(w) => w,
@@ -854,24 +977,13 @@ macro_rules! run_ftp_upload {
                         ensure_ftp_dir_recursive!(stream, &parent_str);
                     }
                 }
-                let retry_type = if used_ascii {
-                    FileType::Ascii(FormatControl::Default)
-                } else {
-                    FileType::Binary
-                };
-                let _ = stream.transfer_type(retry_type);
-                match stream.put_with_stream($remote_path) {
-                    Ok(w) => w,
-                    Err(e) => {
-                        if used_ascii {
-                            let _ = stream.transfer_type(FileType::Binary);
-                        }
-                        return Err(format!(
-                            "Failed to initiate FTP upload for '{}' (initial error: {}): {}",
-                            $remote_path, initial_err, e
-                        ));
-                    }
-                }
+                let _ = ensure_ftp_stream_type!(stream, is_binary, want_binary);
+                stream.put_with_stream($remote_path).map_err(|e| {
+                    format!(
+                        "Failed to initiate FTP upload for '{}' (initial error: {}): {}",
+                        $remote_path, initial_err, e
+                    )
+                })?
             }
         };
 
@@ -880,20 +992,21 @@ macro_rules! run_ftp_upload {
         let start_time = Instant::now();
         let mut last_emit = Instant::now();
 
-        // Emit initial 0% progress immediately so frontend queue displays the item in active state
-        let _ = $app_handle.emit(
-            &event_name,
-            TransferProgress {
-                transfer_id: $transfer_id.to_string(),
-                file_name: file_name.clone(),
-                direction: "upload".to_string(),
-                bytes_transferred: 0,
-                total_bytes: total_size,
-                speed_bytes_per_sec: 0,
-                is_complete: false,
-                error: None,
-            },
-        );
+        if total_size > 128 * 1024 {
+            let _ = $app_handle.emit(
+                &event_name,
+                TransferProgress {
+                    transfer_id: $transfer_id.to_string(),
+                    file_name: file_name.clone(),
+                    direction: "upload".to_string(),
+                    bytes_transferred: 0,
+                    total_bytes: total_size,
+                    speed_bytes_per_sec: 0,
+                    is_complete: false,
+                    error: None,
+                },
+            );
+        }
 
         loop {
             if state.is_transfer_cancelled($transfer_id) {
@@ -956,17 +1069,12 @@ macro_rules! run_ftp_upload {
 
         if let Err(e) = writer.flush() {
             drop(writer);
-            if used_ascii {
-                let _ = stream.transfer_type(FileType::Binary);
-            }
             return Err(format!("Failed to flush FTP upload stream: {}", e));
         }
 
-        let finalize_res = stream.finalize_put_stream(writer);
-        if used_ascii {
-            let _ = stream.transfer_type(FileType::Binary);
-        }
-        finalize_res.map_err(|e| format!("Failed to finalize FTP upload: {}", e))?;
+        stream
+            .finalize_put_stream(writer)
+            .map_err(|e| format!("Failed to finalize FTP upload: {}", e))?;
 
         let _ = $app_handle.emit(
             &event_name,
@@ -1042,7 +1150,8 @@ impl ActiveFtpSession {
             allow_invalid_certs,
             current_dir: Arc::new(RwLock::new(clean_pwd)),
             client: Arc::new(Mutex::new(client)),
-            transfer_pool: Arc::new(Mutex::new(Vec::new())),
+            transfer_pool: Arc::new(FtpTransferPool::new()),
+            mlsd_support: Arc::new(AtomicU8::new(MLSD_UNTESTED)),
         })
     }
 
@@ -1289,23 +1398,32 @@ impl ActiveFtpSession {
             sorted_paths.sort_by_key(|p| p.len());
             let mut created: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-            let pooled = {
-                let mut pool = pool_arc.blocking_lock();
-                pool.pop()
-            };
-            let dedicated = pooled
-                .and_then(|mut stream| {
-                    let ok = match &mut stream {
+            let mut dedicated = match pool_arc.try_checkout_idle() {
+                Some(mut item) => {
+                    let ok = match &mut item.stream {
                         FtpClientStream::Plain(s) => s.noop().is_ok(),
                         FtpClientStream::Secure(s) => s.noop().is_ok(),
                     };
-                    if ok { Some(stream) } else { None }
-                })
-                .or_else(|| {
+                    if ok {
+                        Some(item)
+                    } else {
+                        pool_arc.discard_checked_out();
+                        None
+                    }
+                }
+                None => None,
+            };
+
+            if dedicated.is_none()
+                && let Ok((st, _)) =
                     connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
-                        .ok()
-                        .map(|(st, _)| st)
+            {
+                pool_arc.register_new_checkout();
+                dedicated = Some(PooledFtpStream {
+                    stream: st,
+                    is_binary: true,
                 });
+            }
 
             macro_rules! create_dirs_on_stream {
                 ($stream:expr) => {{
@@ -1337,12 +1455,12 @@ impl ActiveFtpSession {
                 }};
             }
 
-            if let Some(mut stream) = dedicated {
-                match &mut stream {
+            if let Some(mut item) = dedicated {
+                match &mut item.stream {
                     FtpClientStream::Plain(s) => create_dirs_on_stream!(s),
                     FtpClientStream::Secure(s) => create_dirs_on_stream!(s),
                 }
-                return_transfer_stream(&pool_arc, stream);
+                pool_arc.checkin(item);
             } else {
                 let mut guard = client_arc.blocking_lock();
                 match &mut *guard {
@@ -1374,17 +1492,11 @@ impl ActiveFtpSession {
         let pass = self.password.clone().unwrap_or_default();
         let secure = self.is_secure;
         let allow_invalid_certs = self.allow_invalid_certs;
+        let mlsd_support = self.mlsd_support.clone();
         let target_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
         let patterns = ignore_patterns.unwrap_or_default();
 
         tokio::task::spawn_blocking(move || -> Result<Vec<RemoteCrawlTask>, String> {
-            let mut results: Vec<RemoteCrawlTask> = Vec::new();
-            let mut dirs_count = 0usize;
-            let mut last_emit = std::time::Instant::now();
-            let mut last_count = 0usize;
-            let mut emitted_files_idx = 0usize;
-            let mut last_batch_emit = std::time::Instant::now();
-
             // Emit initial 0 count
             let _ = app.emit(
                 "sftp:crawl:progress",
@@ -1395,23 +1507,31 @@ impl ActiveFtpSession {
                 },
             );
 
-            let pooled = {
-                let mut pool = pool_arc.blocking_lock();
-                pool.pop()
-            };
-            let mut dedicated = pooled
-                .and_then(|mut stream| {
-                    let ok = match &mut stream {
+            let checkout_or_connect = || -> Option<PooledFtpStream> {
+                if let Some(mut item) = pool_arc.try_checkout_idle() {
+                    let ok = match &mut item.stream {
                         FtpClientStream::Plain(s) => s.noop().is_ok(),
                         FtpClientStream::Secure(s) => s.noop().is_ok(),
                     };
-                    if ok { Some(stream) } else { None }
-                })
-                .or_else(|| {
+                    if ok {
+                        return Some(item);
+                    }
+                    pool_arc.discard_checked_out();
+                }
+                if let Ok((st, _)) =
                     connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
-                        .ok()
-                        .map(|(st, _)| st)
-                });
+                {
+                    pool_arc.register_new_checkout();
+                    Some(PooledFtpStream {
+                        stream: st,
+                        is_binary: true,
+                    })
+                } else {
+                    None
+                }
+            };
+
+            let mut dedicated = checkout_or_connect();
 
             let initial_pwd = if dedicated.is_none() {
                 let mut guard = client_arc.blocking_lock();
@@ -1423,35 +1543,78 @@ impl ActiveFtpSession {
                 None
             };
 
-            let flush_crawl_batch = |results: &[RemoteCrawlTask],
-                                     emitted_idx: &mut usize,
-                                     last_batch: &mut std::time::Instant,
-                                     dirs: usize,
-                                     force: bool| {
+            struct FtpDirCrawlJob {
+                root_canon_trimmed: String,
+                clean_root: String,
+                local_base: String,
+                dir: String,
+            }
+
+            struct FtpCrawlShared {
+                queue: std::collections::VecDeque<FtpDirCrawlJob>,
+                in_progress: usize,
+                results: Vec<RemoteCrawlTask>,
+                dirs_count: usize,
+                last_emit: Instant,
+                last_count: usize,
+                emitted_files_idx: usize,
+                last_batch_emit: Instant,
+            }
+
+            let flush_crawl_batch = |st: &mut FtpCrawlShared, force: bool| {
                 if let Some(ref cid) = crawl_id {
-                    let pending = results.len().saturating_sub(*emitted_idx);
+                    let pending = st.results.len().saturating_sub(st.emitted_files_idx);
                     if pending > 0
                         && (force
                             || pending >= crate::sftp::CRAWL_STREAM_BATCH_SIZE
-                            || last_batch.elapsed()
+                            || st.last_batch_emit.elapsed()
                                 >= std::time::Duration::from_millis(
                                     crate::sftp::CRAWL_STREAM_BATCH_INTERVAL_MS,
                                 ))
                     {
-                        let batch_files = results[*emitted_idx..].to_vec();
-                        *emitted_idx = results.len();
-                        *last_batch = std::time::Instant::now();
+                        let batch_files = st.results[st.emitted_files_idx..].to_vec();
+                        st.emitted_files_idx = st.results.len();
+                        st.last_batch_emit = Instant::now();
                         let _ = app.emit(
                             "sftp:crawl:remote_batch",
                             crate::sftp::RemoteCrawlBatchPayload {
                                 crawl_id: cid.clone(),
                                 files: batch_files,
-                                total_files: results.len(),
-                                total_directories: dirs,
+                                total_files: st.results.len(),
+                                total_directories: st.dirs_count,
                             },
                         );
                     }
                 }
+            };
+
+            let maybe_emit_progress = |st: &mut FtpCrawlShared| {
+                let total = st.results.len() + st.dirs_count;
+                if total.saturating_sub(st.last_count) >= 20
+                    || st.last_emit.elapsed() >= std::time::Duration::from_millis(35)
+                {
+                    st.last_count = total;
+                    st.last_emit = Instant::now();
+                    let _ = app.emit(
+                        "sftp:crawl:progress",
+                        crate::sftp::CrawlProgressPayload {
+                            scan_type: "download".to_string(),
+                            files: st.results.len(),
+                            directories: st.dirs_count,
+                        },
+                    );
+                }
+            };
+
+            let mut init_state = FtpCrawlShared {
+                queue: std::collections::VecDeque::new(),
+                in_progress: 0,
+                results: Vec::new(),
+                dirs_count: 0,
+                last_emit: Instant::now(),
+                last_count: 0,
+                emitted_files_idx: 0,
+                last_batch_emit: Instant::now(),
             };
 
             for p in paths {
@@ -1463,14 +1626,15 @@ impl ActiveFtpSession {
                     continue;
                 }
 
-                // Check if root path is a directory or a readable regular file
-                let is_dir_or_size: Option<Result<String, u64>> = if let Some(ref mut stream) = dedicated {
-                    match stream {
+                // Resolve root path: check if directory or regular file
+                let is_dir_or_size: Option<Result<String, u64>> = if let Some(ref mut item) = dedicated {
+                    match &mut item.stream {
                         FtpClientStream::Plain(s) => {
                             if s.cwd(&clean_p).is_ok() {
                                 let root_canonical = s.pwd().unwrap_or_else(|_| clean_p.clone());
                                 Some(Ok(root_canonical))
                             } else {
+                                let _ = ensure_ftp_stream_type!(s, &mut item.is_binary, true);
                                 s.size(&clean_p).ok().map(|sz| Err(sz as u64))
                             }
                         }
@@ -1479,6 +1643,7 @@ impl ActiveFtpSession {
                                 let root_canonical = s.pwd().unwrap_or_else(|_| clean_p.clone());
                                 Some(Ok(root_canonical))
                             } else {
+                                let _ = ensure_ftp_stream_type!(s, &mut item.is_binary, true);
                                 s.size(&clean_p).ok().map(|sz| Err(sz as u64))
                             }
                         }
@@ -1491,6 +1656,7 @@ impl ActiveFtpSession {
                                 let root_canonical = s.pwd().unwrap_or_else(|_| clean_p.clone());
                                 Some(Ok(root_canonical))
                             } else {
+                                let _ = s.transfer_type(FileType::Binary);
                                 s.size(&clean_p).ok().map(|sz| Err(sz as u64))
                             }
                         }
@@ -1499,6 +1665,7 @@ impl ActiveFtpSession {
                                 let root_canonical = s.pwd().unwrap_or_else(|_| clean_p.clone());
                                 Some(Ok(root_canonical))
                             } else {
+                                let _ = s.transfer_type(FileType::Binary);
                                 s.size(&clean_p).ok().map(|sz| Err(sz as u64))
                             }
                         }
@@ -1514,117 +1681,18 @@ impl ActiveFtpSession {
                         } else {
                             format!("{}/{}", target_local, folder_name)
                         };
-
-                        let mut dirs_to_visit = vec![clean_p.clone()];
-                        dirs_count += 1;
-
-                        while let Some(dir) = dirs_to_visit.pop() {
-                            if cancel_token.load(Ordering::SeqCst) {
-                                break;
-                            }
-
-                            let dir_listing = if let Some(ref mut stream) = dedicated {
-                                match stream {
-                                    FtpClientStream::Plain(s) => {
-                                        if s.cwd(&dir).is_ok() {
-                                            let canonical = s.pwd().unwrap_or_else(|_| dir.clone());
-                                            s.list(None).ok().map(|lines| (canonical, lines))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    FtpClientStream::Secure(s) => {
-                                        if s.cwd(&dir).is_ok() {
-                                            let canonical = s.pwd().unwrap_or_else(|_| dir.clone());
-                                            s.list(None).ok().map(|lines| (canonical, lines))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                }
-                            } else {
-                                let mut guard = client_arc.blocking_lock();
-                                match &mut *guard {
-                                    FtpClientStream::Plain(s) => {
-                                        if s.cwd(&dir).is_ok() {
-                                            let canonical = s.pwd().unwrap_or_else(|_| dir.clone());
-                                            s.list(None).ok().map(|lines| (canonical, lines))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    FtpClientStream::Secure(s) => {
-                                        if s.cwd(&dir).is_ok() {
-                                            let canonical = s.pwd().unwrap_or_else(|_| dir.clone());
-                                            s.list(None).ok().map(|lines| (canonical, lines))
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                }
-                            };
-
-                            let (canonical_dir, lines) = match dir_listing {
-                                Some(pair) => pair,
-                                None => continue,
-                            };
-
-                            for line in lines {
-                                if cancel_token.load(Ordering::SeqCst) {
-                                    break;
-                                }
-                                if let Some(entry) = parse_ftp_list_line(&line, &canonical_dir) {
-                                    if entry.name == "." || entry.name == ".." {
-                                        continue;
-                                    }
-                                    if crate::sftp::is_path_ignored(&entry.name, &entry.path, &patterns) {
-                                        continue;
-                                    }
-                                    if entry.is_dir {
-                                        dirs_count += 1;
-                                        dirs_to_visit.push(entry.path);
-                                    } else {
-                                        let rel = entry
-                                            .path
-                                            .strip_prefix(&root_canon_trimmed)
-                                            .or_else(|| entry.path.strip_prefix(&clean_p))
-                                            .unwrap_or(&entry.path)
-                                            .trim_start_matches('/');
-                                        let local_path = format!("{}/{}", local_base.trim_end_matches('/'), rel);
-                                        results.push(RemoteCrawlTask {
-                                            remote_path: entry.path,
-                                            local_path,
-                                            file_name: entry.name,
-                                            size: entry.size,
-                                        });
-                                    }
-
-                                    let total = results.len() + dirs_count;
-                                    if total.saturating_sub(last_count) >= 20
-                                        || last_emit.elapsed() >= std::time::Duration::from_millis(35)
-                                    {
-                                        last_count = total;
-                                        last_emit = std::time::Instant::now();
-                                        let _ = app.emit(
-                                            "sftp:crawl:progress",
-                                            crate::sftp::CrawlProgressPayload {
-                                                scan_type: "download".to_string(),
-                                                files: results.len(),
-                                                directories: dirs_count,
-                                            },
-                                        );
-                                    }
-
-                                    flush_crawl_batch(
-                                        &results,
-                                        &mut emitted_files_idx,
-                                        &mut last_batch_emit,
-                                        dirs_count,
-                                        false,
-                                    );
-                                }
-                            }
-                        }
+                        let start_dir = if root_canonical.is_empty() {
+                            clean_p.clone()
+                        } else {
+                            root_canonical
+                        };
+                        init_state.dirs_count += 1;
+                        init_state.queue.push_back(FtpDirCrawlJob {
+                            root_canon_trimmed,
+                            clean_root: clean_p,
+                            local_base,
+                            dir: start_dir,
+                        });
                     }
                     Some(Err(size)) => {
                         let file_name = clean_p.split('/').next_back().unwrap_or("file").to_string();
@@ -1634,50 +1702,270 @@ impl ActiveFtpSession {
                             } else {
                                 format!("{}/{}", target_local, file_name)
                             };
-                            results.push(RemoteCrawlTask {
+                            init_state.results.push(RemoteCrawlTask {
                                 remote_path: clean_p,
                                 local_path,
                                 file_name,
                                 size,
                             });
-                            flush_crawl_batch(
-                                &results,
-                                &mut emitted_files_idx,
-                                &mut last_batch_emit,
-                                dirs_count,
-                                false,
-                            );
+                            maybe_emit_progress(&mut init_state);
+                            flush_crawl_batch(&mut init_state, false);
                         }
                     }
                     None => {}
                 }
             }
 
-            if let Some(stream) = dedicated {
-                if !cancel_token.load(Ordering::SeqCst) {
-                    return_transfer_stream(&pool_arc, stream);
+            if !init_state.queue.is_empty() && !cancel_token.load(Ordering::SeqCst) {
+                if let Some(primary_item) = dedicated.take() {
+                    // Parallel Breadth-First FTP Crawler (up to FTP_CRAWL_PARALLEL_WORKERS connections)
+                    let shared_mutex = std::sync::Mutex::new(init_state);
+                    let shared_cv = std::sync::Condvar::new();
+
+                    let run_crawler_worker = |mut worker_stream: Option<PooledFtpStream>| {
+                        loop {
+                            if cancel_token.load(Ordering::SeqCst) {
+                                break;
+                            }
+
+                            // Helper workers lazily connect only once subdirectories are queued
+                            if worker_stream.is_none() {
+                                let should_connect = {
+                                    let mut guard =
+                                        shared_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                    while guard.queue.is_empty()
+                                        && guard.in_progress > 0
+                                        && !cancel_token.load(Ordering::SeqCst)
+                                    {
+                                        guard = shared_cv
+                                            .wait_timeout(
+                                                guard,
+                                                std::time::Duration::from_millis(100),
+                                            )
+                                            .unwrap_or_else(|e| e.into_inner())
+                                            .0;
+                                    }
+                                    !cancel_token.load(Ordering::SeqCst) && !guard.queue.is_empty()
+                                };
+                                if !should_connect {
+                                    break;
+                                }
+                                match checkout_or_connect() {
+                                    Some(item) => worker_stream = Some(item),
+                                    None => break, // Server MaxClientsPerIP reached; existing workers finish the crawl
+                                }
+                            }
+
+                            let job = {
+                                let mut guard =
+                                    shared_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                loop {
+                                    if cancel_token.load(Ordering::SeqCst) {
+                                        shared_cv.notify_all();
+                                        break None;
+                                    }
+                                    if let Some(j) = guard.queue.pop_front() {
+                                        guard.in_progress += 1;
+                                        break Some(j);
+                                    }
+                                    if guard.in_progress == 0 {
+                                        shared_cv.notify_all();
+                                        break None;
+                                    }
+                                    guard = shared_cv
+                                        .wait_timeout(guard, std::time::Duration::from_millis(100))
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .0;
+                                }
+                            };
+
+                            let Some(job) = job else {
+                                break;
+                            };
+
+                            let item = worker_stream.as_mut().unwrap();
+                            item.is_binary = false; // LIST / MLSD may alter stream representation type
+                            let mut entries_res =
+                                list_ftp_dir_entries(&mut item.stream, &job.dir, &mlsd_support);
+
+                            // Reconnect once if control socket timed out mid-crawl
+                            if let Err(ref err_msg) = entries_res
+                                && is_connection_error(err_msg)
+                            {
+                                pool_arc.discard_checked_out();
+                                worker_stream = None;
+                                if let Some(mut fresh) = checkout_or_connect() {
+                                    fresh.is_binary = false;
+                                    entries_res = list_ftp_dir_entries(
+                                        &mut fresh.stream,
+                                        &job.dir,
+                                        &mlsd_support,
+                                    );
+                                    worker_stream = Some(fresh);
+                                }
+                            }
+
+                            let mut new_dirs = Vec::new();
+                            let mut new_files = Vec::new();
+
+                            if let Ok(entries) = entries_res {
+                                for entry in entries {
+                                    if cancel_token.load(Ordering::SeqCst) {
+                                        break;
+                                    }
+                                    if entry.name == "." || entry.name == ".." {
+                                        continue;
+                                    }
+                                    if crate::sftp::is_path_ignored(
+                                        &entry.name,
+                                        &entry.path,
+                                        &patterns,
+                                    ) {
+                                        continue;
+                                    }
+                                    if entry.is_dir {
+                                        new_dirs.push(FtpDirCrawlJob {
+                                            root_canon_trimmed: job.root_canon_trimmed.clone(),
+                                            clean_root: job.clean_root.clone(),
+                                            local_base: job.local_base.clone(),
+                                            dir: entry.path,
+                                        });
+                                    } else {
+                                        let rel = entry
+                                            .path
+                                            .strip_prefix(&job.root_canon_trimmed)
+                                            .or_else(|| entry.path.strip_prefix(&job.clean_root))
+                                            .unwrap_or(&entry.path)
+                                            .trim_start_matches('/');
+                                        let local_path =
+                                            format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
+                                        new_files.push(RemoteCrawlTask {
+                                            remote_path: entry.path,
+                                            local_path,
+                                            file_name: entry.name,
+                                            size: entry.size,
+                                        });
+                                    }
+                                }
+                            }
+
+                            {
+                                let mut guard =
+                                    shared_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                guard.in_progress = guard.in_progress.saturating_sub(1);
+                                if !new_dirs.is_empty() {
+                                    guard.dirs_count += new_dirs.len();
+                                    guard.queue.extend(new_dirs);
+                                }
+                                if !new_files.is_empty() {
+                                    guard.results.extend(new_files);
+                                }
+                                maybe_emit_progress(&mut guard);
+                                flush_crawl_batch(&mut guard, false);
+                                if !guard.queue.is_empty() || guard.in_progress == 0 {
+                                    shared_cv.notify_all();
+                                }
+                            }
+
+                            if worker_stream.is_none() {
+                                break;
+                            }
+                        }
+
+                        if let Some(item) = worker_stream {
+                            if cancel_token.load(Ordering::SeqCst) {
+                                pool_arc.discard_checked_out();
+                            } else {
+                                pool_arc.checkin(item);
+                            }
+                        }
+                    };
+
+                    std::thread::scope(|scope| {
+                        for _ in 1..FTP_CRAWL_PARALLEL_WORKERS {
+                            scope.spawn(|| run_crawler_worker(None));
+                        }
+                        run_crawler_worker(Some(primary_item));
+                    });
+
+                    init_state = shared_mutex.into_inner().unwrap_or_else(|e| e.into_inner());
+                } else {
+                    // Single-connection fallback (`MaxClientsPerIP = 1`)
+                    while let Some(job) = init_state.queue.pop_front() {
+                        if cancel_token.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let entries_res = {
+                            let mut guard = client_arc.blocking_lock();
+                            list_ftp_dir_entries(&mut guard, &job.dir, &mlsd_support)
+                        };
+                        if let Ok(entries) = entries_res {
+                            for entry in entries {
+                                if cancel_token.load(Ordering::SeqCst) {
+                                    break;
+                                }
+                                if entry.name == "." || entry.name == ".." {
+                                    continue;
+                                }
+                                if crate::sftp::is_path_ignored(&entry.name, &entry.path, &patterns)
+                                {
+                                    continue;
+                                }
+                                if entry.is_dir {
+                                    init_state.dirs_count += 1;
+                                    init_state.queue.push_back(FtpDirCrawlJob {
+                                        root_canon_trimmed: job.root_canon_trimmed.clone(),
+                                        clean_root: job.clean_root.clone(),
+                                        local_base: job.local_base.clone(),
+                                        dir: entry.path,
+                                    });
+                                } else {
+                                    let rel = entry
+                                        .path
+                                        .strip_prefix(&job.root_canon_trimmed)
+                                        .or_else(|| entry.path.strip_prefix(&job.clean_root))
+                                        .unwrap_or(&entry.path)
+                                        .trim_start_matches('/');
+                                    let local_path =
+                                        format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
+                                    init_state.results.push(RemoteCrawlTask {
+                                        remote_path: entry.path,
+                                        local_path,
+                                        file_name: entry.name,
+                                        size: entry.size,
+                                    });
+                                }
+                                maybe_emit_progress(&mut init_state);
+                                flush_crawl_batch(&mut init_state, false);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(item) = dedicated {
+                if cancel_token.load(Ordering::SeqCst) {
+                    pool_arc.discard_checked_out();
+                } else {
+                    pool_arc.checkin(item);
                 }
             } else if let Some(initial_pwd) = initial_pwd {
-                // Restore initial PWD on shared client
+                // Restore initial PWD and Binary mode on shared client
                 let mut guard = client_arc.blocking_lock();
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
                         let _ = s.cwd(&initial_pwd);
+                        let _ = s.transfer_type(FileType::Binary);
                     }
                     FtpClientStream::Secure(s) => {
                         let _ = s.cwd(&initial_pwd);
+                        let _ = s.transfer_type(FileType::Binary);
                     }
                 }
             }
 
             if !cancel_token.load(Ordering::SeqCst) {
-                flush_crawl_batch(
-                    &results,
-                    &mut emitted_files_idx,
-                    &mut last_batch_emit,
-                    dirs_count,
-                    true,
-                );
+                flush_crawl_batch(&mut init_state, true);
             }
 
             // Emit final progress
@@ -1685,8 +1973,8 @@ impl ActiveFtpSession {
                 "sftp:crawl:progress",
                 crate::sftp::CrawlProgressPayload {
                     scan_type: "download".to_string(),
-                    files: results.len(),
-                    directories: dirs_count,
+                    files: init_state.results.len(),
+                    directories: init_state.dirs_count,
                 },
             );
 
@@ -1694,7 +1982,7 @@ impl ActiveFtpSession {
                 return Err("Download crawl cancelled by user".to_string());
             }
 
-            Ok(results)
+            Ok(init_state.results)
         })
         .await
         .map_err(|e| format!("Worker thread error: {}", e))?
@@ -2382,66 +2670,106 @@ impl ActiveFtpSession {
         let ftp_mode = FtpTransferMode::from_option(ftp_transfer_mode.as_deref());
 
         let (res, used_shared_client) = tokio::task::spawn_blocking(move || -> (Result<(), String>, bool) {
-            let pooled = {
-                let mut pool = pool_arc.blocking_lock();
-                pool.pop()
-            };
-
-            if let Some(mut stream) = pooled {
+            if let Some(mut item) = pool_arc.try_checkout_idle() {
+                let conflict_clone = conflict_action.clone();
                 let first_try = (|| -> Result<(), String> {
-                    match &mut stream {
+                    match &mut item.stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                            run_ftp_download!(s, &mut item.is_binary, app_handle, &r_path, &l_path, &t_id, conflict_clone, file_size, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                            run_ftp_download!(s, &mut item.is_binary, app_handle, &r_path, &l_path, &t_id, conflict_clone, file_size, ftp_mode)
                         }
                     }
                 })();
                 match first_try {
                     Ok(()) => {
-                        return_transfer_stream(&pool_arc, stream);
+                        pool_arc.checkin(item);
                         return (Ok(()), false);
                     }
                     Err(ref e) if !is_connection_error(e) => {
+                        pool_arc.discard_checked_out();
                         return (first_try, false);
                     }
                     Err(_) => {
-                        // Pooled connection went stale; fall through to open a fresh stream
+                        // Pooled connection went stale; discard and open a fresh stream
+                        pool_arc.discard_checked_out();
                     }
                 }
             }
 
-            if let Ok((mut stream, _)) =
+            if let Ok((stream, _)) =
                 connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
             {
+                pool_arc.register_new_checkout();
+                let mut item = PooledFtpStream {
+                    stream,
+                    is_binary: true,
+                };
                 let transfer_res = (|| -> Result<(), String> {
-                    match &mut stream {
+                    match &mut item.stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                            run_ftp_download!(s, &mut item.is_binary, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                            run_ftp_download!(s, &mut item.is_binary, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                         }
                     }
                 })();
                 if transfer_res.is_ok() {
-                    return_transfer_stream(&pool_arc, stream);
+                    pool_arc.checkin(item);
+                } else {
+                    pool_arc.discard_checked_out();
                 }
                 return (transfer_res, false);
             }
 
+            // Server per-IP connection ceiling (`MaxClientsPerIP`) reached while other pooled workers are active:
+            // wait for the next warm pooled connection instead of serializing onto the shared UI client.
+            if let Some(mut item) = pool_arc.wait_for_checked_in_stream(
+                std::time::Duration::from_secs(20),
+                || app_handle.state::<crate::state::AppState>().is_transfer_cancelled(&t_id),
+            ) {
+                let waited_res = (|| -> Result<(), String> {
+                    match &mut item.stream {
+                        FtpClientStream::Plain(s) => {
+                            run_ftp_download!(s, &mut item.is_binary, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                        }
+                        FtpClientStream::Secure(s) => {
+                            run_ftp_download!(s, &mut item.is_binary, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                        }
+                    }
+                })();
+                if waited_res.is_ok() {
+                    pool_arc.checkin(item);
+                } else {
+                    pool_arc.discard_checked_out();
+                }
+                return (waited_res, false);
+            }
+
             let mut guard = client_arc.blocking_lock();
+            let mut shared_is_binary = false;
             let shared_res = (|| -> Result<(), String> {
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
-                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                        run_ftp_download!(s, &mut shared_is_binary, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                     }
                     FtpClientStream::Secure(s) => {
-                        run_ftp_download!(s, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
+                        run_ftp_download!(s, &mut shared_is_binary, app_handle, &r_path, &l_path, &t_id, conflict_action, file_size, ftp_mode)
                     }
                 }
             })();
+            if !shared_is_binary {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        let _ = s.transfer_type(FileType::Binary);
+                    }
+                    FtpClientStream::Secure(s) => {
+                        let _ = s.transfer_type(FileType::Binary);
+                    }
+                }
+            }
             (shared_res, true)
         })
         .await
@@ -2478,66 +2806,103 @@ impl ActiveFtpSession {
         let ftp_mode = FtpTransferMode::from_option(ftp_transfer_mode.as_deref());
 
         let (res, used_shared_client) = tokio::task::spawn_blocking(move || -> (Result<(), String>, bool) {
-            let pooled = {
-                let mut pool = pool_arc.blocking_lock();
-                pool.pop()
-            };
-
-            if let Some(mut stream) = pooled {
+            if let Some(mut item) = pool_arc.try_checkout_idle() {
+                let conflict_clone = conflict_action.clone();
                 let first_try = (|| -> Result<(), String> {
-                    match &mut stream {
+                    match &mut item.stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                            run_ftp_upload!(s, &mut item.is_binary, app_handle, &l_path, &r_path, &t_id, conflict_clone, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                            run_ftp_upload!(s, &mut item.is_binary, app_handle, &l_path, &r_path, &t_id, conflict_clone, ftp_mode)
                         }
                     }
                 })();
                 match first_try {
                     Ok(()) => {
-                        return_transfer_stream(&pool_arc, stream);
+                        pool_arc.checkin(item);
                         return (Ok(()), false);
                     }
                     Err(ref e) if !is_connection_error(e) => {
+                        pool_arc.discard_checked_out();
                         return (first_try, false);
                     }
                     Err(_) => {
-                        // Pooled connection went stale; fall through to open a fresh stream
+                        pool_arc.discard_checked_out();
                     }
                 }
             }
 
-            if let Ok((mut stream, _)) =
+            if let Ok((stream, _)) =
                 connect_ftp_stream(&host, port, &user, &pass, secure, allow_invalid_certs)
             {
+                pool_arc.register_new_checkout();
+                let mut item = PooledFtpStream {
+                    stream,
+                    is_binary: true,
+                };
                 let transfer_res = (|| -> Result<(), String> {
-                    match &mut stream {
+                    match &mut item.stream {
                         FtpClientStream::Plain(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                            run_ftp_upload!(s, &mut item.is_binary, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                         }
                         FtpClientStream::Secure(s) => {
-                            run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                            run_ftp_upload!(s, &mut item.is_binary, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                         }
                     }
                 })();
                 if transfer_res.is_ok() {
-                    return_transfer_stream(&pool_arc, stream);
+                    pool_arc.checkin(item);
+                } else {
+                    pool_arc.discard_checked_out();
                 }
                 return (transfer_res, false);
             }
 
+            if let Some(mut item) = pool_arc.wait_for_checked_in_stream(
+                std::time::Duration::from_secs(20),
+                || app_handle.state::<crate::state::AppState>().is_transfer_cancelled(&t_id),
+            ) {
+                let waited_res = (|| -> Result<(), String> {
+                    match &mut item.stream {
+                        FtpClientStream::Plain(s) => {
+                            run_ftp_upload!(s, &mut item.is_binary, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                        }
+                        FtpClientStream::Secure(s) => {
+                            run_ftp_upload!(s, &mut item.is_binary, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                        }
+                    }
+                })();
+                if waited_res.is_ok() {
+                    pool_arc.checkin(item);
+                } else {
+                    pool_arc.discard_checked_out();
+                }
+                return (waited_res, false);
+            }
+
             let mut guard = client_arc.blocking_lock();
+            let mut shared_is_binary = false;
             let shared_res = (|| -> Result<(), String> {
                 match &mut *guard {
                     FtpClientStream::Plain(s) => {
-                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                        run_ftp_upload!(s, &mut shared_is_binary, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                     }
                     FtpClientStream::Secure(s) => {
-                        run_ftp_upload!(s, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
+                        run_ftp_upload!(s, &mut shared_is_binary, app_handle, &l_path, &r_path, &t_id, conflict_action, ftp_mode)
                     }
                 }
             })();
+            if !shared_is_binary {
+                match &mut *guard {
+                    FtpClientStream::Plain(s) => {
+                        let _ = s.transfer_type(FileType::Binary);
+                    }
+                    FtpClientStream::Secure(s) => {
+                        let _ = s.transfer_type(FileType::Binary);
+                    }
+                }
+            }
             (shared_res, true)
         })
         .await
@@ -2554,12 +2919,9 @@ impl ActiveFtpSession {
         let client_arc = self.client.clone();
         let pool_arc = self.transfer_pool.clone();
         tokio::task::spawn_blocking(move || {
-            let pooled_streams: Vec<FtpClientStream> = {
-                let mut pool = pool_arc.blocking_lock();
-                std::mem::take(&mut *pool)
-            };
-            for mut stream in pooled_streams {
-                match &mut stream {
+            let pooled_streams = pool_arc.drain_all();
+            for mut item in pooled_streams {
+                match &mut item.stream {
                     FtpClientStream::Plain(s) => {
                         let _ = s.quit();
                     }
@@ -2582,6 +2944,172 @@ impl ActiveFtpSession {
         .await
         .map_err(|e| format!("Failed to close FTP session: {}", e))
     }
+}
+
+/// Lists a remote FTP directory using RFC 3659 `MLSD <dir>` when supported by the server
+/// (saving both `CWD` and `PWD` control round-trips per directory), falling back automatically
+/// to `CWD <dir>` + `LIST` on servers that do not advertise/implement `MLSD`.
+fn list_ftp_dir_entries(
+    stream: &mut FtpClientStream,
+    dir: &str,
+    mlsd_support: &AtomicU8,
+) -> Result<Vec<SftpFileEntry>, String> {
+    let mlsd_state = mlsd_support.load(Ordering::Relaxed);
+    if mlsd_state != MLSD_UNSUPPORTED {
+        let mlsd_res = match stream {
+            FtpClientStream::Plain(s) => s.mlsd(Some(dir)),
+            FtpClientStream::Secure(s) => s.mlsd(Some(dir)),
+        };
+        match mlsd_res {
+            Ok(lines) => {
+                if mlsd_state == MLSD_UNTESTED {
+                    mlsd_support.store(MLSD_SUPPORTED, Ordering::Relaxed);
+                }
+                let entries = lines
+                    .iter()
+                    .filter_map(|line| parse_ftp_mlsd_line(line, dir))
+                    .collect();
+                return Ok(entries);
+            }
+            Err(err) => {
+                let err_str = err.to_string();
+                if is_connection_error(&err_str) {
+                    return Err(err_str);
+                }
+                if mlsd_state == MLSD_UNTESTED {
+                    mlsd_support.store(MLSD_UNSUPPORTED, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    let lines = match stream {
+        FtpClientStream::Plain(s) => s
+            .cwd(dir)
+            .and_then(|_| s.list(None))
+            .map_err(|e| e.to_string())?,
+        FtpClientStream::Secure(s) => s
+            .cwd(dir)
+            .and_then(|_| s.list(None))
+            .map_err(|e| e.to_string())?,
+    };
+
+    Ok(lines
+        .iter()
+        .filter_map(|line| parse_ftp_list_line(line, dir))
+        .collect())
+}
+
+/// Parses an RFC 3659 `MLSD` entry line (`<facts> <SP> <filename>`).
+pub fn parse_ftp_mlsd_line(line: &str, current_dir: &str) -> Option<SftpFileEntry> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let (facts_part, raw_name) = trimmed.split_once(' ')?;
+    if raw_name.is_empty() || raw_name == "." || raw_name == ".." {
+        return None;
+    }
+
+    // Some servers return a path prefix in MLSD; extract only the basename relative to current_dir
+    let name = raw_name
+        .strip_prefix(current_dir.trim_end_matches('/'))
+        .map(|s| s.trim_start_matches('/'))
+        .filter(|s| !s.is_empty())
+        .unwrap_or(raw_name)
+        .to_string();
+    if name == "." || name == ".." {
+        return None;
+    }
+
+    let mut is_dir = false;
+    let mut is_symlink = false;
+    let mut symlink_target: Option<String> = None;
+    let mut seen_type = false;
+    let mut size: u64 = 0;
+    let mut perm: Option<u32> = None;
+    let mut owner: Option<String> = None;
+    let mut group: Option<String> = None;
+
+    for fact in facts_part.split(';') {
+        if fact.is_empty() {
+            continue;
+        }
+        let Some((k, v)) = fact.split_once('=') else {
+            continue;
+        };
+        match k.trim().to_ascii_lowercase().as_str() {
+            "type" => {
+                let v_low = v.trim().to_ascii_lowercase();
+                if v_low == "cdir" || v_low == "pdir" {
+                    return None;
+                } else if v_low == "dir" {
+                    is_dir = true;
+                    seen_type = true;
+                } else if v_low == "file" {
+                    is_dir = false;
+                    seen_type = true;
+                } else if v_low.contains("slink") || v_low.contains("symlink") {
+                    is_symlink = true;
+                    is_dir = false;
+                    seen_type = true;
+                    symlink_target = v
+                        .split_once(':')
+                        .map(|(_, target)| target.to_string())
+                        .filter(|s| !s.is_empty());
+                } else {
+                    return None;
+                }
+            }
+            "size" | "sizd" => {
+                if let Ok(sz) = v.trim().parse::<u64>() {
+                    size = sz;
+                }
+            }
+            "unix.mode" => {
+                if let Ok(m) = u32::from_str_radix(v.trim(), 8) {
+                    perm = Some(m & 0o7777);
+                }
+            }
+            "unix.ownername" => {
+                owner = Some(v.trim().to_string());
+            }
+            "unix.owner" | "unix.uid" if owner.is_none() => {
+                owner = Some(v.trim().to_string());
+            }
+            "unix.groupname" => {
+                group = Some(v.trim().to_string());
+            }
+            "unix.group" | "unix.gid" if group.is_none() => {
+                group = Some(v.trim().to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if !seen_type {
+        return None;
+    }
+
+    let full_path = if current_dir == "/" {
+        format!("/{}", name)
+    } else {
+        format!("{}/{}", current_dir.trim_end_matches('/'), name)
+    };
+
+    Some(SftpFileEntry {
+        name,
+        path: full_path,
+        is_dir,
+        is_symlink,
+        symlink_target,
+        size: if is_dir { 0 } else { size },
+        modified: 0,
+        permissions: perm.unwrap_or(if is_dir { 0o755 } else { 0o644 }),
+        owner,
+        group,
+    })
 }
 
 fn slice_after_nth_whitespace_token(line: &str, n: usize) -> Option<&str> {
@@ -2907,6 +3435,40 @@ HR+cPv5x7f6n9v+x0A1B2C3D4E5F6G7H8I9J0K=="#;
         assert!(format_ftp_chmod_command(0o644, "").is_err());
         assert!(format_ftp_chmod_command(0o644, "/var/www/bad\r\nDELE /etc/passwd").is_err());
         assert!(format_ftp_chmod_command(0o644, "/var/www/bad\0file").is_err());
+    }
+
+    #[test]
+    fn parse_ftp_mlsd_line_handles_pureftpd_proftpd_spaces_and_skips_dots() {
+        let pureftpd_dir =
+            "type=dir;sizd=4096;modify=20261118163000;UNIX.mode=0755;UNIX.uid=1001;UNIX.gid=1001; public_html";
+        let dir_entry = parse_ftp_mlsd_line(pureftpd_dir, "/luvporn.com").unwrap();
+        assert!(dir_entry.is_dir);
+        assert!(!dir_entry.is_symlink);
+        assert_eq!(dir_entry.name, "public_html");
+        assert_eq!(dir_entry.path, "/luvporn.com/public_html");
+        assert_eq!(dir_entry.permissions, 0o755);
+
+        let proftpd_file = "modify=20261118163012;perm=adfrw;size=3177;type=file;UNIX.groupname=whm;UNIX.mode=0644;UNIX.ownername=mark_ftp; my  cached   file.bin";
+        let file_entry = parse_ftp_mlsd_line(proftpd_file, "/luvporn.com/cache/e/6").unwrap();
+        assert!(!file_entry.is_dir);
+        assert_eq!(file_entry.size, 3177);
+        assert_eq!(file_entry.name, "my  cached   file.bin");
+        assert_eq!(
+            file_entry.path,
+            "/luvporn.com/cache/e/6/my  cached   file.bin"
+        );
+        assert_eq!(file_entry.permissions, 0o644);
+        assert_eq!(file_entry.owner.as_deref(), Some("mark_ftp"));
+        assert_eq!(file_entry.group.as_deref(), Some("whm"));
+
+        let symlink_line = "type=OS.unix=slink:../shared;UNIX.mode=0777; current";
+        let sym_entry = parse_ftp_mlsd_line(symlink_line, "/var/www").unwrap();
+        assert!(sym_entry.is_symlink);
+        assert!(!sym_entry.is_dir);
+        assert_eq!(sym_entry.symlink_target.as_deref(), Some("../shared"));
+
+        assert!(parse_ftp_mlsd_line("type=cdir;sizd=4096; .", "/var/www").is_none());
+        assert!(parse_ftp_mlsd_line("type=pdir;sizd=4096; ..", "/var/www").is_none());
     }
 }
 

@@ -350,24 +350,43 @@ export function useDirectoryBrowser() {
   let lastLocalBgRefresh = 0
   let lastRemoteBgRefresh = 0
 
+  function shouldSkipNestedBgRefresh(
+    openDirPath: string,
+    openEntries: Array<{ name: string }>,
+    changedPath?: string
+  ): boolean {
+    if (!changedPath) return false
+    const base = openDirPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const changed = changedPath.replace(/\\/g, '/')
+    const prefix = base === '' ? '/' : `${base}/`
+    if (!changed.startsWith(prefix)) return false
+    const rel = changed.slice(prefix.length)
+    const slashIdx = rel.indexOf('/')
+    if (slashIdx === -1) return false
+    // Changed file is inside a subdirectory of `openDirPath`; if that top-level folder is
+    // already visible in the pane, re-listing `openDirPath` on every nested file is wasted I/O.
+    const topChildName = rel.slice(0, slashIdx)
+    return openEntries.some((entry) => entry.name === topChildName)
+  }
+
   function triggerBackgroundLocalRefresh(changedPath?: string) {
+    if (!localPath.value) return
+    if (shouldSkipNestedBgRefresh(localPath.value, localFiles.value, changedPath)) return
     const now = Date.now()
     if (now - lastLocalBgRefresh < 1500) return
     lastLocalBgRefresh = now
-    if (localPath.value) {
-      invalidateLocalCache(localPath.value)
-      fetchLocalDir(localPath.value, { force: true, background: true }).catch(() => {})
-    }
+    invalidateLocalCache(localPath.value)
+    fetchLocalDir(localPath.value, { force: true, background: true }).catch(() => {})
   }
 
   function triggerBackgroundRemoteRefresh(sessionId: string, changedPath?: string) {
+    if (sessionId !== currentSessionId.value || !remotePath.value) return
+    if (shouldSkipNestedBgRefresh(remotePath.value, remoteFiles.value, changedPath)) return
     const now = Date.now()
     if (now - lastRemoteBgRefresh < 1500) return
     lastRemoteBgRefresh = now
-    if (sessionId === currentSessionId.value && remotePath.value) {
-      invalidateRemoteCache(sessionId, remotePath.value)
-      fetchRemoteDir(sessionId, remotePath.value, { force: true, background: true }).catch(() => {})
-    }
+    invalidateRemoteCache(sessionId, remotePath.value)
+    fetchRemoteDir(sessionId, remotePath.value, { force: true, background: true }).catch(() => {})
   }
 
   return {

@@ -42,6 +42,20 @@ pub async fn ssh_write_stdin(
 }
 
 #[tauri::command]
+pub async fn ssh_write_stdin_bytes(
+    state: State<'_, AppState>,
+    session_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    session.send_stdin(&data).await
+}
+
+#[tauri::command]
 pub async fn ssh_resize_pty(
     state: State<'_, AppState>,
     session_id: String,
@@ -86,6 +100,24 @@ pub async fn ssh_get_history(
 
     let bytes = session.get_history().await;
     Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// Attaches a raw binary `tauri::ipc::Channel` to stream PTY output directly as `ArrayBuffer`s
+/// (bypassing JSON string escaping and preventing split UTF-8 corruption) and atomically returns
+/// the existing scrollback buffer as a binary `Response`.
+#[tauri::command]
+pub async fn ssh_attach_stdout(
+    state: State<'_, AppState>,
+    session_id: String,
+    on_data: tauri::ipc::Channel<tauri::ipc::Response>,
+) -> Result<tauri::ipc::Response, String> {
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let history_bytes = session.attach_stdout_channel(on_data);
+    Ok(tauri::ipc::Response::new(history_bytes))
 }
 
 #[tauri::command]
