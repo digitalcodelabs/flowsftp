@@ -12,8 +12,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::sftp::{
-    normalize_to_native_path, FileConflictInfo, RemoteCrawlTask, SftpFileEntry,
-    TransferProgress,
+    normalize_to_native_path, FileConflictInfo, RemoteCrawlDirectory, RemoteCrawlResult,
+    RemoteCrawlTask, SftpFileEntry, TransferProgress,
 };
 
 #[derive(Debug)]
@@ -1483,7 +1483,7 @@ impl ActiveFtpSession {
         target_local_dir: String,
         ignore_patterns: Option<Vec<String>>,
         crawl_id: Option<String>,
-    ) -> Result<Vec<RemoteCrawlTask>, String> {
+    ) -> Result<RemoteCrawlResult, String> {
         let client_arc = self.client.clone();
         let pool_arc = self.transfer_pool.clone();
         let host = self.host.clone();
@@ -1493,10 +1493,14 @@ impl ActiveFtpSession {
         let secure = self.is_secure;
         let allow_invalid_certs = self.allow_invalid_certs;
         let mlsd_support = self.mlsd_support.clone();
-        let target_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
+        let raw_target = target_local_dir.trim().replace('\\', "/");
+        let target_is_root_slash = raw_target.starts_with('/')
+            && !raw_target.starts_with("//")
+            && raw_target.trim_end_matches('/').is_empty();
+        let target_local = raw_target.trim_end_matches('/').to_string();
         let patterns = ignore_patterns.unwrap_or_default();
 
-        tokio::task::spawn_blocking(move || -> Result<Vec<RemoteCrawlTask>, String> {
+        tokio::task::spawn_blocking(move || -> Result<RemoteCrawlResult, String> {
             // Emit initial 0 count
             let _ = app.emit(
                 "sftp:crawl:progress",
@@ -1554,12 +1558,25 @@ impl ActiveFtpSession {
                 queue: std::collections::VecDeque<FtpDirCrawlJob>,
                 in_progress: usize,
                 results: Vec<RemoteCrawlTask>,
+                directories: Vec<RemoteCrawlDirectory>,
                 dirs_count: usize,
                 last_emit: Instant,
                 last_count: usize,
                 emitted_files_idx: usize,
                 last_batch_emit: Instant,
             }
+
+            let join_local_target = |name: &str| -> String {
+                if target_local.is_empty() {
+                    if target_is_root_slash {
+                        format!("/{}", name)
+                    } else {
+                        name.to_string()
+                    }
+                } else {
+                    format!("{}/{}", target_local, name)
+                }
+            };
 
             let flush_crawl_batch = |st: &mut FtpCrawlShared, force: bool| {
                 if let Some(ref cid) = crawl_id {
@@ -1610,6 +1627,7 @@ impl ActiveFtpSession {
                 queue: std::collections::VecDeque::new(),
                 in_progress: 0,
                 results: Vec::new(),
+                directories: Vec::new(),
                 dirs_count: 0,
                 last_emit: Instant::now(),
                 last_count: 0,
@@ -1676,17 +1694,18 @@ impl ActiveFtpSession {
                     Some(Ok(root_canonical)) => {
                         let root_canon_trimmed = root_canonical.trim_end_matches('/').to_string();
                         let folder_name = clean_p.split('/').next_back().unwrap_or("folder");
-                        let local_base = if target_local.is_empty() {
-                            folder_name.to_string()
-                        } else {
-                            format!("{}/{}", target_local, folder_name)
-                        };
+                        let local_base = join_local_target(folder_name);
                         let start_dir = if root_canonical.is_empty() {
                             clean_p.clone()
                         } else {
                             root_canonical
                         };
                         init_state.dirs_count += 1;
+                        init_state.directories.push(RemoteCrawlDirectory {
+                            remote_path: start_dir.clone(),
+                            local_path: local_base.clone(),
+                            dir_name: folder_name.to_string(),
+                        });
                         init_state.queue.push_back(FtpDirCrawlJob {
                             root_canon_trimmed,
                             clean_root: clean_p,
@@ -1697,11 +1716,7 @@ impl ActiveFtpSession {
                     Some(Err(size)) => {
                         let file_name = clean_p.split('/').next_back().unwrap_or("file").to_string();
                         if !crate::sftp::is_path_ignored(&file_name, &file_name, &patterns) {
-                            let local_path = if target_local.is_empty() {
-                                file_name.clone()
-                            } else {
-                                format!("{}/{}", target_local, file_name)
-                            };
+                            let local_path = join_local_target(&file_name);
                             init_state.results.push(RemoteCrawlTask {
                                 remote_path: clean_p,
                                 local_path,
@@ -1806,6 +1821,7 @@ impl ActiveFtpSession {
                             }
 
                             let mut new_dirs = Vec::new();
+                            let mut new_dir_records = Vec::new();
                             let mut new_files = Vec::new();
 
                             if let Ok(entries) = entries_res {
@@ -1816,14 +1832,23 @@ impl ActiveFtpSession {
                                     if entry.name == "." || entry.name == ".." {
                                         continue;
                                     }
-                                    if crate::sftp::is_path_ignored(
-                                        &entry.name,
-                                        &entry.path,
-                                        &patterns,
-                                    ) {
+                                    let rel = entry
+                                        .path
+                                        .strip_prefix(&job.root_canon_trimmed)
+                                        .or_else(|| entry.path.strip_prefix(&job.clean_root))
+                                        .unwrap_or(&entry.path)
+                                        .trim_start_matches('/');
+                                    if crate::sftp::is_path_ignored(&entry.name, rel, &patterns) {
                                         continue;
                                     }
+                                    let local_path =
+                                        format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
                                     if entry.is_dir {
+                                        new_dir_records.push(RemoteCrawlDirectory {
+                                            remote_path: entry.path.clone(),
+                                            local_path,
+                                            dir_name: entry.name,
+                                        });
                                         new_dirs.push(FtpDirCrawlJob {
                                             root_canon_trimmed: job.root_canon_trimmed.clone(),
                                             clean_root: job.clean_root.clone(),
@@ -1831,14 +1856,6 @@ impl ActiveFtpSession {
                                             dir: entry.path,
                                         });
                                     } else {
-                                        let rel = entry
-                                            .path
-                                            .strip_prefix(&job.root_canon_trimmed)
-                                            .or_else(|| entry.path.strip_prefix(&job.clean_root))
-                                            .unwrap_or(&entry.path)
-                                            .trim_start_matches('/');
-                                        let local_path =
-                                            format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
                                         new_files.push(RemoteCrawlTask {
                                             remote_path: entry.path,
                                             local_path,
@@ -1856,6 +1873,9 @@ impl ActiveFtpSession {
                                 if !new_dirs.is_empty() {
                                     guard.dirs_count += new_dirs.len();
                                     guard.queue.extend(new_dirs);
+                                }
+                                if !new_dir_records.is_empty() {
+                                    guard.directories.extend(new_dir_records);
                                 }
                                 if !new_files.is_empty() {
                                     guard.results.extend(new_files);
@@ -1907,12 +1927,24 @@ impl ActiveFtpSession {
                                 if entry.name == "." || entry.name == ".." {
                                     continue;
                                 }
-                                if crate::sftp::is_path_ignored(&entry.name, &entry.path, &patterns)
-                                {
+                                let rel = entry
+                                    .path
+                                    .strip_prefix(&job.root_canon_trimmed)
+                                    .or_else(|| entry.path.strip_prefix(&job.clean_root))
+                                    .unwrap_or(&entry.path)
+                                    .trim_start_matches('/');
+                                if crate::sftp::is_path_ignored(&entry.name, rel, &patterns) {
                                     continue;
                                 }
+                                let local_path =
+                                    format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
                                 if entry.is_dir {
                                     init_state.dirs_count += 1;
+                                    init_state.directories.push(RemoteCrawlDirectory {
+                                        remote_path: entry.path.clone(),
+                                        local_path,
+                                        dir_name: entry.name,
+                                    });
                                     init_state.queue.push_back(FtpDirCrawlJob {
                                         root_canon_trimmed: job.root_canon_trimmed.clone(),
                                         clean_root: job.clean_root.clone(),
@@ -1920,14 +1952,6 @@ impl ActiveFtpSession {
                                         dir: entry.path,
                                     });
                                 } else {
-                                    let rel = entry
-                                        .path
-                                        .strip_prefix(&job.root_canon_trimmed)
-                                        .or_else(|| entry.path.strip_prefix(&job.clean_root))
-                                        .unwrap_or(&entry.path)
-                                        .trim_start_matches('/');
-                                    let local_path =
-                                        format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
                                     init_state.results.push(RemoteCrawlTask {
                                         remote_path: entry.path,
                                         local_path,
@@ -1982,7 +2006,10 @@ impl ActiveFtpSession {
                 return Err("Download crawl cancelled by user".to_string());
             }
 
-            Ok(init_state.results)
+            Ok(RemoteCrawlResult {
+                files: init_state.results,
+                directories: init_state.directories,
+            })
         })
         .await
         .map_err(|e| format!("Worker thread error: {}", e))?

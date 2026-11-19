@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [1.0.4] — v1.0.4 (2026-11-19)
+
+### Fixed
+- **Empty Folder Creation on SFTP / FTP / FTPS Downloads & Server-to-Server Transfers**:
+  - Updated both SFTP (`sftp_crawl_remote_paths`) and FTP/FTPS (`ActiveFtpSession::crawl_remote_paths`) directory crawlers to return discovered root folders and nested subdirectories (`RemoteCrawlResult { files, directories }`) in addition to files.
+  - Added native `sftp_batch_create_local_dirs` with `O(N log N)` leaf-directory pruning (`prune_to_leaf_dirs`) supporting Windows drive paths, Unix paths, and WSL UNC paths (`//wsl.localhost/...`).
+  - Synchronized batch directory creation across Downloads, Uploads, and Remote-to-Remote transfers so empty root folders and empty nested subfolders are created concurrently with active transfers and guaranteed to appear immediately in the post-batch folder refresh.
+  - Fixed root `/` destination path joining during folder crawls and aligned FTP crawler ignore-pattern matching to check relative subpaths consistently with SFTP.
+
+---
+
 ## [1.0.3] — v1.0.3 (2026-11-18)
 
 ### Release Highlights

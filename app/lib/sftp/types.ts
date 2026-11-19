@@ -100,6 +100,17 @@ export interface RemoteCrawlTask {
   size: number
 }
 
+export interface RemoteCrawlDirectory {
+  remote_path: string
+  local_path: string
+  dir_name: string
+}
+
+export interface RemoteCrawlResult {
+  files: RemoteCrawlTask[]
+  directories: RemoteCrawlDirectory[]
+}
+
 export type TransferPriority = 'Lowest' | 'Low' | 'Normal' | 'High' | 'Highest'
 
 export interface TransferItem {

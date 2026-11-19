@@ -10,8 +10,9 @@ use crate::sftp::{
     compress_local_archive, compress_remote_archive, extract_local_archive, extract_remote_archive,
     ensure_remote_dir_recursive, get_matching_ignore_pattern,
     CrawlProgressPayload, FileConflictInfo, GitRepoStatus, LocalCrawlBatchPayload, LocalCrawlDirectory, LocalCrawlIgnored,
-    LocalCrawlResult, LocalCrawlTask, LocalFileEntry, RemoteCrawlBatchPayload, RemoteCrawlTask, SftpFileEntry,
-    batch_create_remote_dirs, CRAWL_STREAM_BATCH_INTERVAL_MS, CRAWL_STREAM_BATCH_SIZE,
+    LocalCrawlResult, LocalCrawlTask, LocalFileEntry, RemoteCrawlBatchPayload, RemoteCrawlDirectory, RemoteCrawlResult,
+    RemoteCrawlTask, SftpFileEntry, batch_create_local_dirs, batch_create_remote_dirs,
+    CRAWL_STREAM_BATCH_INTERVAL_MS, CRAWL_STREAM_BATCH_SIZE,
 };
 use crate::state::AppState;
 
@@ -93,6 +94,11 @@ pub async fn sftp_batch_create_remote_dirs(
 
     let sftp = session.get_sftp().await?;
     batch_create_remote_dirs(&sftp, paths).await
+}
+
+#[tauri::command]
+pub async fn sftp_batch_create_local_dirs(paths: Vec<String>) -> Result<(), String> {
+    batch_create_local_dirs(paths).await
 }
 
 #[tauri::command]
@@ -855,7 +861,21 @@ pub async fn sftp_crawl_local_paths(
         let mut files = Vec::new();
         let mut directories = Vec::new();
         let mut ignored = Vec::new();
-        let clean_remote = target_remote_dir.trim().trim_end_matches('/').to_string();
+        let raw_remote = target_remote_dir.trim().replace('\\', "/");
+        let remote_is_root_slash =
+            raw_remote.starts_with('/') && raw_remote.trim_end_matches('/').is_empty();
+        let clean_remote = raw_remote.trim_end_matches('/').to_string();
+        let join_remote_target = |name: &str| -> String {
+            if clean_remote.is_empty() {
+                if remote_is_root_slash {
+                    format!("/{}", name)
+                } else {
+                    name.to_string()
+                }
+            } else {
+                format!("{}/{}", clean_remote, name)
+            }
+        };
         let patterns = ignore_patterns.unwrap_or_default();
 
         let mut last_emit = std::time::Instant::now();
@@ -896,11 +916,7 @@ pub async fn sftp_crawl_local_paths(
             }
 
             if native_path.is_file() || native_path.is_symlink() {
-                let remote_path = if clean_remote.is_empty() {
-                    file_name.clone()
-                } else {
-                    format!("{}/{}", clean_remote, file_name)
-                };
+                let remote_path = join_remote_target(&file_name);
 
                 if let Some(matched_pat) = get_matching_ignore_pattern(&file_name, &file_name, &patterns) {
                     ignored.push(LocalCrawlIgnored {
@@ -950,11 +966,7 @@ pub async fn sftp_crawl_local_paths(
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "folder".to_string());
 
-                let remote_base = if clean_remote.is_empty() {
-                    root_folder_name.clone()
-                } else {
-                    format!("{}/{}", clean_remote, root_folder_name)
-                };
+                let remote_base = join_remote_target(&root_folder_name);
 
                 if let Some(matched_pat) = get_matching_ignore_pattern(&root_folder_name, &root_folder_name, &patterns) {
                     ignored.push(LocalCrawlIgnored {
@@ -1277,7 +1289,7 @@ pub async fn sftp_crawl_remote_paths(
     target_local_dir: String,
     ignore_patterns: Option<Vec<String>>,
     crawl_id: Option<String>,
-) -> Result<Vec<RemoteCrawlTask>, String> {
+) -> Result<RemoteCrawlResult, String> {
     let patterns = ignore_patterns.unwrap_or_default();
     let cancel_token = state.cancel_token();
 
@@ -1294,8 +1306,24 @@ pub async fn sftp_crawl_remote_paths(
 
     let sftp = session.get_sftp().await?;
     let mut results = Vec::new();
+    let mut directories = Vec::new();
     let mut dirs_count = 0usize;
-    let clean_local = target_local_dir.trim().replace('\\', "/").trim_end_matches('/').to_string();
+    let raw_local = target_local_dir.trim().replace('\\', "/");
+    let target_is_root_slash = raw_local.starts_with('/')
+        && !raw_local.starts_with("//")
+        && raw_local.trim_end_matches('/').is_empty();
+    let clean_local = raw_local.trim_end_matches('/').to_string();
+    let join_local_target = |name: &str| -> String {
+        if clean_local.is_empty() {
+            if target_is_root_slash {
+                format!("/{}", name)
+            } else {
+                name.to_string()
+            }
+        } else {
+            format!("{}/{}", clean_local, name)
+        }
+    };
 
     let mut last_emit = std::time::Instant::now();
     let mut last_count = 0usize;
@@ -1327,6 +1355,7 @@ pub async fn sftp_crawl_remote_paths(
          entries: russh_sftp::client::fs::ReadDir,
          pending_dirs: &mut std::collections::VecDeque<SftpDirScanJob>,
          results: &mut Vec<RemoteCrawlTask>,
+         directories: &mut Vec<RemoteCrawlDirectory>,
          dirs_count: &mut usize,
          last_emit: &mut std::time::Instant,
          last_count: &mut usize,
@@ -1358,16 +1387,21 @@ pub async fn sftp_crawl_remote_paths(
                     continue;
                 }
 
+                let local_path = format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
                 let file_type = entry.file_type();
                 if file_type.is_dir() {
                     *dirs_count += 1;
+                    directories.push(RemoteCrawlDirectory {
+                        remote_path: child_remote.clone(),
+                        local_path,
+                        dir_name: name,
+                    });
                     pending_dirs.push_back(SftpDirScanJob {
                         root: job.root.clone(),
                         current: child_remote,
                         local_base: job.local_base.clone(),
                     });
                 } else {
-                    let local_path = format!("{}/{}", job.local_base.trim_end_matches('/'), rel);
                     let size = entry.metadata().size.unwrap_or(0);
 
                     results.push(RemoteCrawlTask {
@@ -1421,11 +1455,12 @@ pub async fn sftp_crawl_remote_paths(
             Ok(initial_entries) => {
                 dirs_count += 1;
                 let folder_name = clean_p.split('/').next_back().unwrap_or("folder");
-                let local_base = if clean_local.is_empty() {
-                    folder_name.to_string()
-                } else {
-                    format!("{}/{}", clean_local, folder_name)
-                };
+                let local_base = join_local_target(folder_name);
+                directories.push(RemoteCrawlDirectory {
+                    remote_path: clean_p.clone(),
+                    local_path: local_base.clone(),
+                    dir_name: folder_name.to_string(),
+                });
                 let root_job = SftpDirScanJob {
                     root: clean_p.clone(),
                     current: clean_p,
@@ -1436,6 +1471,7 @@ pub async fn sftp_crawl_remote_paths(
                     initial_entries,
                     &mut pending_dirs,
                     &mut results,
+                    &mut directories,
                     &mut dirs_count,
                     &mut last_emit,
                     &mut last_count,
@@ -1461,11 +1497,7 @@ pub async fn sftp_crawl_remote_paths(
                     continue;
                 }
                 let size = meta.size.unwrap_or(0);
-                let local_path = if clean_local.is_empty() {
-                    file_name.clone()
-                } else {
-                    format!("{}/{}", clean_local, file_name)
-                };
+                let local_path = join_local_target(&file_name);
                 results.push(RemoteCrawlTask {
                     remote_path: clean_p,
                     local_path,
@@ -1539,6 +1571,7 @@ pub async fn sftp_crawl_remote_paths(
             entries,
             &mut pending_dirs,
             &mut results,
+            &mut directories,
             &mut dirs_count,
             &mut last_emit,
             &mut last_count,
@@ -1576,7 +1609,10 @@ pub async fn sftp_crawl_remote_paths(
         return Err("Download crawl cancelled by user".to_string());
     }
 
-    Ok(results)
+    Ok(RemoteCrawlResult {
+        files: results,
+        directories,
+    })
 }
 
 #[tauri::command]

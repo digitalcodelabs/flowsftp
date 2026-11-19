@@ -31,6 +31,8 @@ import type {
   LocalCrawlTask,
   LocalFileEntry,
   RemoteCrawlBatchPayload,
+  RemoteCrawlDirectory,
+  RemoteCrawlResult,
   RemoteCrawlTask,
   SftpFileEntry,
   TransferItem,
@@ -569,7 +571,8 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
     await ensureTransferReady()
 
     const cleanTargetDir = targetDir.replace(/\\/g, '/').replace(/\/+$/, '')
-    const localTargetFor = (name: string) => `${cleanTargetDir}/${name}`
+    const localTargetFor = (name: string) =>
+      cleanTargetDir === '' ? (targetDir.startsWith('/') ? `/${name}` : name) : `${cleanTargetDir}/${name}`
 
     const pump = newBatchPump<SftpFileEntry>((t) =>
       downloadSpec(t.transferId, sessionId, t.file, t.destination)
@@ -600,7 +603,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
         try {
           // Local folders that don't exist yet can't contain conflicts.
           const brandNew = await findBrandNewRoots(
-            dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
+            dirItems.map((d) => localTargetFor(d.name)),
             { isRemote: false }
           )
 
@@ -641,7 +644,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             flushNewTransfersNow()
           })
 
-          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+          const crawled = await invoke<RemoteCrawlResult | RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
             sessionId,
             paths: dirItems.map((d) => d.path),
             targetLocalDir: targetDir,
@@ -649,13 +652,39 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             crawlId,
           })
 
+          const filesList: RemoteCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
+          const dirsList: RemoteCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
+
           // Enqueue any remaining files not delivered via streaming batch events
-          for (const c of crawled) {
+          for (const c of filesList) {
             if (isCancellingAll.value) break
             enqueueRemoteFile(c)
           }
 
-          endFolderScan(activeFolderDownload, Math.max(crawled.length, enqueuedPaths.size))
+          endFolderScan(activeFolderDownload, Math.max(filesList.length, enqueuedPaths.size))
+          if (activeFolderDownload.value) {
+            activeFolderDownload.value.totalFolders = Math.max(
+              activeFolderDownload.value.totalFolders,
+              dirsList.length,
+              dirItems.length
+            )
+          }
+
+          // Create local directories (including empty root and nested folders) natively.
+          // Runs concurrently with active file downloads, and finishes before the post-batch refresh.
+          if (dirsList.length > 0 && !isCancellingAll.value) {
+            await invoke('sftp_batch_create_local_dirs', {
+              paths: dirsList.map((d) => d.local_path),
+            }).catch((dirErr) => {
+              console.error('Local directory creation error:', dirErr)
+              for (const d of dirItems) {
+                const spec = downloadSpec(newTransferId('dl-dir-err'), sessionId, d, localTargetFor(d.name))
+                const item = { ...buildSkippedItem(spec), is_dir: true, error: dirErr?.message || String(dirErr) }
+                transferMap.set(item.transfer_id, item)
+                failedTransfers.value = [item, ...failedTransfers.value]
+              }
+            })
+          }
         } catch (crawlErr: any) {
           console.error('Native Rust remote crawl error:', crawlErr)
           for (const d of dirItems) {
@@ -786,7 +815,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
           // If a remote folder didn't exist before this upload, 100% of its files are new,
           // so the per-file conflict check can be skipped.
           const brandNew = await findBrandNewRoots(
-            dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
+            dirItems.map((d) => remoteTargetFor(d.name)),
             { sessionId, isRemote: true }
           )
 
@@ -886,14 +915,20 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             )
           }
 
-          // Create remote directories (including empty ones) in native Rust, in the background,
-          // so it never blocks active file uploads.
+          // Create remote directories (including empty ones) in native Rust concurrently with
+          // active file uploads, finishing before the post-batch directory refresh.
           if (dirsList.length > 0 && !isCancellingAll.value) {
-            invoke('sftp_batch_create_remote_dirs', {
+            await invoke('sftp_batch_create_remote_dirs', {
               sessionId,
               paths: dirsList.map((d) => d.remote_path),
             }).catch((dirErr) => {
               console.warn('Background remote directory creation warning:', dirErr)
+              for (const d of dirItems) {
+                const spec = uploadSpec(newTransferId('ul-dir-err'), sessionId, d, remoteTargetFor(d.name))
+                const item = { ...buildSkippedItem(spec), is_dir: true, error: dirErr?.message || String(dirErr) }
+                transferMap.set(item.transfer_id, item)
+                failedTransfers.value = [item, ...failedTransfers.value]
+              }
             })
           }
         } catch (crawlErr: any) {
@@ -1038,7 +1073,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
         try {
           // Destination folders that don't exist yet can't contain conflicts.
           const brandNew = await findBrandNewRoots(
-            dirItems.map((d) => (cleanTargetDir === '' ? d.name : `${cleanTargetDir}/${d.name}`)),
+            dirItems.map((d) => destFor(d.name)),
             { sessionId: destSessionId, isRemote: true }
           )
 
@@ -1080,7 +1115,7 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             flushNewTransfersNow()
           })
 
-          const crawled = await invoke<RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
+          const crawled = await invoke<RemoteCrawlResult | RemoteCrawlTask[]>('sftp_crawl_remote_paths', {
             sessionId: srcSessionId,
             paths: dirItems.map((d) => d.path),
             targetLocalDir: targetDir,
@@ -1088,12 +1123,37 @@ export function useTransferPipeline(deps: TransferPipelineDeps) {
             crawlId,
           })
 
-          for (const c of crawled) {
+          const filesList: RemoteCrawlTask[] = Array.isArray(crawled) ? crawled : (crawled.files || [])
+          const dirsList: RemoteCrawlDirectory[] = Array.isArray(crawled) ? [] : (crawled.directories || [])
+
+          for (const c of filesList) {
             if (isCancellingAll.value) break
             enqueueR2RFile(c)
           }
 
-          endFolderScan(activeFolderUpload, Math.max(crawled.length, enqueuedPaths.size))
+          endFolderScan(activeFolderUpload, Math.max(filesList.length, enqueuedPaths.size))
+          if (activeFolderUpload.value) {
+            activeFolderUpload.value.totalFolders = Math.max(
+              activeFolderUpload.value.totalFolders,
+              dirsList.length,
+              dirItems.length
+            )
+          }
+
+          if (dirsList.length > 0 && !isCancellingAll.value) {
+            await invoke('sftp_batch_create_remote_dirs', {
+              sessionId: destSessionId,
+              paths: dirsList.map((d) => d.local_path),
+            }).catch((dirErr) => {
+              console.warn('Remote destination directory creation warning:', dirErr)
+              for (const d of dirItems) {
+                const spec = remoteToRemoteSpec(newTransferId('r2r-dir-err'), srcSessionId, destSessionId, d, destFor(d.name))
+                const item = { ...buildSkippedItem(spec), is_dir: true, error: dirErr?.message || String(dirErr) }
+                transferMap.set(item.transfer_id, item)
+                failedTransfers.value = [item, ...failedTransfers.value]
+              }
+            })
+          }
         } catch (crawlErr: any) {
           console.error('Remote-to-remote crawl error:', crawlErr)
           for (const d of dirItems) {

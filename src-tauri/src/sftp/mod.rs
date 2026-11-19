@@ -103,6 +103,19 @@ pub struct RemoteCrawlTask {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCrawlDirectory {
+    pub remote_path: String,
+    pub local_path: String,
+    pub dir_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCrawlResult {
+    pub files: Vec<RemoteCrawlTask>,
+    pub directories: Vec<RemoteCrawlDirectory>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlProgressPayload {
     pub scan_type: String,
     pub files: usize,
@@ -1877,6 +1890,60 @@ pub async fn create_local_dir(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create local directory '{}': {}", path, e))
 }
 
+/// Reduces a list of directory paths to leaf directories only (`O(N log N)`),
+/// so `create_dir_all` creates the entire tree with minimal filesystem syscalls.
+pub fn prune_to_leaf_dirs(paths: Vec<String>) -> Vec<String> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut with_slash: Vec<String> = paths
+        .into_iter()
+        .filter_map(|raw| {
+            let norm = raw.trim().replace('\\', "/");
+            let trimmed = norm.trim_end_matches('/');
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!("{}/", trimmed))
+            }
+        })
+        .collect();
+
+    with_slash.sort();
+    with_slash.dedup();
+
+    let mut leaves = Vec::with_capacity(with_slash.len());
+    let mut iter = with_slash.into_iter().peekable();
+    while let Some(current) = iter.next() {
+        let is_ancestor_of_next = iter
+            .peek()
+            .is_some_and(|next| next.starts_with(&current));
+        if !is_ancestor_of_next {
+            let leaf = current.strip_suffix('/').unwrap_or(&current).to_string();
+            leaves.push(leaf);
+        }
+    }
+    leaves
+}
+
+pub async fn batch_create_local_dirs(paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        for leaf in prune_to_leaf_dirs(paths) {
+            let (native, _) = normalize_to_native_path(&leaf);
+            std::fs::create_dir_all(&native)
+                .map_err(|e| format!("Failed to create local directory '{}': {}", leaf, e))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Local directory worker error: {}", e))?
+}
+
 pub async fn create_local_file(path: &str, overwrite: Option<bool>) -> Result<(), String> {
     let (native, _) = normalize_to_native_path(path);
     if !overwrite.unwrap_or(false) && native.exists() {
@@ -2599,6 +2666,30 @@ mod tests {
         let (native, display) = normalize_to_native_path("   ");
         assert_eq!(display, get_default_local_path());
         assert_eq!(native, PathBuf::from(&display));
+    }
+
+    #[test]
+    fn prune_to_leaf_dirs_keeps_empty_roots_nested_leaves_and_hyphen_siblings() {
+        let input = pats(&[
+            "C:/dl/empty_root",
+            "C:/dl/proj",
+            "C:/dl/proj-2",
+            "C:/dl/proj/sub",
+            "C:/dl/proj/sub/deep",
+            "C:\\dl\\proj\\empty_sub\\",
+            "//wsl.localhost/Ubuntu-24.04/var/www/empty_wsl",
+        ]);
+        let got = prune_to_leaf_dirs(input);
+        assert_eq!(
+            got,
+            vec![
+                "//wsl.localhost/Ubuntu-24.04/var/www/empty_wsl",
+                "C:/dl/empty_root",
+                "C:/dl/proj-2",
+                "C:/dl/proj/empty_sub",
+                "C:/dl/proj/sub/deep",
+            ]
+        );
     }
 
     #[cfg(windows)]

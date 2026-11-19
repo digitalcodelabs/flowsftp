@@ -12,8 +12,8 @@ type Call = { cmd: string; args: any }
 const calls: Call[] = []
 let existingPaths = new Set<string>()
 let failTransfersFor = new Set<string>()
-let crawlRemote: any[] = []
-let crawlRemoteImpl: ((args: any) => Promise<any[]>) | null = null
+let crawlRemote: any = []
+let crawlRemoteImpl: ((args: any) => Promise<any>) | null = null
 let crawlLocal: any = { files: [], directories: [], ignored: [] }
 const eventListeners = new Map<string, Set<(event: { payload: any }) => void>>()
 
@@ -95,8 +95,8 @@ describe('transfer pipelines', () => {
     crawlRemoteImpl = null
     crawlLocal = { files: [], directories: [], ignored: [] }
     eventListeners.clear()
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => { })
+    vi.spyOn(console, 'warn').mockImplementation(() => { })
 
     setActivePinia(createPinia())
     store = useSftpStore()
@@ -423,6 +423,36 @@ describe('transfer pipelines', () => {
       expect(store.failedTransfers.map((t) => t.file_name)).toEqual(['bad.txt'])
       expect(store.completedTransfers.map((t) => t.file_name)).toEqual(['ok.txt'])
     })
+
+    it('creates empty root and nested folders locally when downloading via SFTP or FTP', async () => {
+      crawlRemote = {
+        files: [],
+        directories: [
+          { remote_path: '/src/empty', local_path: 'C:/dl/empty', dir_name: 'empty' },
+          { remote_path: '/src/empty/nested', local_path: 'C:/dl/empty/nested', dir_name: 'nested' },
+        ],
+      }
+
+      await store.startBatchDownload('s1', [remoteDir('empty')], 'C:/dl')
+
+      expect(callsTo('sftp_download')).toHaveLength(0)
+      expect(callsTo('sftp_batch_create_local_dirs')).toEqual([
+        { paths: ['C:/dl/empty', 'C:/dl/empty/nested'] },
+      ])
+      // Directory creation must finish BEFORE the post-batch local directory refresh runs
+      const createIdx = calls.findIndex((c) => c.cmd === 'sftp_batch_create_local_dirs')
+      const refreshIdx = calls.findIndex((c) => c.cmd === 'sftp_list_local')
+      expect(createIdx).toBeGreaterThanOrEqual(0)
+      expect(refreshIdx).toBeGreaterThan(createIdx)
+      expect(store.failedTransfers).toHaveLength(0)
+      expect(store.activeFolderDownload).toMatchObject({
+        folderName: 'empty',
+        totalFiles: 0,
+        totalFolders: 2,
+        isScanning: false,
+        isComplete: true,
+      })
+    })
   })
 
   describe('remote to remote', () => {
@@ -473,6 +503,21 @@ describe('transfer pipelines', () => {
       expect(callsTo('sftp_transfer_remote_to_remote')[0]).toMatchObject({ srcPath: '/src/proj/a.txt', destPath: '/dest/proj/a.txt' })
       // Brand-new destination folder: only the folder itself is checked, on the destination.
       expect(callsTo('sftp_check_conflict')).toEqual([{ sessionId: 'dst', path: '/dest/proj', isRemote: true }])
+    })
+
+    it('creates empty folders on the destination server in remote-to-remote transfers', async () => {
+      crawlRemote = {
+        files: [],
+        directories: [{ remote_path: '/src/empty', local_path: '/dest/empty', dir_name: 'empty' }],
+      }
+
+      await store.startBatchRemoteToRemoteTransfer('src', 'dst', [remoteDir('empty')], '/dest')
+
+      expect(callsTo('sftp_transfer_remote_to_remote')).toHaveLength(0)
+      expect(callsTo('sftp_batch_create_remote_dirs')).toEqual([
+        { sessionId: 'dst', paths: ['/dest/empty'] },
+      ])
+      expect(store.failedTransfers).toHaveLength(0)
     })
 
     it('reports success with a non-error toast', async () => {
