@@ -140,6 +140,11 @@ export interface FileConflictInfo {
   modified: number
 }
 
+export interface ResolvedSymlink {
+  resolved_path: string
+  is_dir: boolean
+}
+
 export interface ConflictDialogState {
   show: boolean
   fileName: string

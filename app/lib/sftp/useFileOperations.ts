@@ -105,7 +105,7 @@ export function useFileOperations(deps: FileOperationsDeps) {
     if (isRemotePane(pane)) {
       const sessionId = pane.sessionId
       try {
-        if (item.is_dir) {
+        if (item.is_dir && !item.is_symlink) {
           await invoke('sftp_remove_remote_dir', {
             sessionId,
             path: item.path,

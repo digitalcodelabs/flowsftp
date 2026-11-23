@@ -13,7 +13,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::sftp::{
     normalize_to_native_path, FileConflictInfo, RemoteCrawlDirectory, RemoteCrawlResult,
-    RemoteCrawlTask, SftpFileEntry, TransferProgress,
+    RemoteCrawlTask, ResolvedSymlink, SftpFileEntry, TransferProgress,
 };
 
 #[derive(Debug)]
@@ -1338,6 +1338,86 @@ impl ActiveFtpSession {
                 }
             } else {
                 Ok(p)
+            }
+        })
+        .await
+        .map_err(|e| format!("Worker thread error: {}", e))?
+    }
+
+    pub async fn resolve_symlink(
+        &self,
+        path: &str,
+        symlink_target: Option<&str>,
+    ) -> Result<ResolvedSymlink, String> {
+        let client_arc = self.client.clone();
+        let p = path.trim().to_string();
+        if p.is_empty() {
+            return Err("Empty symlink path".to_string());
+        }
+        let candidate_from_target = symlink_target
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| crate::sftp::resolve_posix_symlink_target(&p, t));
+
+        tokio::task::spawn_blocking(move || -> Result<ResolvedSymlink, String> {
+            let mut guard = client_arc.blocking_lock();
+
+            macro_rules! resolve_on_stream {
+                ($s:expr) => {{
+                    let initial_pwd = $s.pwd().ok();
+
+                    let res = if $s.cwd(&p).is_ok() {
+                        let pwd = $s.pwd().ok();
+                        let p_trimmed = p.trim_end_matches('/');
+                        let resolved_path = if let Some(ref real) = pwd
+                            && real.trim_end_matches('/') != p_trimmed
+                        {
+                            real.clone()
+                        } else if let Some(ref target_path) = candidate_from_target
+                            && target_path.trim_end_matches('/') != p_trimmed
+                            && $s.cwd(target_path).is_ok()
+                        {
+                            $s.pwd().unwrap_or_else(|_| target_path.clone())
+                        } else {
+                            pwd.unwrap_or_else(|| p.clone())
+                        };
+                        Ok(ResolvedSymlink {
+                            resolved_path,
+                            is_dir: true,
+                        })
+                    } else if let Some(ref target_path) = candidate_from_target
+                        && target_path.trim_end_matches('/') != p.trim_end_matches('/')
+                        && $s.cwd(target_path).is_ok()
+                    {
+                        let resolved_path = $s.pwd().unwrap_or_else(|_| target_path.clone());
+                        Ok(ResolvedSymlink {
+                            resolved_path,
+                            is_dir: true,
+                        })
+                    } else {
+                        let _ = $s.transfer_type(FileType::Binary);
+                        let resolved_path = if let Some(ref target_path) = candidate_from_target
+                            && $s.size(target_path).is_ok()
+                        {
+                            target_path.clone()
+                        } else {
+                            p.clone()
+                        };
+                        Ok(ResolvedSymlink {
+                            resolved_path,
+                            is_dir: false,
+                        })
+                    };
+
+                    if let Some(ref orig) = initial_pwd {
+                        let _ = $s.cwd(orig);
+                    }
+                    res
+                }};
+            }
+
+            match &mut *guard {
+                FtpClientStream::Plain(s) => resolve_on_stream!(s),
+                FtpClientStream::Secure(s) => resolve_on_stream!(s),
             }
         })
         .await

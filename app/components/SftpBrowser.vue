@@ -15,6 +15,7 @@ import {
   useSftpStore,
   type SftpFileEntry,
   type LocalFileEntry,
+  type ResolvedSymlink,
 } from '../stores/sftp'
 import { useVaultStore } from '../stores/vault'
 import { useSettingsStore } from '../stores/settings'
@@ -1002,12 +1003,31 @@ const handleLeftRemoteRowClick = (event: MouseEvent, file: SftpFileEntry, index:
   }
 }
 
-const handleLeftRemoteRowDoubleClick = (entry: SftpFileEntry) => {
-  if (entry.is_dir && leftPaneSource.value !== 'local') {
-    fetchLeftRemoteDir(leftPaneSource.value, entry.path)
-  } else if (!entry.is_dir) {
-    openEditor('remote', entry, leftPaneSource.value)
+const handleLeftRemoteRowDoubleClick = async (entry: SftpFileEntry) => {
+  if (leftPaneSource.value === 'local') return
+  const sessionId = leftPaneSource.value
+  if (entry.is_dir) {
+    fetchLeftRemoteDir(sessionId, entry.path)
+    return
   }
+  if (entry.is_symlink) {
+    try {
+      const resolved = await invoke<ResolvedSymlink>('sftp_resolve_remote_symlink', {
+        sessionId,
+        path: entry.path,
+        symlinkTarget: entry.symlink_target ?? null,
+      })
+      if (resolved.is_dir) {
+        fetchLeftRemoteDir(sessionId, resolved.resolved_path)
+      } else {
+        openEditor('remote', { ...entry, path: resolved.resolved_path }, sessionId)
+      }
+    } catch (err: any) {
+      sftpStore.triggerTransferToast(`Cannot follow symlink "${entry.name}": ${err?.message || err}`, true)
+    }
+    return
+  }
+  openEditor('remote', entry, sessionId)
 }
 
 const handleLeftRemoteEmptyClick = (_event?: MouseEvent) => {
@@ -1892,20 +1912,40 @@ const navigateLocalUp = () => {
   }
 }
 
-const handleLocalRowDoubleClick = (entry: LocalFileEntry) => {
-  if (entry.is_dir) {
-    sftpStore.fetchLocalDir(entry.path)
+const handleLocalRowDoubleClick = async (entry: LocalFileEntry) => {
+  const syncRemoteIfEnabled = (dirName: string) => {
     if (sftpStore.isSynchronizedBrowsing && props.sessionId) {
       const match = sftpStore.remoteFiles.find(
-        (f) => f.is_dir && f.name.toLowerCase() === entry.name.toLowerCase()
+        (f) => f.is_dir && f.name.toLowerCase() === dirName.toLowerCase()
       )
       if (match) {
         sftpStore.fetchRemoteDir(props.sessionId, match.path)
       }
     }
-  } else {
-    openEditor('local', entry)
   }
+
+  if (entry.is_dir) {
+    sftpStore.fetchLocalDir(entry.path)
+    syncRemoteIfEnabled(entry.name)
+    return
+  }
+  if (entry.is_symlink) {
+    try {
+      const resolved = await invoke<ResolvedSymlink>('sftp_resolve_local_symlink', {
+        path: entry.path,
+      })
+      if (resolved.is_dir) {
+        sftpStore.fetchLocalDir(resolved.resolved_path)
+        syncRemoteIfEnabled(entry.name)
+      } else {
+        openEditor('local', { ...entry, path: resolved.resolved_path })
+      }
+    } catch (err: any) {
+      sftpStore.triggerTransferToast(`Cannot follow symlink "${entry.name}": ${err?.message || err}`, true)
+    }
+    return
+  }
+  openEditor('local', entry)
 }
 
 // Remote Directory Navigation
@@ -1920,18 +1960,42 @@ const navigateRemoteUp = () => {
   }
 }
 
-const handleRemoteRowDoubleClick = (entry: SftpFileEntry) => {
-  if (entry.is_dir && props.sessionId) {
-    sftpStore.fetchRemoteDir(props.sessionId, entry.path)
+const handleRemoteRowDoubleClick = async (entry: SftpFileEntry) => {
+  const syncLocalIfEnabled = (dirName: string) => {
     if (sftpStore.isSynchronizedBrowsing) {
       const match = sftpStore.localFiles.find(
-        (f) => f.is_dir && f.name.toLowerCase() === entry.name.toLowerCase()
+        (f) => f.is_dir && f.name.toLowerCase() === dirName.toLowerCase()
       )
       if (match) {
         sftpStore.fetchLocalDir(match.path)
       }
     }
-  } else if (!entry.is_dir) {
+  }
+
+  if (entry.is_dir && props.sessionId) {
+    sftpStore.fetchRemoteDir(props.sessionId, entry.path)
+    syncLocalIfEnabled(entry.name)
+    return
+  }
+  if (entry.is_symlink && props.sessionId) {
+    try {
+      const resolved = await invoke<ResolvedSymlink>('sftp_resolve_remote_symlink', {
+        sessionId: props.sessionId,
+        path: entry.path,
+        symlinkTarget: entry.symlink_target ?? null,
+      })
+      if (resolved.is_dir) {
+        sftpStore.fetchRemoteDir(props.sessionId, resolved.resolved_path)
+        syncLocalIfEnabled(entry.name)
+      } else {
+        openEditor('remote', { ...entry, path: resolved.resolved_path })
+      }
+    } catch (err: any) {
+      sftpStore.triggerTransferToast(`Cannot follow symlink "${entry.name}": ${err?.message || err}`, true)
+    }
+    return
+  }
+  if (!entry.is_dir) {
     openEditor('remote', entry)
   }
 }
@@ -3716,6 +3780,7 @@ const submitCompress = async (archiveNameParam: string, _formatParam?: '.tar.gz'
       @batch-upload="(files) => handleBatchUpload(files)"
       @batch-download="(files) => handleBatchDownload(files)"
       @quick-look="(target, file) => openQuickLook(target, file)"
+      @follow-symlink="(target, file) => target === 'local' ? (leftPaneSource === 'local' ? handleLocalRowDoubleClick(file as LocalFileEntry) : handleLeftRemoteRowDoubleClick(file as SftpFileEntry)) : handleRemoteRowDoubleClick(file as SftpFileEntry)"
       @edit="(target, file) => openEditor(target, file)"
       @open-in-external-editor="(file) => handleOpenInExternalEditor(file)"
       @pair-folder="(localDir) => openDirWatcherModal(localDir)"

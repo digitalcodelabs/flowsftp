@@ -47,11 +47,11 @@ describe('Updater Store (in-app update check & installation)', () => {
   it('populates update state and shows header badge when a newer version is available', async () => {
     invokeMock.mockResolvedValueOnce({
       updateAvailable: true,
-      currentVersion: '1.0.4',
-      latestVersion: '1.0.5',
-      downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.5.exe',
-      notes: '### New in v1.0.5\n- In-app auto-updater',
-      pubDate: '2026-11-19T12:00:00Z',
+      currentVersion: '1.0.5',
+      latestVersion: '1.0.6',
+      downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.6.exe',
+      notes: '### New in v1.0.6\n- In-app auto-updater',
+      pubDate: '2026-11-23T12:00:00Z',
       signature: null,
       platform: 'windows',
       arch: 'x86_64',
@@ -62,8 +62,8 @@ describe('Updater Store (in-app update check & installation)', () => {
 
     expect(res?.updateAvailable).toBe(true)
     expect(store.updateAvailable).toBe(true)
-    expect(store.latestVersion).toBe('1.0.5')
-    expect(store.downloadUrl).toBe('https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.5.exe')
+    expect(store.latestVersion).toBe('1.0.6')
+    expect(store.downloadUrl).toBe('https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.6.exe')
     expect(store.releaseNotes).toContain('In-app auto-updater')
     expect(store.showHeaderUpdateBadge).toBe(true)
 
@@ -75,8 +75,8 @@ describe('Updater Store (in-app update check & installation)', () => {
   it('handles up-to-date response (204 No Content mapped by backend)', async () => {
     invokeMock.mockResolvedValueOnce({
       updateAvailable: false,
-      currentVersion: '1.0.4',
-      latestVersion: '1.0.4',
+      currentVersion: '1.0.5',
+      latestVersion: '1.0.5',
       downloadUrl: null,
       notes: null,
       pubDate: null,
@@ -97,16 +97,16 @@ describe('Updater Store (in-app update check & installation)', () => {
     invokeMock
       .mockResolvedValueOnce({
         updateAvailable: true,
-        currentVersion: '1.0.4',
-        latestVersion: '1.0.5',
-        downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.5.exe',
+        currentVersion: '1.0.5',
+        latestVersion: '1.0.6',
+        downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.6.exe',
         notes: 'Release notes',
-        pubDate: '2026-11-19T12:00:00Z',
+        pubDate: '2026-11-23T12:00:00Z',
         signature: null,
         platform: 'windows',
         arch: 'x86_64',
       })
-      .mockResolvedValueOnce('C:\\Temp\\FlowSFTP-Windows-x64-v1.0.5.exe')
+      .mockResolvedValueOnce('C:\\Temp\\FlowSFTP-Windows-x64-v1.0.6.exe')
 
     const store = useUpdaterStore()
     await store.checkForUpdates()
@@ -114,8 +114,8 @@ describe('Updater Store (in-app update check & installation)', () => {
 
     expect(ok).toBe(true)
     expect(invokeMock).toHaveBeenLastCalledWith('app_download_and_install_update', {
-      downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.5.exe',
-      version: '1.0.5',
+      downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-Windows-x64-v1.0.6.exe',
+      version: '1.0.6',
     })
   })
 
@@ -132,7 +132,7 @@ describe('Updater Store (in-app update check & installation)', () => {
 
   it('deduplicates concurrent ensureProgressListener() calls and handles completed phase', async () => {
     ;(globalThis as any).window = { __TAURI_INTERNALS__: {} }
-    getVersionMock.mockResolvedValueOnce('1.0.4')
+    getVersionMock.mockResolvedValueOnce('1.0.5')
 
     let capturedHandler: ((event: { payload: UpdateDownloadProgress }) => void) | null = null
     let resolveListen: ((unlisten: () => void) => void) | null = null
@@ -149,22 +149,22 @@ describe('Updater Store (in-app update check & installation)', () => {
       if (cmd === 'app_check_for_updates') {
         return {
           updateAvailable: true,
-          currentVersion: '1.0.4',
-          latestVersion: '1.0.5',
-          downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-macOS-v1.0.5.dmg',
+          currentVersion: '1.0.5',
+          latestVersion: '1.0.6',
+          downloadUrl: 'https://flowsftp.com/storage/releases/FlowSFTP-macOS-v1.0.6.dmg',
           notes: 'Notes',
-          pubDate: '2026-11-19T00:00:00Z',
+          pubDate: '2026-11-23T00:00:00Z',
           signature: null,
           platform: 'macos',
           arch: 'aarch64',
         }
       }
-      return '/tmp/FlowSFTP-macOS-v1.0.5.dmg'
+      return '/tmp/FlowSFTP-macOS-v1.0.6.dmg'
     })
 
     const store = useUpdaterStore()
-    store.downloadUrl = 'https://flowsftp.com/storage/releases/FlowSFTP-macOS-v1.0.5.dmg'
-    store.latestVersion = '1.0.5'
+    store.downloadUrl = 'https://flowsftp.com/storage/releases/FlowSFTP-macOS-v1.0.6.dmg'
+    store.latestVersion = '1.0.6'
 
     // Start checkForUpdates; while listen() is still pending, trigger downloadAndInstallUpdate too
     const checkPromise = store.checkForUpdates({ silent: true })
@@ -210,7 +210,7 @@ describe('Updater Store (in-app update check & installation)', () => {
   it('clears downloading immediately and resets installing after 1200ms fallback when installer does not exit', async () => {
     vi.useFakeTimers()
     ;(globalThis as any).window = { __TAURI_INTERNALS__: {} }
-    getVersionMock.mockResolvedValueOnce('1.0.4')
+    getVersionMock.mockResolvedValueOnce('1.0.5')
 
     let capturedHandler: ((event: { payload: UpdateDownloadProgress }) => void) | null = null
     listenMock.mockImplementation(
@@ -236,7 +236,7 @@ describe('Updater Store (in-app update check & installation)', () => {
 
     const store = useUpdaterStore()
     store.downloadUrl = 'https://flowsftp.com/storage/releases/FlowSFTP.deb'
-    store.latestVersion = '1.0.5'
+    store.latestVersion = '1.0.6'
 
     const ok = await store.downloadAndInstallUpdate()
     expect(ok).toBe(true)

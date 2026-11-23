@@ -2713,7 +2713,7 @@ const handleTabStripWheel = (e: WheelEvent) => {
             <div>
               <h3 class="text-lg font-bold tracking-tight" :style="{ color: 'var(--color-text-main)' }">FlowSFTP</h3>
               <p class="text-xs font-mono mt-0.5" :style="{ color: 'var(--color-text-muted)' }">
-                v{{ updaterStore.currentVersion || '1.0.4' }}
+                v{{ updaterStore.currentVersion || '1.0.5' }}
               </p>
             </div>
             <p class="text-xs max-w-md leading-relaxed" :style="{ color: 'var(--color-text-muted)' }">

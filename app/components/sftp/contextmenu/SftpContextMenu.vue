@@ -36,6 +36,7 @@ const emit = defineEmits<{
   (e: 'batchUpload', files: LocalFileEntry[]): void
   (e: 'batchDownload', files: SftpFileEntry[]): void
   (e: 'quickLook', target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry): void
+  (e: 'followSymlink', target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry): void
   (e: 'edit', target: 'local' | 'remote', file: LocalFileEntry | SftpFileEntry): void
   (e: 'openInExternalEditor', file: SftpFileEntry): void
   (e: 'pairFolder', localDir: string): void
@@ -122,6 +123,7 @@ const menuHeaderBadge = computed(() => {
   }
   if (selectedCount.value === 1) {
     const file = props.pane === 'local' ? props.selectedLocalFiles[0] : props.selectedRemoteFiles[0]
+    if (file?.is_symlink) return 'Symlink'
     return file?.is_dir ? 'Directory' : 'File'
   }
   return 'Selection'
@@ -168,6 +170,20 @@ const menuHeaderBadge = computed(() => {
         >
           <CatppuccinIcon :name="isLeftPaneRemote ? 'network' : 'upload'" :size="15" />
           <span class="truncate">{{ isLeftPaneRemote ? 'Transfer to Remote Server' : 'Upload' }} {{ selectedLocalFiles.length > 1 ? `(${selectedLocalFiles.length} items)` : '' }}</span>
+        </button>
+
+        <!-- Follow Symlink (Single Symlink) -->
+        <button
+          v-if="selectedLocalFiles.length === 1 && selectedLocalFiles[0]!.is_symlink"
+          @click="emit('followSymlink', 'local', selectedLocalFiles[0]!); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg font-medium transition text-left"
+          :style="{ color: 'var(--color-accent)' }"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Link2 :size="15" class="shrink-0" />
+            <span class="truncate">Follow Symlink</span>
+          </div>
+          <span class="menu-shortcut">Enter</span>
         </button>
 
         <!-- Quick Look (Single File) -->
@@ -503,6 +519,20 @@ const menuHeaderBadge = computed(() => {
             {{ pane === 'local' ? 'Transfer to Remote Server' : (isLeftPaneRemote ? 'Transfer to Left Server' : 'Download') }}
             {{ activeRemoteFiles.length > 1 ? `(${activeRemoteFiles.length} items)` : '' }}
           </span>
+        </button>
+
+        <!-- Follow Symlink (Single Symlink) -->
+        <button
+          v-if="activeSessionId && activeRemoteFiles.length === 1 && activeRemoteFiles[0]!.is_symlink"
+          @click="emit('followSymlink', pane, activeRemoteFiles[0]!); emit('close')"
+          class="context-menu-item w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg font-medium transition text-left"
+          :style="{ color: 'var(--color-accent-secondary)' }"
+        >
+          <div class="flex items-center space-x-2.5 min-w-0">
+            <Link2 :size="15" class="shrink-0" />
+            <span class="truncate">Follow Symlink</span>
+          </div>
+          <span class="menu-shortcut">Enter</span>
         </button>
 
         <!-- Quick Look (Single File) -->

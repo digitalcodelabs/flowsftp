@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [1.0.5] — v1.0.5 (2026-11-23)
+
+### Fixed
+- **Symbolic Link Traversal Across SFTP, FTP/FTPS, and Local Panes**:
+  - Double-clicking or pressing `Enter` on a symbolic link now resolves the actual target path (`SSH_FXP_REALPATH` + `SSH_FXP_STAT` on SFTP, `CWD` + `PWD` with target fallback on FTP/FTPS, and `fs::metadata` + `fs::canonicalize` on Local including WSL `//wsl.localhost/...` paths) and navigates directly into directory targets instead of opening them in the text editor.
+  - File symlinks open the resolved target file in the editor, and broken/dangling symlinks display a clear error toast.
+  - Added a **Follow Symlink** context-menu action and `Symlink` badge in the file browser context menu, plus a safety guard ensuring deleting a remote symlink always unlinks only the link itself rather than recursively deleting the target directory.
+
+---
+
 ## [1.0.4] — v1.0.4 (2026-11-19)
 
 ### Fixed

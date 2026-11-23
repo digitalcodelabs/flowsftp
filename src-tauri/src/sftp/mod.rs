@@ -63,6 +63,12 @@ pub struct FileConflictInfo {
     pub modified: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedSymlink {
+    pub resolved_path: String,
+    pub is_dir: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalCrawlTask {
     pub local_path: String,
@@ -493,6 +499,128 @@ pub async fn canonicalize_remote(sftp: &SftpSession, path: &str) -> Result<Strin
         Ok(Ok(canonical)) if !canonical.is_empty() => Ok(canonical),
         _ => Ok(clean.to_string()),
     }
+}
+
+/// Resolves a POSIX symlink target (absolute or relative) against the symlink's own path,
+/// collapsing `.` and `..` segments cleanly.
+pub fn resolve_posix_symlink_target(link_path: &str, target: &str) -> String {
+    let clean_target = target.trim().replace('\\', "/");
+    let combined = if clean_target.starts_with('/') {
+        clean_target
+    } else {
+        let clean_link = link_path.trim().replace('\\', "/");
+        let trimmed_link = clean_link.trim_end_matches('/');
+        let parent = match trimmed_link.rfind('/') {
+            Some(0) | None => "/",
+            Some(idx) => &trimmed_link[..idx],
+        };
+        if parent == "/" {
+            format!("/{}", clean_target)
+        } else {
+            format!("{}/{}", parent, clean_target)
+        }
+    };
+
+    let mut stack: Vec<&str> = Vec::new();
+    for seg in combined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                stack.pop();
+            }
+            other => stack.push(other),
+        }
+    }
+
+    if stack.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", stack.join("/"))
+    }
+}
+
+pub async fn resolve_remote_symlink(
+    sftp: &SftpSession,
+    path: &str,
+    symlink_target: Option<&str>,
+) -> Result<ResolvedSymlink, String> {
+    let clean = path.trim();
+    if clean.is_empty() {
+        return Err("Empty symlink path".to_string());
+    }
+
+    let resolved_path = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        sftp.canonicalize(clean),
+    )
+    .await
+    {
+        Ok(Ok(canon)) if !canon.is_empty() => canon,
+        _ => {
+            if let Some(target) = symlink_target.filter(|t| !t.trim().is_empty()) {
+                resolve_posix_symlink_target(clean, target)
+            } else if let Ok(Ok(target)) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                sftp.read_link(clean),
+            )
+            .await
+                && !target.trim().is_empty()
+            {
+                resolve_posix_symlink_target(clean, &target)
+            } else {
+                clean.to_string()
+            }
+        }
+    };
+
+    // `metadata` uses SSH_FXP_STAT (follows symlinks) to check whether the target is a directory.
+    let meta = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        sftp.metadata(&resolved_path),
+    )
+    .await
+    {
+        Ok(Ok(m)) => m,
+        Ok(Err(e)) => {
+            if resolved_path != clean
+                && let Ok(Ok(m)) = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    sftp.metadata(clean),
+                )
+                .await
+            {
+                m
+            } else {
+                return Err(format!(
+                    "Target '{}' is missing or inaccessible: {}",
+                    resolved_path, e
+                ));
+            }
+        }
+        Err(_) => {
+            return Err(format!("Timed out resolving symbolic link '{}'", clean));
+        }
+    };
+
+    Ok(ResolvedSymlink {
+        resolved_path,
+        is_dir: meta.is_dir(),
+    })
+}
+
+pub async fn resolve_local_symlink(path: &str) -> Result<ResolvedSymlink, String> {
+    let (native, _) = normalize_to_native_path(path);
+    let meta = fs::metadata(&native)
+        .await
+        .map_err(|e| format!("Target is missing or inaccessible: {}", e))?;
+    let resolved_path = match fs::canonicalize(&native).await {
+        Ok(canon) => clean_local_path(&canon),
+        Err(_) => clean_local_path(&native),
+    };
+    Ok(ResolvedSymlink {
+        resolved_path,
+        is_dir: meta.is_dir(),
+    })
 }
 
 pub async fn set_remote_permissions(
@@ -2690,6 +2818,56 @@ mod tests {
                 "C:/dl/proj/sub/deep",
             ]
         );
+    }
+
+    #[test]
+    fn resolve_posix_symlink_target_handles_absolute_relative_dotdot_and_root() {
+        assert_eq!(
+            resolve_posix_symlink_target("/var/www/current", "/var/www/releases/v42/"),
+            "/var/www/releases/v42"
+        );
+        assert_eq!(
+            resolve_posix_symlink_target("/var/www/current", "releases/v42"),
+            "/var/www/releases/v42"
+        );
+        assert_eq!(
+            resolve_posix_symlink_target("/var/www/site/current", "../shared/./public"),
+            "/var/www/shared/public"
+        );
+        assert_eq!(
+            resolve_posix_symlink_target("/current", "opt/app"),
+            "/opt/app"
+        );
+        assert_eq!(
+            resolve_posix_symlink_target("/var/www/link", "../../../../../etc"),
+            "/etc"
+        );
+        assert_eq!(resolve_posix_symlink_target("/var/www/link", "/"), "/");
+    }
+
+    #[tokio::test]
+    async fn resolve_local_symlink_identifies_dirs_files_and_missing_targets() {
+        let base = std::env::temp_dir().join(format!(
+            "flowsftp_symlink_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let sub_dir = base.join("target_dir");
+        let file_path = base.join("target_file.txt");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(&file_path, b"hello").unwrap();
+
+        let dir_res = resolve_local_symlink(&sub_dir.to_string_lossy()).await.unwrap();
+        assert!(dir_res.is_dir);
+        assert!(dir_res.resolved_path.ends_with("/target_dir"));
+
+        let file_res = resolve_local_symlink(&file_path.to_string_lossy()).await.unwrap();
+        assert!(!file_res.is_dir);
+        assert!(file_res.resolved_path.ends_with("/target_file.txt"));
+
+        let missing = base.join("does_not_exist");
+        assert!(resolve_local_symlink(&missing.to_string_lossy()).await.is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[cfg(windows)]

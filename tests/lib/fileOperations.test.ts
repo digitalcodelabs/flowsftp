@@ -123,6 +123,20 @@ describe('useFileOperations (by-pane API)', () => {
     expect(legacy).toEqual(byPane)
   })
 
+  it('always unlinks remote symlinks as files instead of recursively deleting target directories', async () => {
+    const { ops } = await setup()
+    await ops.byPane.deleteItem(remotePane('s1'), {
+      ...entry('/srv/current', true),
+      is_symlink: true,
+      symlink_target: '/var/www/releases/v42',
+    })
+
+    expect(calls('sftp_remove_remote_dir')).toHaveLength(0)
+    expect(calls('sftp_remove_remote_file')).toEqual([
+      { sessionId: 's1', path: '/srv/current', deletionId: null },
+    ])
+  })
+
   it('legacy remote operations without any session do nothing', async () => {
     const { browser, ops } = await setup()
     browser.clearSession('s1')

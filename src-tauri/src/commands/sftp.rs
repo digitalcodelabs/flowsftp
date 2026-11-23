@@ -11,8 +11,8 @@ use crate::sftp::{
     ensure_remote_dir_recursive, get_matching_ignore_pattern,
     CrawlProgressPayload, FileConflictInfo, GitRepoStatus, LocalCrawlBatchPayload, LocalCrawlDirectory, LocalCrawlIgnored,
     LocalCrawlResult, LocalCrawlTask, LocalFileEntry, RemoteCrawlBatchPayload, RemoteCrawlDirectory, RemoteCrawlResult,
-    RemoteCrawlTask, SftpFileEntry, batch_create_local_dirs, batch_create_remote_dirs,
-    CRAWL_STREAM_BATCH_INTERVAL_MS, CRAWL_STREAM_BATCH_SIZE,
+    RemoteCrawlTask, ResolvedSymlink, SftpFileEntry, batch_create_local_dirs, batch_create_remote_dirs,
+    resolve_local_symlink, resolve_remote_symlink, CRAWL_STREAM_BATCH_INTERVAL_MS, CRAWL_STREAM_BATCH_SIZE,
 };
 use crate::state::AppState;
 
@@ -52,6 +52,31 @@ pub async fn sftp_canonicalize_remote(
 
     let sftp = session.get_sftp().await?;
     canonicalize_remote(&sftp, &path).await
+}
+
+#[tauri::command]
+pub async fn sftp_resolve_remote_symlink(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    symlink_target: Option<String>,
+) -> Result<ResolvedSymlink, String> {
+    if let Some(ftp) = state.get_ftp_session(&session_id).await {
+        return ftp.resolve_symlink(&path, symlink_target.as_deref()).await;
+    }
+
+    let session = state
+        .get_session(&session_id)
+        .await
+        .ok_or_else(|| format!("Session '{}' not found", session_id))?;
+
+    let sftp = session.get_sftp().await?;
+    resolve_remote_symlink(&sftp, &path, symlink_target.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn sftp_resolve_local_symlink(path: String) -> Result<ResolvedSymlink, String> {
+    resolve_local_symlink(&path).await
 }
 
 #[tauri::command]
